@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pybench"
+version = "0.1.0"
+description = "Python runtime for scworkbench bundles (bundle-native getters and payload writers)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Dirk" }
+]
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+# Heavy method stacks stay optional and separate from core bundle I/O
+scanpy = [
+  "scanpy>=1.10",
+]
+ingest = [
+  "anndata>=0.10",
+  "scipy>=1.11",
+]
+palantir = [
+  "palantir>=1.3",
+]
+scvi = [
+  "scvi-tools>=1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pybench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
