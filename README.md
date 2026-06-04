@@ -10,17 +10,31 @@ Purpose:
 
 `pybench` does **not** own run registry or provenance in v1. The bench remains the authority for those.
 
-## Current Native Matrix Support
+## PeakVI Matrix Path Contract
 
-`pybench` now includes native Python matrix getters for bundle matrices.
+`pybench` includes native Python matrix getters for bundle matrices.
 
-Current implications:
+Current native getter support:
 - Python resolves `matrix_id` from the bundle registry
 - Python reads canonical BPCells matrix payloads directly
-- `peakvi_fit` no longer depends on R-side Matrix Market staging
+- `peakvi_fit` can use native bundle matrix reads when `matrix_chunks_dir` is
+  absent
 
-This is the intended contract direction for Python-native matrix consumers in
-`pybench`: symbolic refs in, bundle-native reads inside Python.
+Production PeakVI on cluster should use R-staged sparse chunks until native
+Python BPCells reads are revalidated on the cluster runtime. Historical context:
+native Python reads were pursued after upstream Python BPCells could not handle
+double matrices; a fork fixed double-matrix reads locally, but the native/forked
+path later hit segmentation faults on Tetralith.
+
+Current PeakVI contract:
+- `peakvi_fit` supports staged sparse chunks when `matrix_chunks_dir` is
+  supplied; this is the production-safe cluster path.
+- `peakvi_fit` supports native bundle matrix reads when `matrix_chunks_dir` is
+  absent; this path is local/development capable, not the current cluster
+  production default.
+- `peakvi_project` currently requires staged chunks.
+- Promoting native BPCells reads back to production requires a cluster smoke that
+  exercises the forked/double-matrix BPCells path without segmentation faults.
 
 ## Development (first-time setup)
 
