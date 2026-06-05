@@ -35,7 +35,7 @@ def validate_request(req: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(req, dict):
         raise ProtocolError("request must be a JSON object")
     if req.get("protocol_version") != PROTOCOL_VERSION:
-        raise ProtocolError(f"unsupported protocol_version: {req.get(protocol_version)!r}")
+        raise ProtocolError(f"unsupported protocol_version: {req.get('protocol_version')!r}")
     _require_nonempty_str(req.get("bundle_dir"), "request.bundle_dir")
     _require_nonempty_str(req.get("op_name"), "request.op_name")
 
@@ -56,7 +56,9 @@ def validate_receipt(receipt: dict[str, Any], request: dict[str, Any] | None = N
     if not isinstance(receipt, dict):
         raise ProtocolError("receipt must be a JSON object")
     if receipt.get("protocol_version") != PROTOCOL_VERSION:
-        raise ProtocolError(f"unsupported receipt protocol_version: {receipt.get(protocol_version)!r}")
+        raise ProtocolError(
+            f"unsupported receipt protocol_version: {receipt.get('protocol_version')!r}"
+        )
     status = _require_nonempty_str(receipt.get("status"), "receipt.status")
     if status not in {"ok", "error"}:
         raise ProtocolError("receipt.status must be ok or error")
