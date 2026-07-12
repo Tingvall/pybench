@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import palantir
+import pandas as pd
 from anndata import AnnData
 
 from pybench import close_bundle, open_bundle
@@ -148,7 +148,6 @@ def _fit_branch_curve(pt: np.ndarray,
         raise PalantirProjectOpError("branch has too few finite points for interpolation")
 
     # Collapse duplicate pseudotime values by weighted mean in observed order; mellon expects x/y paired to scalar predictor.
-    pt_s = pd.Series(pt)
     xy_df = pd.DataFrame({"pt": pt, "x": xy[:, 0], "y": xy[:, 1]})
     xy_df = xy_df.groupby("pt", sort=True, as_index=False)[["x", "y"]].mean()
     pt_u = xy_df["pt"].to_numpy(dtype=float)

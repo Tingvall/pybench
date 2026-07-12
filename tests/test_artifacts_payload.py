@@ -11,7 +11,6 @@ from pybench.artifacts_payload import write_artifact_cell_vector_payload
 from pybench.bundle import close_bundle, open_bundle
 from pybench.getters import art_get_row, art_list
 
-
 GOLDEN_BUNDLE = Path(
     "/home/dirk/Projects/lymphocyte_trajectory/fixtures/golden_bundle/scwb_golden"
 )

@@ -36,32 +36,32 @@ Current PeakVI contract:
 - Promoting native BPCells reads back to production requires a cluster smoke that
   exercises the forked/double-matrix BPCells path without segmentation faults.
 
-## Development (first-time setup)
+## Development and release checks
 
-### Option A: `uv` (recommended)
-
-```bash
-cd /path/to/pybench
-uv venv --python 3.11
-source .venv/bin/activate
-uv pip install -e .[dev]
-```
-
-### Option B: stdlib `venv` + `pip`
+The canonical core developer/test profile is Python 3.11 with the `dev` and
+`ingest` extras. `ingest` is required because the core suite exercises AnnData
+ingest and staged sparse-matrix helpers.
 
 ```bash
-cd /path/to/pybench
+cd /home/dirk/Projects/pybench
 python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .[dev]
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e '.[dev,ingest]'
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check src tests
 ```
 
-Run tests:
+The optional model profiles build on the core profile:
 
 ```bash
-pytest -q
+cd /home/dirk/Projects/pybench
+.venv/bin/python -m pip install -e '.[dev,ingest,scvi]'      # scVI and PeakVI
+.venv/bin/python -m pip install -e '.[dev,ingest,palantir]'  # Palantir
 ```
+
+`ruff check src tests` enforces syntax/import correctness. The project
+intentionally does not enforce `E501`: long SQL statements and compact SQLite
+fixture DDL are schema contracts where wrapping does not improve reviewability.
 
 ## Planned modules
 

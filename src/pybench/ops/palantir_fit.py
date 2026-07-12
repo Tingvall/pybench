@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import palantir
+import pandas as pd
 
 from pybench import close_bundle, open_bundle
 from pybench.artifacts_payload import (
@@ -19,7 +19,6 @@ from pybench.artifacts_payload import (
 from pybench.getters import cells as get_cells
 from pybench.getters import space as get_space
 from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt
-
 
 PYBENCH_VERSION = "0.1.0"
 
@@ -152,7 +151,6 @@ def _build_branch_summary(branch_probs: pd.DataFrame) -> list[dict[str, Any]]:
                 "top_cell_id": None,
             })
             continue
-        gt0 = s_non_na[s_non_na > 0]
         top_idx = s_non_na.idxmax() if len(s_non_na) else None
         rows.append({
             "relation_key": _canonical_branch_key(col),

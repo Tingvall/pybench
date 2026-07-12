@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
-from scipy import sparse as sps
 from scipy import io as spio
+from scipy import sparse as sps
 
 from pybench.ops import peakvi_fit
 

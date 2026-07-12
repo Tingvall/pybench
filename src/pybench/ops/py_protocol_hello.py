@@ -13,7 +13,6 @@ from pybench.artifacts_payload import (
 from pybench.getters import cells as get_cells
 from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt
 
-
 PYBENCH_VERSION = "0.1.0"
 
 

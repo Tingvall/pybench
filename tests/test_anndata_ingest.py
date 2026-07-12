@@ -4,9 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-import pytest
-
-anndata = pytest.importorskip("anndata")
+import anndata
 import numpy as np
 import pandas as pd
 

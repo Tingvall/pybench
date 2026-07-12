@@ -9,9 +9,7 @@ import numpy as np
 from pybench import add_space, close_bundle, open_bundle
 from pybench.ops.peakvi_fit import (
     PYBENCH_VERSION,
-    PeakVIFitOpError,
     _build_matrix_from_staged_chunks,
-    _cell_ids_from_request,
     _import_scvi,
 )
 from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt

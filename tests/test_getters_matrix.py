@@ -7,8 +7,8 @@ def test_matrix_getter_chunks_large_cell_selection(monkeypatch):
     calls = []
 
     def fake_read_chunk(matrix_path, feature_idx, col_idx):
-        from scipy import sparse as sps
         import numpy as np
+        from scipy import sparse as sps
 
         calls.append((matrix_path, feature_idx, list(col_idx)))
         data = np.arange(3 * len(col_idx), dtype=float).reshape(3, len(col_idx))

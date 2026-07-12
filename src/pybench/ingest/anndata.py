@@ -34,10 +34,7 @@ def _obs_frame(ad) -> pd.DataFrame:
 
 
 def _obsm_keys(ad) -> list[str]:
-    try:
-        return [str(k) for k in ad.obsm_keys()]
-    except Exception:
-        return [str(k) for k in ad.obsm.keys()]
+    return [str(k) for k in ad.obsm.keys()]
 
 
 def _space_df_from_obsm(ad, key: str) -> pd.DataFrame:
