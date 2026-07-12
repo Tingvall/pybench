@@ -72,3 +72,7 @@ fixture DDL are schema contracts where wrapping does not improve reviewability.
 - `pybench.schema`: bundle contract checks
 
 See `docs/pybench_api_inventory_draft.md` in `scworkbench` for the current API inventory draft.
+
+## License
+
+MIT. See `LICENSE`.
