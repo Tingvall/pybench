@@ -171,7 +171,16 @@ def test_train_scvi_wires_scvi_tools_kwargs(monkeypatch):
     assert isinstance(model, FakeModelInstance)
     assert latent.shape == (2, 2)
     assert version == "test-scvi"
-    assert metrics == {"final_train_loss": 2.0, "final_validation_loss": 2.5}
+    assert metrics["final_train_loss"] == 2.0
+    assert metrics["final_train_loss_status"] == "available"
+    assert metrics["final_train_loss_metric"] == "train_loss"
+    assert metrics["final_train_loss_source"] == "model.history:train_loss"
+    assert metrics["final_validation_loss"] == 2.5
+    assert metrics["final_validation_loss_status"] == "available"
+    assert metrics["training_epochs_completed"] == 2
+    assert metrics["training_epochs_status"] == "available"
+    assert metrics["training_epochs_source"] == "model.history:train_loss.length"
+    assert metrics["early_stopping_outcome"] == "unavailable"
     assert captured["setup"]["batch_key"] == "sample_id"
     assert captured["setup"]["categorical_covariate_keys"] == ["donor"]
     assert captured["setup"]["continuous_covariate_keys"] == ["pct_mito"]
@@ -185,6 +194,94 @@ def test_train_scvi_wires_scvi_tools_kwargs(monkeypatch):
         "accelerator": "cpu",
         "devices": 1,
     }
+
+
+def test_training_evidence_reads_dataframe_history_and_early_stopping_state():
+    class FakeEarlyStopping:
+        monitor = "elbo_validation"
+        best_score = np.array(1.75)
+        stopped_epoch = 7
+        wait_count = 3
+        patience = 45
+        early_stopping_reason = "patience exhausted"
+
+    class FakeTrainer:
+        current_epoch = 7
+        max_epochs = 30
+        early_stopping_callback = FakeEarlyStopping()
+        callback_metrics = {}
+
+    class FakeModel:
+        history = {
+            "train_loss_epoch": pd.DataFrame({"train_loss_epoch": [4.0, 2.0]}),
+            "validation_loss": pd.DataFrame({"validation_loss": [3.5, 1.8]}),
+        }
+        trainer = FakeTrainer()
+
+    evidence = scvi_train._training_evidence(FakeModel(), early_stopping_requested=True)
+
+    assert evidence["final_train_loss"] == 2.0
+    assert evidence["final_train_loss_metric"] == "train_loss_epoch"
+    assert evidence["final_train_loss_source"] == "model.history:train_loss_epoch"
+    assert evidence["final_train_loss_status"] == "available"
+    assert evidence["final_validation_loss"] == 1.8
+    assert evidence["final_validation_loss_metric"] == "validation_loss"
+    assert evidence["final_validation_loss_status"] == "available"
+    assert evidence["training_epochs_completed"] == 2
+    assert evidence["training_epochs_source"] == "model.history:train_loss_epoch.length"
+    assert evidence["early_stopping_outcome"] == "stopped_early"
+    assert evidence["early_stopping_monitor"] == "elbo_validation"
+    assert evidence["early_stopping_best_score"] == 1.75
+    assert evidence["early_stopping_best_score_status"] == "available"
+    assert evidence["early_stopping_stopped_epoch"] == 7
+    assert evidence["early_stopping_wait_count"] == 3
+    assert evidence["early_stopping_patience"] == 45
+    assert evidence["training_evidence_schema"] == "scvi_training_evidence_v1"
+
+
+def test_training_evidence_distinguishes_unavailable_and_failed_extraction():
+    class MissingMetrics:
+        history = {}
+        trainer = None
+
+    class BadMetrics:
+        history = {"train_loss_epoch": pd.DataFrame({"train_loss_epoch": ["not-a-number"]})}
+        trainer = None
+
+    unavailable = scvi_train._training_evidence(MissingMetrics(), early_stopping_requested=False)
+    failed = scvi_train._training_evidence(BadMetrics(), early_stopping_requested=False)
+
+    assert unavailable["final_train_loss"] is None
+    assert unavailable["final_train_loss_status"] == "unavailable"
+    assert unavailable["final_train_loss_error"] is None
+    assert unavailable["final_validation_loss_status"] == "unavailable"
+    assert unavailable["early_stopping_outcome"] == "not_requested"
+    assert failed["final_train_loss"] is None
+    assert failed["final_train_loss_status"] == "extraction_failed"
+    assert "train_loss_epoch" in failed["final_train_loss_error"]
+
+
+def test_training_evidence_falls_back_to_trainer_callback_metrics():
+    class FakeTrainer:
+        current_epoch = 4
+        callback_metrics = {
+            "elbo_train": np.array(2.75),
+            "elbo_validation": np.array(3.25),
+        }
+
+    class FakeModel:
+        history = {}
+        trainer = FakeTrainer()
+
+    evidence = scvi_train._training_evidence(FakeModel(), early_stopping_requested=False)
+
+    assert evidence["final_train_loss"] == 2.75
+    assert evidence["final_train_loss_metric"] == "elbo_train"
+    assert evidence["final_train_loss_source"] == "model.trainer.callback_metrics:elbo_train"
+    assert evidence["final_validation_loss"] == 3.25
+    assert evidence["final_validation_loss_metric"] == "elbo_validation"
+    assert evidence["training_epochs_completed"] == 4
+    assert evidence["training_epochs_source"] == "model.trainer.current_epoch"
 
 
 def _init_bundle(root: Path) -> None:
@@ -260,8 +357,26 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
     bundle_dir = tmp_path / "bundle"
     _init_bundle(bundle_dir)
 
+    class FakeEarlyStopping:
+        monitor = "elbo_validation"
+        best_score = 1.25
+        stopped_epoch = 0
+        wait_count = 0
+        patience = 45
+        early_stopping_reason = None
+
+    class FakeTrainer:
+        current_epoch = 1
+        max_epochs = 2
+        early_stopping_callback = FakeEarlyStopping()
+        callback_metrics = {}
+
     class FakeModelInstance:
-        history = {"train_loss": [1.25]}
+        history = {
+            "train_loss_epoch": pd.DataFrame({"train_loss_epoch": [1.5, 1.25]}),
+            "validation_loss": pd.DataFrame({"validation_loss": [1.7, 1.4]}),
+        }
+        trainer = FakeTrainer()
 
         def train(self, **kwargs):
             self.train_kwargs = kwargs
@@ -370,5 +485,15 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
         assert row["scvi_tools_version"] == "test-scvi"
         assert row["pybench_version"] == scvi_train.PYBENCH_VERSION
         assert row["final_train_loss"] == 1.25
+        assert row["final_train_loss_status"] == "available"
+        assert row["final_train_loss_metric"] == "train_loss_epoch"
+        assert row["final_train_loss_source"] == "model.history:train_loss_epoch"
+        assert row["final_validation_loss"] == 1.4
+        assert row["final_validation_loss_status"] == "available"
+        assert row["training_epochs_completed"] == 2
+        assert row["early_stopping_outcome"] == "completed_max_epochs"
+        assert row["early_stopping_monitor"] == "elbo_validation"
+        assert row["early_stopping_best_score"] == 1.25
+        assert row["training_evidence_schema"] == "scvi_training_evidence_v1"
     finally:
         con.close()

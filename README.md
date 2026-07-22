@@ -63,6 +63,27 @@ cd /home/dirk/Projects/pybench
 intentionally does not enforce `E501`: long SQL statements and compact SQLite
 fixture DDL are schema contracts where wrapping does not improve reviewability.
 
+## scVI Fit Summary
+
+`scvi_train` writes a one-row `scvi_fit_summary` `obs_table` alongside its
+model reference. It retains the input, architecture, covariate, runtime, and
+version fields, and records structured training evidence without parsing logs:
+
+- `final_train_loss` and `final_validation_loss`: final finite values when
+  scvi-tools exposes them;
+- `*_status`: `available`, `unavailable`, or `extraction_failed`;
+- `*_metric` and `*_source`: selected scvi-tools metric key and structured
+  source (`model.history` or `model.trainer.callback_metrics`);
+- `training_epochs_completed` with status/source fields;
+- `early_stopping_outcome`, callback monitor, best score, stopped epoch,
+  wait count, patience, and source fields.
+
+The summary uses `training_evidence_schema = "scvi_training_evidence_v1"`.
+Missing metrics are normal for runtimes that do not retain a requested metric;
+`extraction_failed` means a candidate metric was present but could not be
+converted to a finite scalar. Existing summaries remain valid and simply do
+not contain the added fields.
+
 ## Planned modules
 
 - `pybench.bundle`: bundle handle / open-close

@@ -214,23 +214,287 @@ def _set_seed(scvi, seed: int | None) -> None:
     np.random.seed(int(seed))
 
 
-def _history_last(model, names: list[str]) -> float | None:
-    hist = getattr(model, "history", None)
-    if hist is None:
-        return None
+def _metric_scalar(value: Any, metric_name: str) -> float:
+    """Return the last finite scalar from a scvi-tools history value."""
+    if isinstance(value, pd.DataFrame):
+        if value.empty:
+            raise ValueError("history table is empty")
+        if metric_name in value.columns:
+            value = value[metric_name].iloc[-1]
+        elif len(value.columns) == 1:
+            value = value.iloc[-1, 0]
+        else:
+            raise ValueError("history table has no matching or unambiguous metric column")
+    elif isinstance(value, pd.Series):
+        if value.empty:
+            raise ValueError("history series is empty")
+        value = value.iloc[-1]
+    elif isinstance(value, dict):
+        if metric_name in value:
+            value = value[metric_name]
+        elif len(value) == 1:
+            value = next(iter(value.values()))
+        else:
+            raise ValueError("metric mapping has no matching or unambiguous value")
+
+    if isinstance(value, (list, tuple, np.ndarray)):
+        values = np.asarray(value).reshape(-1)
+        if values.size == 0:
+            raise ValueError("metric sequence is empty")
+        value = values[-1]
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "item"):
+        value = value.item()
+
+    result = float(value)
+    if not np.isfinite(result):
+        raise ValueError("metric is not finite")
+    return result
+
+
+def _metric_from_mapping(
+    mapping: Any,
+    *,
+    source: str,
+    names: list[str],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    if mapping is None:
+        return None, []
+
+    errors: list[str] = []
     for name in names:
         try:
-            val = hist[name]
-            if hasattr(val, "iloc"):
-                val = val.iloc[-1]
-            elif isinstance(val, (list, tuple)):
-                val = val[-1]
-            if isinstance(val, dict) and name in val:
-                val = val[name]
-            return float(val)
-        except Exception:
+            value = mapping[name]
+        except (KeyError, TypeError, IndexError):
             continue
-    return None
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{source}:{name}: lookup failed ({type(e).__name__})")
+            continue
+        try:
+            return {
+                "value": _metric_scalar(value, name),
+                "status": "available",
+                "name": name,
+                "source": f"{source}:{name}",
+                "error": None,
+            }, errors
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{source}:{name}: {type(e).__name__}: {e}")
+    return None, errors
+
+
+def _metric_evidence(model: Any, names: list[str]) -> dict[str, Any]:
+    errors: list[str] = []
+    try:
+        history = getattr(model, "history", None)
+    except Exception as e:  # noqa: BLE001
+        history = None
+        errors.append(f"model.history: lookup failed ({type(e).__name__})")
+    found, found_errors = _metric_from_mapping(history, source="model.history", names=names)
+    errors.extend(found_errors)
+    if found is not None:
+        return found
+
+    try:
+        trainer = getattr(model, "trainer", None)
+        callback_metrics = getattr(trainer, "callback_metrics", None)
+    except Exception as e:  # noqa: BLE001
+        callback_metrics = None
+        errors.append(f"model.trainer.callback_metrics: lookup failed ({type(e).__name__})")
+    found, found_errors = _metric_from_mapping(
+        callback_metrics,
+        source="model.trainer.callback_metrics",
+        names=names,
+    )
+    errors.extend(found_errors)
+    if found is not None:
+        return found
+
+    return {
+        "value": None,
+        "status": "extraction_failed" if errors else "unavailable",
+        "name": None,
+        "source": None,
+        "error": " | ".join(errors) if errors else None,
+    }
+
+
+def _training_epoch_evidence(model: Any) -> dict[str, Any]:
+    errors: list[str] = []
+    try:
+        history = getattr(model, "history", None)
+        for name in ["train_loss_epoch", "train_loss", "training_loss", "elbo_train"]:
+            try:
+                value = history[name]
+            except (KeyError, TypeError, IndexError):
+                continue
+            epochs = len(value)
+            if epochs > 0:
+                return {
+                    "value": int(epochs),
+                    "status": "available",
+                    "source": f"model.history:{name}.length",
+                    "error": None,
+                }
+            errors.append(f"model.history:{name}: history is empty")
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"model.history: {type(e).__name__}: {e}")
+
+    try:
+        trainer = getattr(model, "trainer", None)
+        current_epoch = getattr(trainer, "current_epoch", None)
+        if current_epoch is not None:
+            current_epoch = int(current_epoch)
+            if current_epoch >= 0:
+                return {
+                    "value": current_epoch,
+                    "status": "available",
+                    "source": "model.trainer.current_epoch",
+                    "error": None,
+                }
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"model.trainer.current_epoch: {type(e).__name__}: {e}")
+    return {
+        "value": None,
+        "status": "extraction_failed" if errors else "unavailable",
+        "source": None,
+        "error": " | ".join(errors) if errors else None,
+    }
+
+
+def _early_stopping_evidence(
+    model: Any,
+    *,
+    requested: bool,
+    epochs_completed: int | None,
+) -> dict[str, Any]:
+    if not requested:
+        return {
+            "outcome": "not_requested",
+            "monitor": None,
+            "best_score": None,
+            "best_score_status": "unavailable",
+            "stopped_epoch": None,
+            "wait_count": None,
+            "patience": None,
+            "source": None,
+            "error": None,
+        }
+
+    try:
+        trainer = getattr(model, "trainer", None)
+        callback = getattr(trainer, "early_stopping_callback", None)
+        if callback is None:
+            for candidate in getattr(trainer, "callbacks", []) or []:
+                if hasattr(candidate, "monitor") and hasattr(candidate, "stopped_epoch"):
+                    callback = candidate
+                    break
+        if callback is None:
+            return {
+                "outcome": "unavailable",
+                "monitor": None,
+                "best_score": None,
+                "best_score_status": "unavailable",
+                "stopped_epoch": None,
+                "wait_count": None,
+                "patience": None,
+                "source": None,
+                "error": None,
+            }
+
+        monitor = getattr(callback, "monitor", None)
+        stopped_epoch = getattr(callback, "stopped_epoch", None)
+        stopped_epoch = None if stopped_epoch is None else int(stopped_epoch)
+        reason = getattr(callback, "early_stopping_reason", None)
+        trainer_should_stop = bool(getattr(trainer, "should_stop", False))
+        max_epochs = getattr(trainer, "max_epochs", None)
+        max_epochs = None if max_epochs is None else int(max_epochs)
+        if reason is not None or trainer_should_stop or (stopped_epoch is not None and stopped_epoch > 0):
+            outcome = "stopped_early"
+        elif max_epochs is not None and epochs_completed is not None and epochs_completed >= max_epochs:
+            outcome = "completed_max_epochs"
+        else:
+            outcome = "completed_without_trigger"
+
+        best_score = getattr(callback, "best_score", None)
+        try:
+            best_score = _metric_scalar(best_score, "best_score")
+            best_score_status = "available"
+            best_score_error = None
+        except Exception as e:  # noqa: BLE001
+            best_score = None
+            best_score_status = "unavailable" if getattr(callback, "best_score", None) is None else "extraction_failed"
+            best_score_error = None if best_score_status == "unavailable" else f"{type(e).__name__}: {e}"
+
+        return {
+            "outcome": outcome,
+            "monitor": None if monitor is None else str(monitor),
+            "best_score": best_score,
+            "best_score_status": best_score_status,
+            "stopped_epoch": stopped_epoch,
+            "wait_count": getattr(callback, "wait_count", None),
+            "patience": getattr(callback, "patience", None),
+            "source": "model.trainer.early_stopping_callback",
+            "error": best_score_error,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "outcome": "extraction_failed",
+            "monitor": None,
+            "best_score": None,
+            "best_score_status": "extraction_failed",
+            "stopped_epoch": None,
+            "wait_count": None,
+            "patience": None,
+            "source": None,
+            "error": f"model.trainer.early_stopping_callback: {type(e).__name__}: {e}",
+        }
+
+
+def _training_evidence(model: Any, *, early_stopping_requested: bool) -> dict[str, Any]:
+    train = _metric_evidence(
+        model,
+        ["train_loss_epoch", "train_loss", "training_loss", "elbo_train"],
+    )
+    validation = _metric_evidence(
+        model,
+        ["validation_loss", "val_loss", "elbo_validation"],
+    )
+    epochs = _training_epoch_evidence(model)
+    early_stopping = _early_stopping_evidence(
+        model,
+        requested=early_stopping_requested,
+        epochs_completed=epochs["value"],
+    )
+    return {
+        "final_train_loss": train["value"],
+        "final_train_loss_status": train["status"],
+        "final_train_loss_metric": train["name"],
+        "final_train_loss_source": train["source"],
+        "final_train_loss_error": train["error"],
+        "final_validation_loss": validation["value"],
+        "final_validation_loss_status": validation["status"],
+        "final_validation_loss_metric": validation["name"],
+        "final_validation_loss_source": validation["source"],
+        "final_validation_loss_error": validation["error"],
+        "training_epochs_completed": epochs["value"],
+        "training_epochs_status": epochs["status"],
+        "training_epochs_source": epochs["source"],
+        "training_epochs_error": epochs["error"],
+        "early_stopping_outcome": early_stopping["outcome"],
+        "early_stopping_monitor": early_stopping["monitor"],
+        "early_stopping_best_score": early_stopping["best_score"],
+        "early_stopping_best_score_status": early_stopping["best_score_status"],
+        "early_stopping_stopped_epoch": early_stopping["stopped_epoch"],
+        "early_stopping_wait_count": early_stopping["wait_count"],
+        "early_stopping_patience": early_stopping["patience"],
+        "early_stopping_source": early_stopping["source"],
+        "early_stopping_error": early_stopping["error"],
+        "training_evidence_schema": "scvi_training_evidence_v1",
+    }
 
 
 def _train_scvi(
@@ -275,13 +539,8 @@ def _train_scvi(
     latent = np.asarray(model.get_latent_representation(), dtype=float)
     if latent.ndim != 2:
         raise ScVITrainOpError("scVI latent representation is not 2D")
-    metrics = {
-        "final_train_loss": _history_last(model, ["train_loss", "training_loss", "elbo_train"]),
-        "final_validation_loss": _history_last(
-            model, ["validation_loss", "val_loss", "elbo_validation"]
-        ),
-    }
-    return model, latent, getattr(scvi, "__version__", None), metrics
+    evidence = _training_evidence(model, early_stopping_requested=early_stopping)
+    return model, latent, getattr(scvi, "__version__", None), evidence
 
 
 def _save_model(bundle, artifact_id: str, model) -> str:
@@ -402,8 +661,7 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             "output_space_id": output_space_id,
             "scvi_tools_version": scvi_version,
             "pybench_version": PYBENCH_VERSION,
-            "final_train_loss": metrics["final_train_loss"],
-            "final_validation_loss": metrics["final_validation_loss"],
+            **metrics,
         }
         out_receipts["fit_summary"] = write_artifact_table_payload(
             b,
