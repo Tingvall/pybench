@@ -361,7 +361,17 @@ def space(bundle: BundleHandle, space_id: str, cells_order: list[str] | None = N
 
     con = bundle.con
     if storage.startswith("wide:space_2d") or (dims_total == 2):
-        df = _df(con, "SELECT cell_id, x, y FROM space_2d WHERE space_id = ?", [space_id])
+        df = _df(
+            con,
+            """
+            SELECT s.cell_id, s.x, s.y
+            FROM space_2d s
+            INNER JOIN cells c ON c.cell_id = s.cell_id
+            WHERE s.space_id = ?
+            ORDER BY c.rowid
+            """,
+            [space_id],
+        )
         df["cell_id"] = df["cell_id"].astype(str)
         if cells_order is not None:
             pos = {c: i for i, c in enumerate(cells_order)}
@@ -388,7 +398,8 @@ def space(bundle: BundleHandle, space_id: str, cells_order: list[str] | None = N
         raise GetterError(f"No coords found for space_id: {space_id}")
 
     if cells_order is None:
-        cells_order = cells(bundle, cell_set="core")
+        present = set(df["cell_id"].astype(str))
+        cells_order = [c for c in cells(bundle, cell_set="all") if c in present]
     keep = set(cells_order)
     df = df[df["cell_id"].astype(str).isin(keep)].copy()
 

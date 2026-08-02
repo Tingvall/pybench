@@ -17,6 +17,9 @@ Purpose:
 Current native getter support:
 - Python resolves `matrix_id` from the bundle registry
 - Python reads canonical BPCells matrix payloads directly
+- Python space getters preserve an explicit requested cell order; when no
+  order is supplied they use canonical all-bundle order restricted to cells
+  present in the space
 - `peakvi_fit` can use native bundle matrix reads when `matrix_chunks_dir` is
   absent
 

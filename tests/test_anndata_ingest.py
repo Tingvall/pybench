@@ -91,6 +91,35 @@ def test_ingest_anndata_stage_obs_and_obsm(tmp_path: Path):
         close_bundle(b)
 
 
+def test_space_getter_uses_canonical_present_cell_order_when_omitted(tmp_path: Path):
+    bundle_dir = tmp_path / "ordered_space_bundle"
+    _init_min_bundle(bundle_dir)
+    con = sqlite3.connect(str(bundle_dir / "db" / "app.sqlite"))
+    try:
+        con.executemany(
+            "INSERT INTO cells(cell_id, dataset_id) VALUES(?, 'ds')",
+            [("cell_z",), ("cell_a",), ("cell_m",), ("cell_absent",)],
+        )
+        con.execute(
+            "INSERT INTO spaces(space_id, source, dims, storage, description) VALUES('ordered', 'test', 2, 'wide:space_2d', 'test')"
+        )
+        con.executemany(
+            "INSERT INTO space_2d(space_id, cell_id, x, y) VALUES('ordered', ?, ?, ?)",
+            [("cell_m", 3.0, 30.0), ("cell_z", 1.0, 10.0), ("cell_a", 2.0, 20.0)],
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    b = open_bundle(bundle_dir)
+    try:
+        got = space(b, "ordered")
+        assert got["cell_id"].tolist() == ["cell_z", "cell_a", "cell_m"]
+        assert got["x"].tolist() == [1.0, 2.0, 3.0]
+    finally:
+        close_bundle(b)
+
+
 def test_ingest_anndata_stage_writes_integer_matrix(tmp_path: Path):
     bundle_dir = tmp_path / "mini_bundle"
     _init_min_bundle(bundle_dir)
