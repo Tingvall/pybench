@@ -48,7 +48,8 @@ def test_golden_bundle_cell_vector_artifact_registry_and_payload(tmp_path: Path)
             """,
             (artifact_id,),
         ).fetchall()
-        assert len(labels) == 12
+        expected_cells = b.con.execute("SELECT COUNT(*) FROM cells").fetchone()[0]
+        assert len(labels) == expected_cells
         assert sorted({str(r["label"]) for r in labels}) == [
             "golden_A",
             "golden_B",
