@@ -10,7 +10,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from .bundle import BundleHandle
+from .bundle import BundleHandle, bundle_relative_path
 
 
 class GetterError(RuntimeError):
@@ -140,7 +140,29 @@ def matrix_dir(bundle: BundleHandle, matrix_id: str) -> Path:
     rel = str(info.iloc[0].get("path") or "")
     if not rel:
         raise GetterError(f"Matrix path missing for matrix_id: {matrix_id}")
-    return (bundle.bundle_dir / rel).resolve()
+    _, absolute = bundle_relative_path(
+        bundle,
+        rel,
+        expected_type="directory",
+        inspect_tree=True,
+        purpose=f"matrix payload {matrix_id}",
+    )
+    return absolute
+
+
+def _matrix_relative_path(bundle: BundleHandle, matrix_id: str) -> str:
+    info = matrix_info(bundle, matrix_id)
+    if info.empty:
+        raise GetterError(f"Unknown matrix_id: {matrix_id}")
+    raw = info.iloc[0].get("path")
+    relative, _ = bundle_relative_path(
+        bundle,
+        raw,
+        expected_type="directory",
+        inspect_tree=True,
+        purpose=f"matrix payload {matrix_id}",
+    )
+    return relative
 
 
 def features(bundle: BundleHandle, matrix_id: str | None = None, feature_type: str | None = None) -> pd.DataFrame:
@@ -174,7 +196,8 @@ def feature_ids(bundle: BundleHandle, matrix_id: str, feature_type: str | None =
 
 
 def _read_matrix_chunk_subprocess(
-    matrix_path: Path,
+    bundle: BundleHandle,
+    matrix_relative: str,
     feature_idx: list[int] | None,
     col_idx: list[int],
 ):
@@ -193,8 +216,10 @@ def _read_matrix_chunk_subprocess(
             sys.executable,
             "-m",
             "pybench.tools.read_matrix_chunk",
-            "--matrix-dir",
-            str(matrix_path),
+            "--bundle-dir",
+            str(bundle.bundle_dir),
+            "--matrix-path",
+            matrix_relative,
             "--cols-path",
             str(cols_path),
             "--out-path",
@@ -218,7 +243,7 @@ def _read_matrix_chunk_subprocess(
             detail = stderr or stdout or f"exit status {res.returncode}"
             raise GetterError(
                 "subprocess matrix read failed for "
-                f"{matrix_path.name} cols={col_idx[:3]}... len={len(col_idx)}: {detail}"
+                f"{Path(matrix_relative).name} cols={col_idx[:3]}... len={len(col_idx)}: {detail}"
             )
         return sps.load_npz(out_path).tocsc()
 
@@ -238,7 +263,7 @@ def matrix(
     if chunk_cols < 1:
         raise GetterError("PYBENCH_MATRIX_READ_CHUNK_CELLS must be >= 1")
 
-    mat_path = matrix_dir(bundle, matrix_id)
+    matrix_relative = _matrix_relative_path(bundle, matrix_id)
 
     all_feature_ids = feature_ids(bundle, matrix_id)
     all_cell_ids = cells(bundle, cell_set="all")
@@ -268,7 +293,7 @@ def matrix(
     parts = []
     for start in range(0, len(cell_idx), chunk_cols):
         part_idx = cell_idx[start : start + chunk_cols]
-        part = _read_matrix_chunk_subprocess(mat_path, feature_idx, part_idx)
+        part = _read_matrix_chunk_subprocess(bundle, matrix_relative, feature_idx, part_idx)
         parts.append(part)
 
     if not parts:

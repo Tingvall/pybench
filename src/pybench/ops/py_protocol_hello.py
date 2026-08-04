@@ -11,12 +11,19 @@ from pybench.artifacts_payload import (
     write_artifact_table_payload,
 )
 from pybench.getters import cells as get_cells
-from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt
+from pybench.protocol import (
+    error_receipt_from_exception,
+    load_request,
+    ok_receipt,
+    validate_request,
+    write_receipt,
+)
 
 PYBENCH_VERSION = "0.1.0"
 
 
 def _run(req: dict[str, Any]) -> dict[str, Any]:
+    validate_request(req)
     op_name = str(req["op_name"])
     run_id = str(req["run"]["run_id"])
     t0 = time.time()

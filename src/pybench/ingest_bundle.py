@@ -11,7 +11,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from .bundle import BundleHandle
+from .bundle import BundleHandle, bundle_relative_path, resolve_bundle_path
 from .getters import cells as get_cells
 
 
@@ -42,9 +42,12 @@ def _require_tables(bundle: BundleHandle, names: list[str]) -> None:
 
 
 def _refresh_manifest(bundle: BundleHandle) -> None:
-    man_path = bundle.bundle_dir / "manifest.json"
-    if not man_path.exists():
-        return
+    man_path = resolve_bundle_path(
+        bundle,
+        "manifest.json",
+        expected_type="file",
+        purpose="bundle manifest",
+    )
     manifest = json.loads(man_path.read_text())
     con = bundle.con
     for table_name in ("datasets", "matrices", "spaces"):
@@ -336,11 +339,24 @@ def attach_matrix(
             f"{mat2.shape} vs ({len(feature_ids_norm)}, {len(cell_ids_norm)})"
         )
 
-    rel_path = Path("mat") / str(matrix_id)
-    abs_path = bundle.bundle_dir / rel_path
+    rel_path = (Path("mat") / str(matrix_id)).as_posix()
+    _, abs_path = bundle_relative_path(
+        bundle,
+        rel_path,
+        expected_type="directory",
+        must_exist=False,
+        purpose=f"matrix output {matrix_id}",
+    )
     if abs_path.exists() and not overwrite:
         raise IngestError(f"matrix path already exists: {abs_path}")
     _write_bpcells_matrix(mat2, abs_path)
+    resolve_bundle_path(
+        bundle,
+        rel_path,
+        expected_type="directory",
+        inspect_tree=True,
+        purpose=f"matrix output {matrix_id}",
+    )
 
     created_at = _now()
     fragment_id = _new_fragment_id(matrix_id)
@@ -365,7 +381,7 @@ def attach_matrix(
                 int(mat2.shape[0]),
                 int(mat2.shape[1]),
                 "bpcells",
-                str(rel_path),
+                rel_path,
                 description,
             ),
         )
@@ -388,7 +404,7 @@ def attach_matrix(
                 fragment_id,
                 matrix_id,
                 "bpcells",
-                str(rel_path),
+                rel_path,
                 int(mat2.shape[0]),
                 int(mat2.shape[1]),
                 _json_list(feature_ids_norm),
@@ -404,6 +420,6 @@ def attach_matrix(
         "fragment_id": fragment_id,
         "n_features": int(mat2.shape[0]),
         "n_cells": int(mat2.shape[1]),
-        "path": str(rel_path),
+        "path": rel_path,
         "require_integer": bool(require_integer),
     }
