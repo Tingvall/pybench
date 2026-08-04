@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import pickle
 import time
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -14,7 +13,15 @@ from anndata import AnnData
 from pybench import close_bundle, open_bundle
 from pybench.artifacts_payload import write_artifact_path_2d_family_payload
 from pybench.getters import space as get_space
-from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt
+from pybench.protocol import (
+    TrustedModelPath,
+    error_receipt_from_exception,
+    load_request,
+    ok_receipt,
+    trusted_model_path,
+    validate_request,
+    write_receipt,
+)
 
 PYBENCH_VERSION = "0.1.0"
 
@@ -82,11 +89,12 @@ def _canonical_branch_key(col_name: Any) -> str:
     return f"branch:{str(col_name)}"
 
 
-def _load_palantir_model_payload(model_path: str) -> dict[str, Any]:
-    p = Path(model_path).expanduser().resolve()
-    if not p.exists():
-        raise PalantirProjectOpError(f"model_path not found: {p}")
-    with p.open("rb") as fh:
+def _load_palantir_model_payload(model_path: TrustedModelPath) -> dict[str, Any]:
+    if not isinstance(model_path, TrustedModelPath):
+        raise PalantirProjectOpError(
+            "MODEL_DESERIALIZATION_TRUST_REQUIRED: Palantir loading requires a validated operation path"
+        )
+    with model_path.absolute.open("rb") as fh:
         payload = pickle.load(fh)
     if not isinstance(payload, dict):
         raise PalantirProjectOpError("palantir model payload is not a dict")
@@ -189,6 +197,7 @@ def _fit_branch_curve(pt: np.ndarray,
 
 
 def _run(req: dict[str, Any]) -> dict[str, Any]:
+    validate_request(req)
     op_name = str(req["op_name"])
     run_id = str(req["run"]["run_id"])
     t0 = time.time()
@@ -199,7 +208,12 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         outputs_spec = req.get("outputs", {}) or {}
 
         plot_space_id = _resolve_plot_space_id(inputs)
-        model_path = _resolve_model_path(inputs)
+        model_path = trusted_model_path(
+            req,
+            b,
+            _resolve_model_path(inputs),
+            expected_type="file",
+        )
         payload = _load_palantir_model_payload(model_path)
         pres = payload.get("presults")
         if pres is None:

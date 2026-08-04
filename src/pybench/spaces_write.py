@@ -6,7 +6,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from .bundle import BundleHandle
+from .bundle import BundleHandle, resolve_bundle_path
 
 
 class SpaceWriteError(RuntimeError):
@@ -84,9 +84,12 @@ def _json_sanitize(x):
 
 
 def _refresh_manifest_spaces(bundle: BundleHandle) -> None:
-    man_path = bundle.bundle_dir / "manifest.json"
-    if not man_path.exists():
-        return
+    man_path = resolve_bundle_path(
+        bundle,
+        "manifest.json",
+        expected_type="file",
+        purpose="bundle manifest",
+    )
     manifest = json.loads(man_path.read_text())
     spaces_df = _df(bundle.con, "SELECT * FROM spaces")
     # JSON compatibility: convert pandas/numpy NaN to null before writing manifest.json

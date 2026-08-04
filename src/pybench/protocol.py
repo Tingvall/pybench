@@ -2,14 +2,32 @@ from __future__ import annotations
 
 import json
 import traceback as _traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .bundle import PATH_CONTRACT_VERSION, BundleHandle, resolve_bundle_path
+
 PROTOCOL_VERSION = "pybench-op-v1"
+PATH_CONTRACT = {
+    "version": PATH_CONTRACT_VERSION,
+    "durable_paths": "bundle_relative_contained",
+    "external_inputs": "explicit_import_only",
+    "serialized_models": "trusted_provenance_runtime_or_explicit_opt_in",
+}
 
 
 class ProtocolError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class TrustedModelPath:
+    """Contained model path authorized by an exact validated operation request."""
+
+    relative: str
+    absolute: Path
+    contract_version: str
 
 
 def _require_nonempty_str(x: Any, name: str) -> str:
@@ -36,6 +54,13 @@ def validate_request(req: dict[str, Any]) -> dict[str, Any]:
         raise ProtocolError("request must be a JSON object")
     if req.get("protocol_version") != PROTOCOL_VERSION:
         raise ProtocolError(f"unsupported protocol_version: {req.get('protocol_version')!r}")
+    path_contract = req.get("path_contract")
+    if not isinstance(path_contract, dict):
+        raise ProtocolError("request.path_contract must be an object")
+    if path_contract != PATH_CONTRACT:
+        raise ProtocolError(
+            "request.path_contract does not match the engine containment contract"
+        )
     _require_nonempty_str(req.get("bundle_dir"), "request.bundle_dir")
     _require_nonempty_str(req.get("op_name"), "request.op_name")
 
@@ -52,7 +77,36 @@ def validate_request(req: dict[str, Any]) -> dict[str, Any]:
     return req
 
 
+def trusted_model_path(
+    request: dict[str, Any],
+    bundle: BundleHandle,
+    model_path: str,
+    *,
+    expected_type: str = "either",
+) -> TrustedModelPath:
+    """Authorize deserialization only for an exact-contract, contained model path."""
+
+    validate_request(request)
+    from .bundle import normalize_bundle_relative_path
+
+    relative = normalize_bundle_relative_path(model_path, purpose="serialized model payload")
+    absolute = resolve_bundle_path(
+        bundle,
+        relative,
+        expected_type=expected_type,  # type: ignore[arg-type]
+        inspect_tree=True,
+        purpose="serialized model payload",
+    )
+    return TrustedModelPath(
+        relative=relative,
+        absolute=absolute,
+        contract_version=PATH_CONTRACT_VERSION,
+    )
+
+
 def validate_receipt(receipt: dict[str, Any], request: dict[str, Any] | None = None) -> dict[str, Any]:
+    if request is not None:
+        validate_request(request)
     if not isinstance(receipt, dict):
         raise ProtocolError("receipt must be a JSON object")
     if receipt.get("protocol_version") != PROTOCOL_VERSION:

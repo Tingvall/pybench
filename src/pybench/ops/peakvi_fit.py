@@ -10,10 +10,17 @@ import numpy as np
 import pandas as pd
 
 from pybench import add_space, close_bundle, open_bundle
-from pybench.artifacts_payload import write_artifact_model_ref_payload
+from pybench.artifacts_payload import publish_artifact_model_payload
+from pybench.bundle import resolve_bundle_path, resolve_declared_input_path
 from pybench.getters import matrix as get_matrix
 from pybench.getters import meta as get_meta
-from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt
+from pybench.protocol import (
+    error_receipt_from_exception,
+    load_request,
+    ok_receipt,
+    validate_request,
+    write_receipt,
+)
 
 PYBENCH_VERSION = "0.1.0"
 
@@ -31,9 +38,12 @@ def _cell_ids_from_request(req_inputs: dict[str, Any]) -> list[str]:
 
     cell_ids_path = str(req_inputs.get("cell_ids_path") or "")
     if cell_ids_path:
-        p = Path(cell_ids_path)
-        if not p.exists():
-            raise PeakVIFitOpError(f"missing required file: {p}")
+        stage_dir = str(req_inputs.get("matrix_chunks_dir") or "")
+        if not stage_dir:
+            raise PeakVIFitOpError("cell_ids_path requires an explicit matrix_chunks_dir root")
+        p = resolve_declared_input_path(
+            stage_dir, cell_ids_path, purpose="staged PeakVI cell IDs"
+        )
         out = [str(x) for x in p.read_text().splitlines() if str(x)]
         if out:
             return out
@@ -62,14 +72,19 @@ def _build_matrix_from_staged_chunks(req_inputs: dict[str, Any]):
     stage_dir = str(req_inputs.get("matrix_chunks_dir") or "")
     if not stage_dir:
         return None
-    root = Path(stage_dir)
-    if not root.exists():
-        raise PeakVIFitOpError(f"matrix_chunks_dir does not exist: {root}")
+    try:
+        root = Path(stage_dir).expanduser().resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise PeakVIFitOpError(f"matrix_chunks_dir does not exist: {stage_dir}") from exc
+    if not root.is_dir():
+        raise PeakVIFitOpError(f"matrix_chunks_dir is not a directory: {root}")
 
-    man_path = root / "manifest.json"
-    feat_path = root / "feature_ids.txt"
-    if not man_path.exists() or not feat_path.exists():
-        raise PeakVIFitOpError(f"matrix chunk staging is incomplete under: {root}")
+    man_path = resolve_bundle_path(
+        root, "manifest.json", expected_type="file", purpose="staged matrix manifest"
+    )
+    feat_path = resolve_bundle_path(
+        root, "feature_ids.txt", expected_type="file", purpose="staged feature IDs"
+    )
 
     manifest = json.loads(man_path.read_text())
     chunks = manifest.get("chunks")
@@ -85,10 +100,18 @@ def _build_matrix_from_staged_chunks(req_inputs: dict[str, Any]):
     for spec in chunks:
         if not isinstance(spec, dict):
             raise PeakVIFitOpError(f"invalid chunk entry in manifest: {spec!r}")
-        mtx_path = root / str(spec.get("mtx") or "")
-        cells_path = root / str(spec.get("cells") or "")
-        if not mtx_path.exists() or not cells_path.exists():
-            raise PeakVIFitOpError(f"missing staged chunk file(s): {mtx_path} / {cells_path}")
+        mtx_path = resolve_bundle_path(
+            root,
+            spec.get("mtx"),
+            expected_type="file",
+            purpose="staged matrix chunk",
+        )
+        cells_path = resolve_bundle_path(
+            root,
+            spec.get("cells"),
+            expected_type="file",
+            purpose="staged chunk cell IDs",
+        )
 
         part = spio.mmread(str(mtx_path))
         if sps.issparse(part):
@@ -208,14 +231,8 @@ def _train_peakvi(
     return model, latent, getattr(scvi, "__version__", None)
 
 
-def _save_model(bundle, artifact_id: str, model) -> str:
-    model_dir = Path(bundle.bundle_dir) / "artifact_models" / f"{artifact_id}_peakvi"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    model.save(str(model_dir), overwrite=True, save_anndata=False)
-    return str(model_dir)
-
-
 def _run(req: dict[str, Any]) -> dict[str, Any]:
+    validate_request(req)
     op_name = str(req["op_name"])
     run_id = str(req["run"]["run_id"])
     t0 = time.time()
@@ -279,16 +296,20 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             overwrite=True,
         )
 
-        model_path = _save_model(b, outputs_spec["model"]["artifact_id"], model)
+        model_artifact_id = outputs_spec["model"]["artifact_id"]
         out_receipts = {
-            "model": write_artifact_model_ref_payload(
+            "model": publish_artifact_model_payload(
                 b,
-                artifact_id=outputs_spec["model"]["artifact_id"],
+                artifact_id=model_artifact_id,
                 engine="peakvi",
                 model_space_id=space_id_out,
                 in_space_id=space_id_out,
                 model_type="peakvi_fit",
-                model_path=model_path,
+                model_path=f"artifact_models/{model_artifact_id}_peakvi",
+                expected_type="directory",
+                writer=lambda path: model.save(
+                    str(path), overwrite=True, save_anndata=False
+                ),
             )
         }
 

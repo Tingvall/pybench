@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import pickle
 import time
-from pathlib import Path
 from typing import Any
 
 import palantir
@@ -11,14 +10,20 @@ import pandas as pd
 
 from pybench import close_bundle, open_bundle
 from pybench.artifacts_payload import (
+    publish_artifact_model_payload,
     write_artifact_cell_vector_payload,
-    write_artifact_model_ref_payload,
     write_artifact_relation_family_payload,
     write_artifact_table_payload,
 )
 from pybench.getters import cells as get_cells
 from pybench.getters import space as get_space
-from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt
+from pybench.protocol import (
+    error_receipt_from_exception,
+    load_request,
+    ok_receipt,
+    validate_request,
+    write_receipt,
+)
 
 PYBENCH_VERSION = "0.1.0"
 
@@ -163,16 +168,13 @@ def _build_branch_summary(branch_probs: pd.DataFrame) -> list[dict[str, Any]]:
     return rows
 
 
-def _serialize_model(bundle, artifact_id: str, payload: Any) -> str:
-    model_dir = Path(bundle.bundle_dir) / "artifact_models"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    model_path = model_dir / f"{artifact_id}.pkl"
-    with model_path.open("wb") as fh:
+def _serialize_model(path, payload: Any) -> None:
+    with path.open("wb") as fh:
         pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
-    return str(model_path)
 
 
 def _run(req: dict[str, Any]) -> dict[str, Any]:
+    validate_request(req)
     op_name = str(req["op_name"])
     run_id = str(req["run"]["run_id"])
     t0 = time.time()
@@ -331,15 +333,16 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
                 "palantir_version": getattr(palantir, "__version__", None),
                 "presults": pres,
             }
-            model_path = _serialize_model(b, spec["artifact_id"], model_payload)
-            out_receipts["model"] = write_artifact_model_ref_payload(
+            out_receipts["model"] = publish_artifact_model_payload(
                 b,
                 artifact_id=spec["artifact_id"],
                 engine="palantir",
                 model_space_id=fit_space_id,
                 in_space_id=fit_space_id,
                 model_type="palantir_fit",
-                model_path=model_path,
+                model_path=f"artifact_models/{spec['artifact_id']}.pkl",
+                expected_type="file",
+                writer=lambda path: _serialize_model(path, model_payload),
             )
 
         dt = time.time() - t0

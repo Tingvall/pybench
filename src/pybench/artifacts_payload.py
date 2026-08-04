@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+import os
+import shutil
+import sqlite3
+import uuid
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
-from .bundle import BundleHandle
+from .bundle import (
+    BundleHandle,
+    bundle_relative_path,
+    normalize_bundle_relative_path,
+    resolve_bundle_path,
+)
 
 
 class PayloadWriteError(RuntimeError):
@@ -183,24 +193,169 @@ def write_artifact_model_ref_payload(
     model_type: str | None = None,
 ) -> dict[str, Any]:
     _assert_artifact_type(bundle, artifact_id, "model_ref")
+    relative, _ = bundle_relative_path(
+        bundle,
+        model_path,
+        must_exist=True,
+        inspect_tree=True,
+        purpose="artifact model payload",
+    )
     con = bundle.con
     with con:
-        con.execute("DELETE FROM artifact_model_ref WHERE artifact_id = ?", (artifact_id,))
-        con.execute(
-            """
-            INSERT INTO artifact_model_ref(artifact_id, engine, model_space_id, in_space_id, model_type, model_path)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                artifact_id,
-                str(engine),
-                str(model_space_id),
-                None if in_space_id is None else str(in_space_id),
-                str(model_type or engine),
-                str(model_path),
-            ),
+        _write_artifact_model_ref_row(
+            bundle,
+            artifact_id=artifact_id,
+            engine=engine,
+            model_space_id=model_space_id,
+            model_path=relative,
+            in_space_id=in_space_id,
+            model_type=model_type,
         )
     return {"artifact_id": artifact_id, "type": "model_ref", "engine": str(engine), "model_space_id": str(model_space_id)}
+
+
+def _write_artifact_model_ref_row(
+    bundle: BundleHandle,
+    *,
+    artifact_id: str,
+    engine: str,
+    model_space_id: str,
+    model_path: str,
+    in_space_id: str | None,
+    model_type: str | None,
+) -> None:
+    con = bundle.con
+    con.execute("DELETE FROM artifact_model_ref WHERE artifact_id = ?", (artifact_id,))
+    con.execute(
+        """
+        INSERT INTO artifact_model_ref(artifact_id, engine, model_space_id, in_space_id, model_type, model_path)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            artifact_id,
+            str(engine),
+            str(model_space_id),
+            None if in_space_id is None else str(in_space_id),
+            str(model_type or engine),
+            model_path,
+        ),
+    )
+
+
+def _remove_model_destination(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def publish_artifact_model_payload(
+    bundle: BundleHandle,
+    artifact_id: str,
+    *,
+    engine: str,
+    model_space_id: str,
+    model_path: str,
+    writer: Callable[[Path], None],
+    expected_type: str,
+    in_space_id: str | None = None,
+    model_type: str | None = None,
+    transaction_hook: Callable[[sqlite3.Connection, str], None] | None = None,
+) -> dict[str, Any]:
+    """Stage a model, atomically place it, then transactionally publish its row."""
+
+    _assert_artifact_type(bundle, artifact_id, "model_ref")
+    relative = normalize_bundle_relative_path(model_path, purpose="artifact model destination")
+    final_path = resolve_bundle_path(
+        bundle,
+        relative,
+        expected_type=expected_type,  # type: ignore[arg-type]
+        must_exist=False,
+        purpose="artifact model destination",
+    )
+    if os.path.lexists(final_path):
+        raise PayloadWriteError(f"artifact model destination already exists: {relative}")
+
+    parent_relative = str(Path(relative).parent).replace("\\", "/")
+    if parent_relative == ".":
+        raise PayloadWriteError("artifact model destination requires a bundle-owned parent")
+    parent = resolve_bundle_path(
+        bundle,
+        parent_relative,
+        expected_type="directory",
+        must_exist=False,
+        purpose="artifact model parent",
+    )
+    parent.mkdir(parents=True, exist_ok=True)
+    parent = resolve_bundle_path(
+        bundle,
+        parent_relative,
+        expected_type="directory",
+        purpose="artifact model parent",
+    )
+    staging_relative = f"{parent_relative}/.pybench-stage-{uuid.uuid4().hex}"
+    staging = resolve_bundle_path(
+        bundle,
+        staging_relative,
+        must_exist=False,
+        purpose="artifact model staging destination",
+    )
+
+    published = False
+    try:
+        writer(staging)
+        resolve_bundle_path(
+            bundle,
+            staging_relative,
+            expected_type=expected_type,  # type: ignore[arg-type]
+            inspect_tree=True,
+            purpose="staged artifact model payload",
+        )
+        # Recheck the final ancestor immediately before publication.
+        final_path = resolve_bundle_path(
+            bundle,
+            relative,
+            expected_type=expected_type,  # type: ignore[arg-type]
+            must_exist=False,
+            purpose="artifact model destination",
+        )
+        if os.path.lexists(final_path):
+            raise PayloadWriteError(f"artifact model destination already exists: {relative}")
+        os.replace(staging, final_path)
+        published = True
+        resolve_bundle_path(
+            bundle,
+            relative,
+            expected_type=expected_type,  # type: ignore[arg-type]
+            inspect_tree=True,
+            purpose="published artifact model payload",
+        )
+        with bundle.con:
+            _write_artifact_model_ref_row(
+                bundle,
+                artifact_id=artifact_id,
+                engine=engine,
+                model_space_id=model_space_id,
+                model_path=relative,
+                in_space_id=in_space_id,
+                model_type=model_type,
+            )
+            if transaction_hook is not None:
+                transaction_hook(bundle.con, relative)
+    except Exception:
+        if published:
+            _remove_model_destination(final_path)
+        raise
+    finally:
+        _remove_model_destination(staging)
+
+    return {
+        "artifact_id": artifact_id,
+        "type": "model_ref",
+        "engine": str(engine),
+        "model_space_id": str(model_space_id),
+        "model_path": relative,
+    }
 
 
 def write_artifact_table_payload(

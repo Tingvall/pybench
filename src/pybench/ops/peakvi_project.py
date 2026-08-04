@@ -12,7 +12,15 @@ from pybench.ops.peakvi_fit import (
     _build_matrix_from_staged_chunks,
     _import_scvi,
 )
-from pybench.protocol import error_receipt_from_exception, load_request, ok_receipt, write_receipt
+from pybench.protocol import (
+    TrustedModelPath,
+    error_receipt_from_exception,
+    load_request,
+    ok_receipt,
+    trusted_model_path,
+    validate_request,
+    write_receipt,
+)
 
 
 class PeakVIProjectOpError(RuntimeError):
@@ -63,20 +71,25 @@ def _build_project_anndata(req_inputs: dict[str, Any], req_params: dict[str, Any
     return adata, bk
 
 
-def _project_peakvi(model_path: str, adata, use_gpu: bool):
+def _project_peakvi(model_path: TrustedModelPath, adata, use_gpu: bool):
+    if not isinstance(model_path, TrustedModelPath):
+        raise PeakVIProjectOpError(
+            "MODEL_DESERIALIZATION_TRUST_REQUIRED: PeakVI loading requires a validated operation path"
+        )
     _ad, scvi = _import_scvi()
     accelerator = "gpu" if use_gpu else "cpu"
     device = "auto"
+    runtime_path = str(model_path.absolute)
 
     first_error: Exception | None = None
     try:
-        model = scvi.model.PEAKVI.load(model_path, adata=adata, accelerator=accelerator, device=device)
+        model = scvi.model.PEAKVI.load(runtime_path, adata=adata, accelerator=accelerator, device=device)
     except Exception as e:  # noqa: BLE001
         first_error = e
         try:
             model = scvi.model.PEAKVI.load_query_data(
                 adata=adata,
-                reference_model=model_path,
+                reference_model=runtime_path,
                 inplace_subset_query_vars=True,
                 accelerator=accelerator,
                 device=device,
@@ -94,6 +107,7 @@ def _project_peakvi(model_path: str, adata, use_gpu: bool):
 
 
 def _run(req: dict[str, Any]) -> dict[str, Any]:
+    validate_request(req)
     op_name = str(req["op_name"])
     run_id = str(req["run"]["run_id"])
     t0 = time.time()
@@ -102,7 +116,12 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         inputs = req.get("inputs", {}) or {}
         params = req.get("params", {}) or {}
 
-        model_path = _resolve_model_path(inputs)
+        model_path = trusted_model_path(
+            req,
+            b,
+            _resolve_model_path(inputs),
+            expected_type="directory",
+        )
         matrix_id = str(params.get("matrix_id") or inputs.get("matrix") or "")
         if not matrix_id:
             raise PeakVIProjectOpError("matrix_id is required")

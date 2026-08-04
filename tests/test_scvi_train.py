@@ -11,6 +11,7 @@ from scipy import io as spio
 from scipy import sparse as sps
 
 from pybench.ops import scvi_train
+from pybench.protocol import PATH_CONTRACT
 
 
 class FakeAnnData:
@@ -416,6 +417,7 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
 
     req = {
         "protocol_version": "pybench-op-v1",
+        "path_contract": dict(PATH_CONTRACT),
         "bundle_dir": str(bundle_dir),
         "op_name": "scvi_train",
         "run": {"run_id": "run_scvi"},

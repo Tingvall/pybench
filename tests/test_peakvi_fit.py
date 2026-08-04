@@ -1,9 +1,16 @@
+import json
+import sqlite3
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import pytest
 from scipy import io as spio
 from scipy import sparse as sps
 
+from pybench.bundle import BundlePathError
 from pybench.ops import peakvi_fit
+from pybench.protocol import PATH_CONTRACT
 
 
 def test_train_peakvi_wires_script_parity_kwargs(monkeypatch):
@@ -153,3 +160,111 @@ def test_build_anndata_reads_staged_matrix_chunks(tmp_path, monkeypatch):
     assert adata.X.shape == (2, 3)
     assert list(adata.obs.index) == ["c2", "c1"]
     assert list(adata.var.index) == ["f1", "f2", "f3"]
+
+
+@pytest.mark.parametrize("chunk_path", ["../outside.mtx", "/tmp/outside.mtx", "C:\\outside.mtx"])
+def test_staged_peakvi_chunk_paths_reject_escape_before_matrix_read(
+    tmp_path, monkeypatch, chunk_path
+):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "feature_ids.txt").write_text("f1\n")
+    (stage / "cells.txt").write_text("c1\n")
+    (stage / "manifest.json").write_text(
+        '{"chunks":[{"mtx":' + repr(chunk_path).replace("'", '"') + ',"cells":"cells.txt"}]}'
+    )
+    touched = False
+
+    def forbidden_mmread(_path):
+        nonlocal touched
+        touched = True
+        raise AssertionError("matrix bytes must not be read")
+
+    monkeypatch.setattr(spio, "mmread", forbidden_mmread)
+    with pytest.raises(BundlePathError):
+        peakvi_fit._build_matrix_from_staged_chunks({"matrix_chunks_dir": str(stage)})
+    assert touched is False
+
+
+def test_staged_peakvi_chunk_rejects_symlink_escape_before_matrix_read(
+    tmp_path, monkeypatch
+):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "feature_ids.txt").write_text("f1\n")
+    (stage / "cells.txt").write_text("c1\n")
+    outside = tmp_path / "outside.mtx"
+    outside.write_text("must not be read")
+    (stage / "chunk.mtx").symlink_to(outside)
+    (stage / "manifest.json").write_text(
+        '{"chunks":[{"mtx":"chunk.mtx","cells":"cells.txt"}]}'
+    )
+    touched = False
+
+    def forbidden_mmread(_path):
+        nonlocal touched
+        touched = True
+        raise AssertionError("matrix bytes must not be read")
+
+    monkeypatch.setattr(spio, "mmread", forbidden_mmread)
+    with pytest.raises(BundlePathError, match="PATH_SYMLINK_ESCAPE"):
+        peakvi_fit._build_matrix_from_staged_chunks({"matrix_chunks_dir": str(stage)})
+    assert touched is False
+
+
+def test_peakvi_fit_persists_relative_contained_model_path(tmp_path, monkeypatch):
+    root = tmp_path / "bundle"
+    (root / "db").mkdir(parents=True)
+    con = sqlite3.connect(root / "db" / "app.sqlite")
+    con.executescript(
+        """
+        CREATE TABLE artifacts (artifact_id TEXT PRIMARY KEY, type TEXT NOT NULL);
+        CREATE TABLE artifact_model_ref (
+          artifact_id TEXT PRIMARY KEY, engine TEXT, model_space_id TEXT,
+          in_space_id TEXT, model_type TEXT, model_path TEXT
+        );
+        INSERT INTO artifacts VALUES ('peakvi_model', 'model_ref');
+        """
+    )
+    con.commit()
+    con.close()
+    (root / "manifest.json").write_text(
+        json.dumps({"storage": {"sqlite": {"path": "db/app.sqlite"}}})
+    )
+
+    class FakeAdata:
+        obs_names = pd.Index(["c1", "c2"])
+
+    class FakeModel:
+        def save(self, path, **_kwargs):
+            target = Path(path)
+            target.mkdir(parents=True)
+            (target / "model.pt").write_bytes(b"peakvi")
+
+    monkeypatch.setattr(peakvi_fit, "_build_anndata", lambda *_args: (FakeAdata(), None))
+    monkeypatch.setattr(
+        peakvi_fit,
+        "_train_peakvi",
+        lambda **_kwargs: (FakeModel(), np.ones((2, 2), dtype=float), "test-scvi"),
+    )
+    monkeypatch.setattr(peakvi_fit, "add_space", lambda *_args, **_kwargs: {})
+    request = {
+        "protocol_version": "pybench-op-v1",
+        "path_contract": dict(PATH_CONTRACT),
+        "bundle_dir": str(root),
+        "op_name": "peakvi_fit",
+        "run": {"run_id": "fit-relative"},
+        "inputs": {"matrix": "ATAC", "cell_ids": ["c1", "c2"]},
+        "params": {"matrix_id": "ATAC", "n_latent": 2},
+        "outputs": {"model": {"artifact_id": "peakvi_model", "type": "model_ref"}},
+    }
+    receipt = peakvi_fit._run(request)
+    assert receipt["status"] == "ok"
+    con = sqlite3.connect(root / "db" / "app.sqlite")
+    try:
+        stored = con.execute("SELECT model_path FROM artifact_model_ref").fetchone()[0]
+    finally:
+        con.close()
+    assert stored == "artifact_models/peakvi_model_peakvi"
+    assert not Path(stored).is_absolute()
+    assert (root / stored / "model.pt").exists()

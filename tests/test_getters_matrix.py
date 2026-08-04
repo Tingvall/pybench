@@ -6,16 +6,18 @@ def test_matrix_getter_chunks_large_cell_selection(monkeypatch):
 
     calls = []
 
-    def fake_read_chunk(matrix_path, feature_idx, col_idx):
+    def fake_read_chunk(bundle, matrix_relative, feature_idx, col_idx):
         import numpy as np
         from scipy import sparse as sps
 
-        calls.append((matrix_path, feature_idx, list(col_idx)))
+        calls.append((matrix_relative, feature_idx, list(col_idx)))
         data = np.arange(3 * len(col_idx), dtype=float).reshape(3, len(col_idx))
         return sps.csc_matrix(data)
 
     monkeypatch.setattr(getters, "_read_matrix_chunk_subprocess", fake_read_chunk)
-    monkeypatch.setattr(getters, "matrix_dir", lambda bundle, matrix_id: "/tmp/fake")
+    monkeypatch.setattr(
+        getters, "_matrix_relative_path", lambda bundle, matrix_id: "mat/fake"
+    )
     monkeypatch.setattr(getters, "feature_ids", lambda bundle, matrix_id: ["f1", "f2", "f3"])
     monkeypatch.setattr(
         getters,
