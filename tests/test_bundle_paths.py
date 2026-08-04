@@ -13,7 +13,7 @@ from pybench.artifacts_payload import (
 )
 from pybench.bundle import BundlePathError, close_bundle, open_bundle, resolve_bundle_path
 from pybench.getters import matrix_dir
-from pybench.legacy_import import import_legacy_model
+from pybench.legacy_import import LegacyModelImportError, import_legacy_model
 
 
 def _init_bundle(root: Path) -> Path:
@@ -387,5 +387,31 @@ def test_failed_legacy_import_rolls_back_registry_and_destination(tmp_path: Path
         imported = root / "artifact_models" / "imported"
         assert not imported.exists() or not list(imported.iterdir())
         assert not list(root.glob("**/.pybench-stage-*"))
+    finally:
+        close_bundle(b)
+
+
+def test_legacy_import_rejects_operator_selected_symlink_source(tmp_path: Path):
+    root = _init_bundle(tmp_path / "bundle")
+    external = tmp_path / "external.pkl"
+    external.write_bytes(b"legacy-model")
+    selected_link = tmp_path / "selected-link.pkl"
+    selected_link.symlink_to(external)
+    b = open_bundle(root)
+    try:
+        b.con.execute(
+            """
+            INSERT INTO artifact_model_ref(
+              artifact_id, engine, model_space_id, in_space_id, model_type, model_path
+            ) VALUES ('model_art', 'legacy', 'space', 'space', 'legacy_fit', ?)
+            """,
+            (str(selected_link),),
+        )
+        b.con.commit()
+        with pytest.raises(LegacyModelImportError, match="rejects symlink sources"):
+            import_legacy_model(b, "model_art", selected_link)
+        assert b.con.execute(
+            "SELECT model_path FROM artifact_model_ref WHERE artifact_id='model_art'"
+        ).fetchone()[0] == str(selected_link)
     finally:
         close_bundle(b)

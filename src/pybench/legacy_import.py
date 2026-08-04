@@ -85,7 +85,10 @@ def import_legacy_model(
 ) -> dict[str, Any]:
     """Explicitly copy an operator-selected legacy model into portable storage."""
 
-    source_path = Path(source).expanduser().resolve(strict=True)
+    selected_source = Path(source).expanduser()
+    if selected_source.is_symlink():
+        raise LegacyModelImportError("legacy model import rejects symlink sources")
+    source_path = selected_source.resolve(strict=True)
     metadata = _model_metadata(bundle, artifact_id)
     checksum = _source_checksum(source_path)
     suffix = "" if source_path.is_dir() else source_path.suffix
