@@ -7,8 +7,9 @@ import pandas as pd
 import pytest
 from scipy import sparse as sps
 
+from capability_helpers import read_only_request
 from pybench.ops import peakvi_project
-from pybench.protocol import PATH_CONTRACT, TrustedModelPath
+from pybench.protocol import TrustedModelPath
 
 
 def test_project_peakvi_prefers_load_and_returns_latent(monkeypatch, tmp_path):
@@ -150,16 +151,13 @@ def test_peakvi_project_resolves_relative_model_after_bundle_move(monkeypatch, t
         peakvi_project, "_build_project_anndata", lambda *_args, **_kwargs: (adata, None)
     )
     monkeypatch.setattr(peakvi_project, "add_space", lambda *_args, **_kwargs: {})
-    req = {
-        "protocol_version": "pybench-op-v1",
-        "path_contract": dict(PATH_CONTRACT),
-        "bundle_dir": str(moved),
-        "op_name": "peakvi_project",
-        "run": {"run_id": "moved_project"},
-        "inputs": {"matrix": "ATAC", "model_path": model_relative},
-        "params": {"matrix_id": "ATAC", "space_id_out": "projected"},
-        "outputs": {},
-    }
+    req = read_only_request(
+        moved,
+        op_name="peakvi_project",
+        run_id="moved_project",
+        inputs={"matrix": "ATAC", "model_path": model_relative},
+        params={"matrix_id": "ATAC", "space_id_out": "projected"},
+    )
     receipt = peakvi_project._run(req)
     assert receipt["status"] == "ok"
     assert captured["model_path"] == str((moved / model_relative).resolve())

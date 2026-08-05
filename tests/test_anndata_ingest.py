@@ -8,7 +8,8 @@ import anndata
 import numpy as np
 import pandas as pd
 
-from pybench.bundle import close_bundle, open_bundle
+from capability_helpers import raw_write_bundle, sqlite_allowance
+from pybench.bundle import close_bundle
 from pybench.getters import cells, feature_ids, matrix, matrix_info, meta, space, spaces
 from pybench.ingest.anndata import ingest_anndata_stage
 
@@ -59,7 +60,21 @@ def test_ingest_anndata_stage_obs_and_obsm(tmp_path: Path):
     h5ad = tmp_path / "demo.h5ad"
     ad.write_h5ad(h5ad)
 
-    b = open_bundle(bundle_dir)
+    allowances = []
+    for space_id in ("umap", "pca"):
+        allowances.extend(
+            [
+                sqlite_allowance(space_id, space_id, "space", "spaces", "space_id"),
+                sqlite_allowance(
+                    space_id,
+                    space_id,
+                    "space",
+                    "space_2d" if space_id == "umap" else "space_coords",
+                    "space_id",
+                ),
+            ]
+        )
+    b = raw_write_bundle(bundle_dir, allowances)
     try:
         out = ingest_anndata_stage(
             b,
@@ -111,7 +126,7 @@ def test_space_getter_uses_canonical_present_cell_order_when_omitted(tmp_path: P
     finally:
         con.close()
 
-    b = open_bundle(bundle_dir)
+    b = raw_write_bundle(bundle_dir)
     try:
         got = space(b, "ordered")
         assert got["cell_id"].tolist() == ["cell_z", "cell_a", "cell_m"]
@@ -132,7 +147,7 @@ def test_ingest_anndata_stage_writes_integer_matrix(tmp_path: Path):
     h5ad = tmp_path / "demo_matrix.h5ad"
     ad.write_h5ad(h5ad)
 
-    b = open_bundle(bundle_dir)
+    b = raw_write_bundle(bundle_dir)
     try:
         out = ingest_anndata_stage(
             b,

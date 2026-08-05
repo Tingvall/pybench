@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from pybench import add_space, close_bundle, open_bundle
+from pybench import add_space, close_bundle
 from pybench.artifacts_payload import (
     publish_artifact_model_payload,
     write_artifact_table_payload,
@@ -19,9 +19,12 @@ from pybench.protocol import (
     error_receipt_from_exception,
     load_request,
     ok_receipt,
+    open_bundle_for_request,
     validate_request,
     write_receipt,
 )
+from pybench.testing_boundary import enabled as mock_training_enabled
+from pybench.testing_boundary import run_mock_training_boundary
 
 PYBENCH_VERSION = "0.1.0"
 STAGED_PROTOCOL = "scworkbench_sparse_matrix_chunks_v1"
@@ -587,8 +590,16 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
     op_name = str(req["op_name"])
     run_id = str(req["run"]["run_id"])
     t0 = time.time()
-    b = open_bundle(req["bundle_dir"])
+    b = open_bundle_for_request(req)
     try:
+        if mock_training_enabled():
+            return ok_receipt(
+                op_name=op_name,
+                run_id=run_id,
+                outputs=run_mock_training_boundary(req, b),
+                request=req,
+                bundle=b,
+            )
         inputs = req.get("inputs", {}) or {}
         params = req.get("params", {}) or {}
         outputs_spec = req.get("outputs", {}) or {}
@@ -705,6 +716,8 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             warnings=[],
             timings={"total_sec": round(dt, 6)},
             pybench_version=PYBENCH_VERSION,
+            request=req,
+            bundle=b,
         )
     finally:
         close_bundle(b)
@@ -724,6 +737,7 @@ def main() -> int:
             op_name=str(req.get("op_name", "scvi_train")),
             run_id=str((req.get("run") or {}).get("run_id", "<unknown>")),
             exc=e,
+            request=req,
         )
         write_receipt(args.receipt, rec, request=None)
         return 1

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from .bundle import BundleHandle, resolve_bundle_path
+from .capability import authorize_sqlite, record_write
 
 
 class SpaceWriteError(RuntimeError):
@@ -118,6 +119,10 @@ def add_space(
 
     cell_ids, mat = _normalize_coords(coords, cell_id=cell_id)
     dims = int(mat.shape[1])
+    registry_allowance = authorize_sqlite(bundle, "spaces", "space_id", sid)
+    coords_allowance = authorize_sqlite(
+        bundle, "space_2d" if dims == 2 else "space_coords", "space_id", sid
+    )
     _assert_cells_exist(bundle, cell_ids)
 
     exists = con.execute("SELECT 1 FROM spaces WHERE space_id = ?", (sid,)).fetchone() is not None
@@ -173,6 +178,8 @@ def add_space(
                 pass
 
     _refresh_manifest_spaces(bundle)
+    record_write(bundle, registry_allowance)
+    record_write(bundle, coords_allowance)
     return {
         "space_id": sid,
         "dims": dims,

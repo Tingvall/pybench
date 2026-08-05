@@ -17,6 +17,9 @@ class BundleHandle:
     bundle_dir: Path
     manifest: dict[str, Any]
     con: sqlite3.Connection
+    access_mode: Literal["read_only", "staging_write"] = "read_only"
+    capability: dict[str, Any] | None = None
+    write_journal: list[dict[str, Any]] | None = None
 
 
 class BundleError(RuntimeError):
@@ -235,7 +238,12 @@ def resolve_declared_input_path(
     )
 
 
-def open_bundle(bundle_dir: str | Path) -> BundleHandle:
+def open_bundle(
+    bundle_dir: str | Path,
+    *,
+    access_mode: Literal["read_only", "staging_write"] = "read_only",
+    capability: dict[str, Any] | None = None,
+) -> BundleHandle:
     try:
         root = Path(bundle_dir).expanduser().resolve(strict=True)
     except (FileNotFoundError, RuntimeError) as exc:
@@ -277,9 +285,26 @@ def open_bundle(bundle_dir: str | Path) -> BundleHandle:
             must_exist=False,
             purpose="bundle SQLite sidecar",
         )
-    con = sqlite3.connect(str(db_path))
+    if access_mode not in {"read_only", "staging_write"}:
+        raise BundleError(f"unsupported bundle access mode: {access_mode!r}")
+    if access_mode == "staging_write" and capability is None:
+        raise BundleError(
+            "PYBENCH_CAPABILITY_MISMATCH: staging_write requires a validated execution capability"
+        )
+    if access_mode == "read_only":
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        con.execute("PRAGMA query_only = ON")
+    else:
+        con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row
-    return BundleHandle(bundle_dir=root, manifest=manifest, con=con)
+    return BundleHandle(
+        bundle_dir=root,
+        manifest=manifest,
+        con=con,
+        access_mode=access_mode,
+        capability=capability,
+        write_journal=[],
+    )
 
 
 def close_bundle(bundle: BundleHandle) -> None:

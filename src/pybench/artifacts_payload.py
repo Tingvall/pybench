@@ -15,6 +15,7 @@ from .bundle import (
     normalize_bundle_relative_path,
     resolve_bundle_path,
 )
+from .capability import authorize_payload, authorize_sqlite, record_write
 
 
 class PayloadWriteError(RuntimeError):
@@ -45,6 +46,7 @@ def write_artifact_cell_vector_payload(
     value: Sequence[Any],
     value_type: str = "categorical",
 ) -> dict[str, Any]:
+    allowance = authorize_sqlite(bundle, "artifact_labels", "artifact_id", artifact_id)
     n = len(cell_id)
     if len(value) != n:
         raise PayloadWriteError("cell_vector: cell_id/value length mismatch")
@@ -75,6 +77,7 @@ def write_artifact_cell_vector_payload(
             """,
             rows,
         )
+    record_write(bundle, allowance)
     return {"artifact_id": artifact_id, "type": "cell_vector", "rows_written": n, "value_type": value_type}
 
 
@@ -85,6 +88,7 @@ def write_artifact_cell_vector_family_payload(
     cell_id: Sequence[str],
     pseudotime: Sequence[float],
 ) -> dict[str, Any]:
+    allowance = authorize_sqlite(bundle, "artifact_pseudotime", "artifact_id", artifact_id)
     n = len(lineage_id)
     if len(cell_id) != n or len(pseudotime) != n:
         raise PayloadWriteError("cell_vector_family: length mismatch")
@@ -104,6 +108,7 @@ def write_artifact_cell_vector_family_payload(
             """,
             rows,
         )
+    record_write(bundle, allowance)
     return {"artifact_id": artifact_id, "type": "cell_vector_family", "rows_written": n}
 
 
@@ -116,6 +121,7 @@ def write_artifact_relation_family_payload(
     value: Sequence[float] | None = None,
     distance: Sequence[float] | None = None,
 ) -> dict[str, Any]:
+    allowance = authorize_sqlite(bundle, "artifact_relation_rows", "artifact_id", artifact_id)
     n = len(relation_key)
     if len(cell_id) != n:
         raise PayloadWriteError("relation_family: relation_key/cell_id length mismatch")
@@ -150,6 +156,7 @@ def write_artifact_relation_family_payload(
             """,
             rows,
         )
+    record_write(bundle, allowance)
     return {"artifact_id": artifact_id, "type": "relation_family", "rows_written": n}
 
 
@@ -161,6 +168,7 @@ def write_artifact_path_2d_family_payload(
     x: Sequence[float],
     y: Sequence[float],
 ) -> dict[str, Any]:
+    allowance = authorize_sqlite(bundle, "artifact_curves_2d", "artifact_id", artifact_id)
     n = len(lineage_id)
     if len(point) != n or len(x) != n or len(y) != n:
         raise PayloadWriteError("path_2d_family: length mismatch")
@@ -179,6 +187,7 @@ def write_artifact_path_2d_family_payload(
             """,
             rows,
         )
+    record_write(bundle, allowance)
     return {"artifact_id": artifact_id, "type": "path_2d_family", "rows_written": n}
 
 
@@ -192,6 +201,8 @@ def write_artifact_model_ref_payload(
     in_space_id: str | None = None,
     model_type: str | None = None,
 ) -> dict[str, Any]:
+    sqlite_allowance = authorize_sqlite(bundle, "artifact_model_ref", "artifact_id", artifact_id)
+    authorize_payload(bundle, model_path, artifact_id)
     _assert_artifact_type(bundle, artifact_id, "model_ref")
     relative, _ = bundle_relative_path(
         bundle,
@@ -211,6 +222,7 @@ def write_artifact_model_ref_payload(
             in_space_id=in_space_id,
             model_type=model_type,
         )
+    record_write(bundle, sqlite_allowance)
     return {"artifact_id": artifact_id, "type": "model_ref", "engine": str(engine), "model_space_id": str(model_space_id)}
 
 
@@ -264,6 +276,8 @@ def publish_artifact_model_payload(
 ) -> dict[str, Any]:
     """Stage a model, atomically place it, then transactionally publish its row."""
 
+    sqlite_allowance = authorize_sqlite(bundle, "artifact_model_ref", "artifact_id", artifact_id)
+    payload_allowance = authorize_payload(bundle, model_path, artifact_id)
     _assert_artifact_type(bundle, artifact_id, "model_ref")
     relative = normalize_bundle_relative_path(model_path, purpose="artifact model destination")
     final_path = resolve_bundle_path(
@@ -349,6 +363,8 @@ def publish_artifact_model_payload(
     finally:
         _remove_model_destination(staging)
 
+    record_write(bundle, sqlite_allowance)
+    record_write(bundle, payload_allowance)
     return {
         "artifact_id": artifact_id,
         "type": "model_ref",
@@ -368,6 +384,8 @@ def write_artifact_table_payload(
     entity_kind: str = "generic",
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    table_allowance = authorize_sqlite(bundle, "artifact_tables", "artifact_id", artifact_id)
+    rows_allowance = authorize_sqlite(bundle, "artifact_table_rows", "artifact_id", artifact_id)
     if artifact_type not in {"feature_table", "obs_table"}:
         raise PayloadWriteError(f"table payload: unsupported artifact_type={artifact_type}")
     _assert_artifact_type(bundle, artifact_id, artifact_type)
@@ -399,4 +417,6 @@ def write_artifact_table_payload(
                 """,
                 rows,
             )
+    record_write(bundle, table_allowance)
+    record_write(bundle, rows_allowance)
     return {"artifact_id": artifact_id, "type": artifact_type, "rows_written": len(table_rows), "table_type": str(table_type), "entity_kind": str(entity_kind)}

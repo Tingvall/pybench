@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from capability_helpers import raw_write_bundle, sqlite_allowance
 from pybench.artifacts_payload import write_artifact_cell_vector_payload
 from pybench.bundle import close_bundle, open_bundle
 from pybench.getters import art_get_row, art_list
@@ -121,7 +122,10 @@ def test_write_artifact_cell_vector_payload_matches_scworkbench_shape(tmp_path: 
     bundle_dir = tmp_path / "mini_bundle"
     _init_artifact_bundle(bundle_dir)
 
-    b = open_bundle(bundle_dir)
+    b = raw_write_bundle(
+        bundle_dir,
+        [sqlite_allowance("vector", "cell_vector_test", "cell_vector", "artifact_labels", "artifact_id")],
+    )
     try:
         receipt = write_artifact_cell_vector_payload(
             b,

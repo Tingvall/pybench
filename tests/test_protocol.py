@@ -6,11 +6,27 @@ from pybench.protocol import PATH_CONTRACT, ProtocolError, validate_receipt, val
 
 def _valid_request():
     return {
-        "protocol_version": "pybench-op-v1",
+        "message_type": "request",
+        "protocol_version": "pybench-op-v2",
         "path_contract": dict(PATH_CONTRACT),
         "bundle_dir": "/tmp/bundle",
         "op_name": "demo",
-        "run": {"run_id": "run_1"},
+        "run": {"session_id": "session_1", "run_id": "run_1"},
+        "execution_capability": {
+            "capability_id": "cap_1",
+            "mode": "read_only",
+            "session_id": "session_1",
+            "run_id": "run_1",
+            "source_attestation": {
+                "scheme": "scworkbench-scientific-state-v1",
+                "content_sha256": "1" * 64,
+            },
+            "staging_identity": {
+                "root_sha256": "2" * 64,
+                "checkpoint_generation": "read",
+            },
+            "write_allowlist": [],
+        },
         "inputs": {},
         "params": {},
         "outputs": {},
@@ -78,7 +94,7 @@ def test_operation_rejects_path_contract_before_bundle_open(monkeypatch):
         opened = True
         raise AssertionError("bundle open must not be reached")
 
-    monkeypatch.setattr(py_protocol_hello, "open_bundle", forbidden_open)
+    monkeypatch.setattr(py_protocol_hello, "open_bundle_for_request", forbidden_open)
     with pytest.raises(ProtocolError, match="path_contract"):
         py_protocol_hello._run(req)
     assert opened is False

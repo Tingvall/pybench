@@ -8,9 +8,9 @@ import pytest
 from scipy import io as spio
 from scipy import sparse as sps
 
+from capability_helpers import payload_allowance, sqlite_allowance, v2_request
 from pybench.bundle import BundlePathError
 from pybench.ops import peakvi_fit
-from pybench.protocol import PATH_CONTRACT
 
 
 def test_train_peakvi_wires_script_parity_kwargs(monkeypatch):
@@ -248,16 +248,23 @@ def test_peakvi_fit_persists_relative_contained_model_path(tmp_path, monkeypatch
         lambda **_kwargs: (FakeModel(), np.ones((2, 2), dtype=float), "test-scvi"),
     )
     monkeypatch.setattr(peakvi_fit, "add_space", lambda *_args, **_kwargs: {})
-    request = {
-        "protocol_version": "pybench-op-v1",
-        "path_contract": dict(PATH_CONTRACT),
-        "bundle_dir": str(root),
-        "op_name": "peakvi_fit",
-        "run": {"run_id": "fit-relative"},
-        "inputs": {"matrix": "ATAC", "cell_ids": ["c1", "c2"]},
-        "params": {"matrix_id": "ATAC", "n_latent": 2},
-        "outputs": {"model": {"artifact_id": "peakvi_model", "type": "model_ref"}},
-    }
+    outputs = {"model": {"artifact_id": "peakvi_model", "type": "model_ref"}}
+    request = v2_request(
+        root,
+        op_name="peakvi_fit",
+        run_id="fit-relative",
+        inputs={"matrix": "ATAC", "cell_ids": ["c1", "c2"]},
+        params={"matrix_id": "ATAC", "n_latent": 2},
+        outputs=outputs,
+        allowances=[
+            sqlite_allowance(
+                "model", "peakvi_model", "model_ref", "artifact_model_ref", "artifact_id"
+            ),
+            payload_allowance(
+                "model", "peakvi_model", "model_ref", "artifact_models/peakvi_model"
+            ),
+        ],
+    )
     receipt = peakvi_fit._run(request)
     assert receipt["status"] == "ok"
     con = sqlite3.connect(root / "db" / "app.sqlite")

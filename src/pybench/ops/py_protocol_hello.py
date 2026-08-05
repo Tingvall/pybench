@@ -4,7 +4,7 @@ import argparse
 import time
 from typing import Any
 
-from pybench import close_bundle, open_bundle
+from pybench import close_bundle
 from pybench.artifacts_payload import (
     write_artifact_cell_vector_payload,
     write_artifact_relation_family_payload,
@@ -15,6 +15,7 @@ from pybench.protocol import (
     error_receipt_from_exception,
     load_request,
     ok_receipt,
+    open_bundle_for_request,
     validate_request,
     write_receipt,
 )
@@ -27,7 +28,7 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
     op_name = str(req["op_name"])
     run_id = str(req["run"]["run_id"])
     t0 = time.time()
-    b = open_bundle(req["bundle_dir"])
+    b = open_bundle_for_request(req)
     try:
         inputs = req.get("inputs", {})
         params = req.get("params", {})
@@ -95,6 +96,8 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             warnings=[],
             timings={"total_sec": round(dt, 6)},
             pybench_version=PYBENCH_VERSION,
+            request=req,
+            bundle=b,
         )
     finally:
         close_bundle(b)
@@ -110,7 +113,7 @@ def main() -> int:
     try:
         rec = _run(req)
     except Exception as e:  # noqa: BLE001
-        rec = error_receipt_from_exception(op_name=str(req.get("op_name", "<unknown>")), run_id=str((req.get("run") or {}).get("run_id", "<unknown>")), exc=e)
+        rec = error_receipt_from_exception(op_name=str(req.get("op_name", "<unknown>")), run_id=str((req.get("run") or {}).get("run_id", "<unknown>")), exc=e, request=req)
         write_receipt(args.receipt, rec, request=None)
         return 1
 

@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from capability_helpers import read_only_request
 from pybench.bundle import BundlePathError, close_bundle, open_bundle
 from pybench.ops.palantir_project import _load_palantir_model_payload
-from pybench.protocol import PATH_CONTRACT, trusted_model_path
+from pybench.protocol import trusted_model_path
 
 
 def test_palantir_project_loads_moved_contained_model_only_through_trusted_request(
@@ -30,16 +31,12 @@ def test_palantir_project_loads_moved_contained_model_only_through_trusted_reque
     moved.parent.mkdir()
     shutil.copytree(source, moved)
 
-    request = {
-        "protocol_version": "pybench-op-v1",
-        "path_contract": dict(PATH_CONTRACT),
-        "bundle_dir": str(moved),
-        "op_name": "palantir_project",
-        "run": {"run_id": "moved-palantir"},
-        "inputs": {"model_path": relative, "plot_space": "umap"},
-        "params": {},
-        "outputs": {},
-    }
+    request = read_only_request(
+        moved,
+        op_name="palantir_project",
+        run_id="moved-palantir",
+        inputs={"model_path": relative, "plot_space": "umap"},
+    )
     bundle = open_bundle(moved)
     try:
         trusted = trusted_model_path(request, bundle, relative, expected_type="file")

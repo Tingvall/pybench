@@ -42,6 +42,7 @@ packages = ["src/pybench"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "CITATION.cff" = "pybench/CITATION.cff"
+"protocol" = "pybench/protocol_assets"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

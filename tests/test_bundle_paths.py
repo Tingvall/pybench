@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from capability_helpers import payload_allowance, raw_write_bundle, sqlite_allowance
 from pybench.artifacts_payload import (
     publish_artifact_model_payload,
     write_artifact_model_ref_payload,
@@ -56,6 +57,24 @@ def _init_bundle(root: Path) -> Path:
         json.dumps({"storage": {"sqlite": {"path": "db/app.sqlite"}}})
     )
     return root
+
+
+def _open_test_stage(root: Path):
+    return raw_write_bundle(
+        root,
+        [
+            sqlite_allowance(
+                "model", "model_art", "model_ref", "artifact_model_ref", "artifact_id"
+            ),
+            payload_allowance("model", "model_art", "model_ref", "artifact_models/model"),
+            payload_allowance(
+                "model",
+                "model_art",
+                "model_ref",
+                "artifact_models/imported/model_art",
+            ),
+        ],
+    )
 
 
 @pytest.mark.parametrize(
@@ -167,7 +186,7 @@ def test_open_bundle_rejects_sqlite_sidecar_symlink_before_connect(tmp_path: Pat
 
 def test_matrix_registry_path_and_nested_tree_links_are_rejected(tmp_path: Path):
     root = _init_bundle(tmp_path / "bundle")
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         b.con.execute(
             "INSERT INTO matrices(matrix_id, path) VALUES ('m1', '../outside-matrix')"
@@ -192,7 +211,7 @@ def test_model_writer_stores_only_relative_contained_paths(tmp_path: Path):
     root = _init_bundle(tmp_path / "bundle")
     (root / "artifact_models").mkdir()
     (root / "artifact_models" / "model.pkl").write_bytes(b"model")
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         result = write_artifact_model_ref_payload(
             b,
@@ -222,7 +241,7 @@ def test_model_writer_stores_only_relative_contained_paths(tmp_path: Path):
 
 def test_publication_failure_removes_registry_and_partial_destination(tmp_path: Path):
     root = _init_bundle(tmp_path / "bundle")
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         b.con.execute(
             """
@@ -258,7 +277,7 @@ def test_publication_rejects_top_level_and_nested_symlink_escape(tmp_path: Path)
     outside.mkdir()
     root = _init_bundle(tmp_path / "bundle")
     (root / "artifact_models").symlink_to(outside, target_is_directory=True)
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         with pytest.raises(BundlePathError, match="PATH_SYMLINK_ESCAPE"):
             publish_artifact_model_payload(
@@ -274,7 +293,7 @@ def test_publication_rejects_top_level_and_nested_symlink_escape(tmp_path: Path)
         close_bundle(b)
 
     root = _init_bundle(tmp_path / "bundle-nested")
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         outside_file = tmp_path / "outside-state.bin"
         outside_file.write_bytes(b"external")
@@ -311,7 +330,7 @@ def test_recipient_path_inspection_never_deserializes_adversarial_model(
         raise AssertionError("recipient inspection must not deserialize model bytes")
 
     monkeypatch.setattr(pickle, "load", forbidden_load)
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         resolved = resolve_bundle_path(
             b, "artifact_models/adversarial.pkl", purpose="recipient model inspection"
@@ -325,7 +344,7 @@ def test_explicit_legacy_import_copies_and_records_external_provenance(tmp_path:
     root = _init_bundle(tmp_path / "bundle")
     external = tmp_path / "operator-selected.pkl"
     external.write_bytes(b"legacy-model")
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         b.con.execute(
             """
@@ -360,7 +379,7 @@ def test_failed_legacy_import_rolls_back_registry_and_destination(tmp_path: Path
     root = _init_bundle(tmp_path / "bundle")
     external = tmp_path / "operator-selected.pkl"
     external.write_bytes(b"legacy-model")
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         b.con.execute(
             """
@@ -397,7 +416,7 @@ def test_legacy_import_rejects_operator_selected_symlink_source(tmp_path: Path):
     external.write_bytes(b"legacy-model")
     selected_link = tmp_path / "selected-link.pkl"
     selected_link.symlink_to(external)
-    b = open_bundle(root)
+    b = _open_test_stage(root)
     try:
         b.con.execute(
             """

@@ -5,15 +5,49 @@ Python runtime for `scworkbench` bundles.
 Purpose:
 - read bundle data directly (SQLite + payload files)
 - run Python-native methods (for example `palantir`, `scvi-tools`)
-- write primitive payloads directly to the bundle
+- write primitive payloads only inside an engine-owned isolated session stage
 - return a compact run receipt to the bench (R engine)
 
-`pybench` does **not** own run registry or provenance in v1. The bench remains the authority for those.
+`pybench` does **not** own the run registry or provenance. The R engine remains
+the authority and audits every isolated Python transition before publication.
+
+## Operation protocol v2
+
+Writable operation protocol v1 is disabled. `pybench-op-v2` requires an
+explicit execution capability bound to one session, preallocated run, source
+attestation, staging-root identity, checkpoint generation, and output
+allowlist. The canonical schema and fixtures are vendored byte-for-byte under
+`protocol/`; their authoritative Forge schema SHA-256 is
+`d5e80b58e4f18b37d0e906e7dac127fd17fbb88ea56dd83926406691303b655b`
+(scworkbench commit `be9f006675891c65701b0e926ec4dc1c2fa141fe`, with stage-marker follow-up
+`19ef32b`).
+
+Bundle opens use one of two modes:
+
+- `read_only` uses SQLite URI `mode=ro` plus `PRAGMA query_only=ON`; shared
+  writers fail before mutation and SQLite cannot create WAL/SHM sidecars.
+- `staging_write` requires `.scworkbench-pybench-stage.json` to echo the exact
+  capability/session/run/source/root/checkpoint binding before the writable
+  connection opens. SQLite authorizers deny DDL, undeclared tables, and key
+  values outside the allowlist. Payload resolution rejects absolute paths,
+  traversal, and symlink escape.
+
+Shared writers journal only successful SQLite and atomic payload publication.
+Successful receipts include final row counts and canonical content SHA-256
+descriptors for every journaled mutation. The R engine independently derives
+the pre/post mutation set and rejects any mismatch before publishing the
+transition. Error receipts echo the capability binding but redact the runtime
+bundle path.
+
+Tests that need the real subprocess and writer lifecycle without expensive
+model training may set `PYBENCH_TEST_MOCK_TRAINING=1`. This hook runs after v2
+and stage validation and uses the real space, artifact, model-tree, journal,
+and receipt APIs; it replaces only scientific model computation.
 
 ## Bundle path and model trust contract
 
 PyBench enforces the engine-owned `scworkbench-bundle-path-v1` contract. Every
-`pybench-op-v1` request must contain this exact record:
+Every `pybench-op-v2` request must contain this exact record:
 
 ```json
 {

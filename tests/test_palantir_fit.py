@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
+from capability_helpers import payload_allowance, sqlite_allowance, v2_request
 from pybench.ops import palantir_fit
-from pybench.protocol import PATH_CONTRACT
 
 
 def test_palantir_fit_persists_relative_contained_model_path(tmp_path, monkeypatch):
@@ -58,16 +58,23 @@ def test_palantir_fit_persists_relative_contained_model_path(tmp_path, monkeypat
         "run_palantir",
         lambda *_args, **_kwargs: result,
     )
-    request = {
-        "protocol_version": "pybench-op-v1",
-        "path_contract": dict(PATH_CONTRACT),
-        "bundle_dir": str(root),
-        "op_name": "palantir_fit",
-        "run": {"run_id": "fit-relative"},
-        "inputs": {"fit_space": "fit", "cell_ids": cells, "root_cell": "c1"},
-        "params": {},
-        "outputs": {"model": {"artifact_id": "palantir_model", "type": "model_ref"}},
-    }
+    outputs = {"model": {"artifact_id": "palantir_model", "type": "model_ref"}}
+    request = v2_request(
+        root,
+        op_name="palantir_fit",
+        run_id="fit-relative",
+        inputs={"fit_space": "fit", "cell_ids": cells, "root_cell": "c1"},
+        params={},
+        outputs=outputs,
+        allowances=[
+            sqlite_allowance(
+                "model", "palantir_model", "model_ref", "artifact_model_ref", "artifact_id"
+            ),
+            payload_allowance(
+                "model", "palantir_model", "model_ref", "artifact_models/palantir_model"
+            ),
+        ],
+    )
     receipt = palantir_fit._run(request)
     assert receipt["status"] == "ok"
     con = sqlite3.connect(root / "db" / "app.sqlite")

@@ -10,8 +10,8 @@ import pytest
 from scipy import io as spio
 from scipy import sparse as sps
 
+from capability_helpers import payload_allowance, sqlite_allowance, v2_request
 from pybench.ops import scvi_train
-from pybench.protocol import PATH_CONTRACT
 
 
 class FakeAnnData:
@@ -415,19 +415,22 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
         lambda: (type("AD", (), {"AnnData": FakeAnnData}), FakeScvi),
     )
 
-    req = {
-        "protocol_version": "pybench-op-v1",
-        "path_contract": dict(PATH_CONTRACT),
-        "bundle_dir": str(bundle_dir),
-        "op_name": "scvi_train",
-        "run": {"run_id": "run_scvi"},
-        "inputs": {
+    outputs = {
+        "model": {"artifact_id": "model_art", "type": "model_ref"},
+        "fit_summary": {"artifact_id": "summary_art", "type": "obs_table"},
+        "space_registry": {"artifact_id": "rna.scvi", "type": "space"},
+    }
+    req = v2_request(
+        bundle_dir,
+        op_name="scvi_train",
+        run_id="run_scvi",
+        inputs={
             "matrix": "RNA_counts",
             "cell_set": "core",
             "matrix_chunks_dir": str(stage),
             "cell_metadata_path": str(stage / "cell_metadata.tsv"),
         },
-        "params": {
+        params={
             "matrix_id": "RNA_counts",
             "n_latent": 3,
             "n_hidden": 16,
@@ -442,11 +445,16 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
             "output_space_id": "rna.scvi",
             "overwrite": False,
         },
-        "outputs": {
-            "model": {"artifact_id": "model_art", "type": "model_ref"},
-            "fit_summary": {"artifact_id": "summary_art", "type": "obs_table"},
-        },
-    }
+        outputs=outputs,
+        allowances=[
+            sqlite_allowance("space_registry", "rna.scvi", "space", "spaces", "space_id"),
+            sqlite_allowance("space_registry", "rna.scvi", "space", "space_coords", "space_id"),
+            sqlite_allowance("model", "model_art", "model_ref", "artifact_model_ref", "artifact_id"),
+            payload_allowance("model", "model_art", "model_ref", "artifact_models/model_art"),
+            sqlite_allowance("fit_summary", "summary_art", "obs_table", "artifact_tables", "artifact_id"),
+            sqlite_allowance("fit_summary", "summary_art", "obs_table", "artifact_table_rows", "artifact_id"),
+        ],
+    )
 
     rec = scvi_train._run(req)
 
