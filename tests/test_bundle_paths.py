@@ -68,6 +68,9 @@ def _open_test_stage(root: Path):
             ),
             payload_allowance("model", "model_art", "model_ref", "artifact_models/model"),
             payload_allowance(
+                "model", "model_art", "model_ref", "artifact_models/model_art"
+            ),
+            payload_allowance(
                 "model",
                 "model_art",
                 "model_ref",
@@ -364,7 +367,7 @@ def test_explicit_legacy_import_copies_and_records_external_provenance(tmp_path:
                 "SELECT provenance_json FROM artifacts WHERE artifact_id='model_art'"
             ).fetchone()[0]
         )
-        assert stored.startswith("artifact_models/imported/model_art-")
+        assert stored.startswith("artifact_models/imported/model_art/")
         assert not Path(stored).is_absolute()
         assert (root / stored).read_bytes() == b"legacy-model"
         record = provenance["external_model_imports"][-1]

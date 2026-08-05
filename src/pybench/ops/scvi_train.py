@@ -669,7 +669,7 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
                 model_space_id=output_space_id,
                 in_space_id=output_space_id,
                 model_type="scvi_train",
-                model_path=f"artifact_models/{model_spec['artifact_id']}_scvi",
+                model_path=f"artifact_models/{model_spec['artifact_id']}/scvi",
                 expected_type="directory",
                 writer=lambda path: model.save(
                     str(path), overwrite=True, save_anndata=False

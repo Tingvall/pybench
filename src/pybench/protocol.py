@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -302,7 +303,16 @@ def validate_receipt(
                     else:
                         relative = descriptor["path"].rstrip("/")
                         prefix = allowed["path"].rstrip("/")
-                        same = relative == prefix or relative.startswith(prefix)
+                        same = relative == prefix or relative.startswith(prefix + "/")
+                        if not same and Path(relative).parent == Path(prefix).parent:
+                            same = (
+                                re.fullmatch(
+                                    re.escape(Path(prefix).name)
+                                    + r"\.[A-Za-z0-9][A-Za-z0-9._-]*",
+                                    Path(relative).name,
+                                )
+                                is not None
+                            )
                     if same:
                         matches.append(allowed)
                 if len(matches) != 1:

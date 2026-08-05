@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -130,11 +131,15 @@ def _matching_allowances(
         if path is not None:
             prefix = str(allowance.get("path", "")).rstrip("/")
             rel = str(path).rstrip("/")
-            same_prefixed_sibling = (
+            extension_sibling = (
                 Path(rel).parent == Path(prefix).parent
-                and Path(rel).name.startswith(Path(prefix).name)
+                and re.fullmatch(
+                    re.escape(Path(prefix).name) + r"\.[A-Za-z0-9][A-Za-z0-9._-]*",
+                    Path(rel).name,
+                )
+                is not None
             )
-            if not (rel == prefix or rel.startswith(prefix + "/") or same_prefixed_sibling):
+            if not (rel == prefix or rel.startswith(prefix + "/") or extension_sibling):
                 continue
         matches.append(allowance)
     return matches
@@ -188,38 +193,52 @@ def authorize_payload(bundle: BundleHandle, path: str, output_id: str) -> dict[s
     return matches[0]
 
 
-def _json_number(value: Any) -> Any:
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
+def _identity_token(value: str) -> bytes:
+    payload = value.encode("utf-8")
+    return str(len(payload)).encode("ascii") + b":" + payload
+
+
+def sqlite_rows_content_identity(
+    bundle: BundleHandle, table: str, key_column: str, key_values: list[str]
+) -> tuple[int, str]:
+    """Hash SQLite's typed quote() values with language-neutral byte framing."""
+
+    quoted_table = '"' + table.replace('"', '""') + '"'
+    info = bundle.con.execute(f"PRAGMA table_info({quoted_table})").fetchall()
+    columns = sorted(str(row[1]) for row in info)
+    if not columns or key_column not in columns:
+        _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", f"allowed table/key is absent: {table}")
+    quoted_columns = [f'"{name.replace(chr(34), chr(34) * 2)}"' for name in columns]
+    typed_columns = [f"CAST(quote({column}) AS TEXT)" for column in quoted_columns]
+    placeholders = ",".join("?" for _ in key_values)
+    query = (
+        f"SELECT {','.join(typed_columns)} FROM {quoted_table} "
+        f"WHERE \"{key_column.replace(chr(34), chr(34) * 2)}\" IN ({placeholders})"
+    )
+    rows = sorted(
+        tuple(str(value) for value in row)
+        for row in bundle.con.execute(query, key_values).fetchall()
+    )
+    canonical = bytearray(b"scworkbench-sqlite-rows-v2\n")
+    canonical.extend(f"C{len(columns)}\n".encode("ascii"))
+    for name in columns:
+        canonical.extend(_identity_token(name))
+    canonical.extend(f"R{len(rows)}\n".encode("ascii"))
+    for row in rows:
+        for value in row:
+            canonical.extend(_identity_token(value))
+    return len(rows), hashlib.sha256(canonical).hexdigest()
 
 
 def _rows_descriptor(bundle: BundleHandle, allowance: dict[str, Any]) -> dict[str, Any]:
     table = str(allowance["table"])
     column = str(allowance["key_scope"]["column"])
     values = [str(value) for value in allowance["key_scope"]["values"]]
-    quoted_table = '"' + table.replace('"', '""') + '"'
-    info = bundle.con.execute(f"PRAGMA table_info({quoted_table})").fetchall()
-    columns = sorted(str(row[1]) for row in info)
-    if not columns or column not in columns:
-        _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", f"allowed table/key is absent: {table}")
-    quoted_columns = [f'"{name.replace(chr(34), chr(34) * 2)}"' for name in columns]
-    placeholders = ",".join("?" for _ in values)
-    query = (
-        f"SELECT {','.join(quoted_columns)} FROM {quoted_table} "
-        f"WHERE \"{column.replace(chr(34), chr(34) * 2)}\" IN ({placeholders}) "
-        f"ORDER BY {','.join(quoted_columns)}"
-    )
-    raw_rows = bundle.con.execute(query, values).fetchall()
-    rows = [
-        {name: _json_number(row[index]) for index, name in enumerate(columns)}
-        for row in raw_rows
-    ]
-    encoded = json.dumps(rows, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    row_count, content_sha256 = sqlite_rows_content_identity(bundle, table, column, values)
     return {
         **allowance,
-        "row_count": len(rows),
-        "content_sha256": hashlib.sha256(encoded.encode()).hexdigest(),
+        "row_count": row_count,
+        "content_sha256": content_sha256,
     }
 
 
@@ -229,7 +248,12 @@ def _payload_entries(bundle: BundleHandle, allowance: dict[str, Any]) -> list[di
         bundle, str(Path(prefix).parent), must_exist=True, expected_type="directory"
     )
     wanted = Path(prefix).name
-    roots = [item for item in parent.iterdir() if item.name.startswith(wanted)]
+    roots = [
+        item
+        for item in parent.iterdir()
+        if item.name == wanted
+        or re.fullmatch(re.escape(wanted) + r"\.[A-Za-z0-9][A-Za-z0-9._-]*", item.name)
+    ]
     descriptors: list[dict[str, Any]] = []
     for root in roots:
         pending = [root]

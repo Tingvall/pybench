@@ -300,6 +300,7 @@ def publish_artifact_model_payload(
         must_exist=False,
         purpose="artifact model parent",
     )
+    parent_preexisted = parent.exists()
     parent.mkdir(parents=True, exist_ok=True)
     parent = resolve_bundle_path(
         bundle,
@@ -362,6 +363,11 @@ def publish_artifact_model_payload(
         raise
     finally:
         _remove_model_destination(staging)
+        if not parent_preexisted:
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
 
     record_write(bundle, sqlite_allowance)
     record_write(bundle, payload_allowance)

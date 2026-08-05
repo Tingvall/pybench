@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from capability_helpers import payload_allowance, sqlite_allowance, v2_request
+from capability_helpers import (
+    payload_allowance,
+    raw_write_bundle,
+    sqlite_allowance,
+    v2_request,
+)
 from pybench.artifacts_payload import (
     publish_artifact_model_payload,
     write_artifact_cell_vector_payload,
@@ -17,7 +22,14 @@ from pybench.artifacts_payload import (
     write_artifact_table_payload,
 )
 from pybench.bundle import close_bundle
-from pybench.capability import STAGE_MARKER, CapabilityError, build_write_manifest
+from pybench.capability import (
+    STAGE_MARKER,
+    CapabilityError,
+    authorize_payload,
+    build_write_manifest,
+    record_write,
+    sqlite_rows_content_identity,
+)
 from pybench.ops import (
     palantir_fit,
     palantir_project,
@@ -231,25 +243,67 @@ def test_hello_uses_capability_writer_and_receipt_matches_independent_rows(tmp_p
     assert len(receipt["write_manifest"]) == 1
     descriptor = receipt["write_manifest"][0]
     assert descriptor["row_count"] == 2
-    con = sqlite3.connect(root / "db/app.sqlite")
-    rows = con.execute(
-        "SELECT artifact_id,cell_id,label,value_num,value_type FROM artifact_labels ORDER BY artifact_id,cell_id,label,value_num,value_type"
-    ).fetchall()
-    con.close()
-    canonical = [
-        {
-            "artifact_id": row[0],
-            "cell_id": row[1],
-            "label": row[2],
-            "value_num": int(row[3]) if float(row[3]).is_integer() else row[3],
-            "value_type": row[4],
-        }
-        for row in rows
+    assert descriptor["content_sha256"] == (
+        "a4aff87fc54f4656472fb5fd42f629f2d228596195064b87c14850f655e3dfa5"
+    )
+
+
+def test_sqlite_row_identity_is_stable_for_float_null_text_blob_and_shared_table(
+    tmp_path: Path,
+):
+    root = _init_bundle(tmp_path / "numeric_identity")
+    connection = sqlite3.connect(root / "db/app.sqlite")
+    connection.execute(
+        """
+        CREATE TABLE numeric_rows(
+          output_id TEXT, text_value TEXT, real_value REAL,
+          int_value INTEGER, null_value TEXT, blob_value BLOB
+        )
+        """
+    )
+    connection.executemany(
+        "INSERT INTO numeric_rows VALUES(?,?,?,?,?,?)",
+        [
+            (
+                "out_a",
+                "quote ' snowman ☃\nline",
+                0.1,
+                9007199254740991,
+                None,
+                b"\x00\xff",
+            ),
+            ("out_a", "tiny", 1.2345678901234567, -7, None, b"abc"),
+            ("out_b", "other", -98765.43210987654, 42, None, b""),
+        ],
+    )
+    connection.commit()
+    connection.close()
+    allowances = [
+        sqlite_allowance(name, name, "obs_table", "numeric_rows", "output_id")
+        for name in ("out_a", "out_b")
     ]
-    expected = hashlib.sha256(
-        json.dumps(canonical, separators=(",", ":")).encode()
-    ).hexdigest()
-    assert descriptor["content_sha256"] == expected
+    bundle = raw_write_bundle(root, allowances)
+    try:
+        for allowance in allowances:
+            record_write(bundle, allowance)
+        manifest = build_write_manifest(bundle)
+        assert [(item["output_id"], item["row_count"], item["content_sha256"]) for item in manifest] == [
+            (
+                "out_a",
+                2,
+                "07217398dfb6243ab2715e9c4a3e5e45e155ddf9cc1f7df8eed2540fe4e949c3",
+            ),
+            (
+                "out_b",
+                1,
+                "c03d4b634311b270f9efa2679bef908510dde6be349bd93ae1cb3f3b6daa6214",
+            ),
+        ]
+        assert sqlite_rows_content_identity(
+            bundle, "numeric_rows", "output_id", ["out_a"]
+        ) == (2, manifest[0]["content_sha256"])
+    finally:
+        close_bundle(bundle)
 
 
 @pytest.mark.parametrize(
@@ -368,6 +422,11 @@ def test_model_writer_failure_removes_private_temporary_tree(tmp_path: Path):
         raise RuntimeError("injected model failure")
 
     try:
+        with pytest.raises(CapabilityError, match="OUT_OF_SCOPE"):
+            authorize_payload(bundle, "artifact_models/model_evil", "model")
+        assert authorize_payload(bundle, "artifact_models/model.pkl", "model")[
+            "path"
+        ] == "artifact_models/model"
         with pytest.raises(RuntimeError, match="injected"):
             publish_artifact_model_payload(
                 bundle,

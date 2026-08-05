@@ -272,6 +272,6 @@ def test_peakvi_fit_persists_relative_contained_model_path(tmp_path, monkeypatch
         stored = con.execute("SELECT model_path FROM artifact_model_ref").fetchone()[0]
     finally:
         con.close()
-    assert stored == "artifact_models/peakvi_model_peakvi"
+    assert stored == "artifact_models/peakvi_model/peakvi"
     assert not Path(stored).is_absolute()
     assert (root / stored / "model.pt").exists()

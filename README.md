@@ -39,6 +39,14 @@ the pre/post mutation set and rejects any mismatch before publishing the
 transition. Error receipts echo the capability binding but redact the runtime
 bundle path.
 
+SQLite row identities use `scworkbench-sqlite-rows-v2`: columns are sorted by
+name, values are obtained with SQLite `CAST(quote(column) AS TEXT)`, rows are
+sorted by those typed strings, and UTF-8 values are hashed in length-prefixed
+framing. This keeps floating-point, integer, NULL, text, and blob identities
+stable across R and Python. Payload allowances accept the exact declared stem,
+its descendants, or a same-parent `.<safe-extension>` file; underscore/dash
+sibling IDs are not included.
+
 Tests that need the real subprocess and writer lifecycle without expensive
 model training may set `PYBENCH_TEST_MOCK_TRAINING=1`. This hook runs after v2
 and stage validation and uses the real space, artifact, model-tree, journal,

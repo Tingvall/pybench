@@ -316,7 +316,7 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
                 model_space_id=space_id_out,
                 in_space_id=space_id_out,
                 model_type="peakvi_fit",
-                model_path=f"artifact_models/{model_artifact_id}_peakvi",
+                model_path=f"artifact_models/{model_artifact_id}/peakvi",
                 expected_type="directory",
                 writer=lambda path: model.save(
                     str(path), overwrite=True, save_anndata=False

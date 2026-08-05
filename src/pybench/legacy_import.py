@@ -92,7 +92,7 @@ def import_legacy_model(
     metadata = _model_metadata(bundle, artifact_id)
     checksum = _source_checksum(source_path)
     suffix = "" if source_path.is_dir() else source_path.suffix
-    destination = f"artifact_models/imported/{artifact_id}-{checksum[:16]}{suffix}"
+    destination = f"artifact_models/imported/{artifact_id}/{checksum[:16]}{suffix}"
 
     try:
         provenance = json.loads(metadata["provenance_json"] or "{}")

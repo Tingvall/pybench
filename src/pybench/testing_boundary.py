@@ -107,7 +107,7 @@ def run_mock_training_boundary(
             )
         elif kind == "model_ref":
             model_space_id = space_id or str(inputs.get("fit_space") or "mock_space")
-            relative = f"artifact_models/{artifact_id}_mock"
+            relative = f"artifact_models/{artifact_id}/mock"
             engine = {
                 "scvi_train": "scvi",
                 "peakvi_fit": "peakvi",

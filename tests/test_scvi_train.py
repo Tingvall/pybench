@@ -475,7 +475,7 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
         )
         assert model_ref["engine"] == "scvi"
         assert model_ref["model_space_id"] == "rna.scvi"
-        assert model_ref["model_path"] == "artifact_models/model_art_scvi"
+        assert model_ref["model_path"] == "artifact_models/model_art/scvi"
         assert (bundle_dir / model_ref["model_path"] / "model.txt").exists()
 
         table = dict(
