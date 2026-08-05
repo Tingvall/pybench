@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -198,10 +199,22 @@ def _identity_token(value: str) -> bytes:
     return str(len(payload)).encode("ascii") + b":" + payload
 
 
+def _typed_sqlite_scalar(quoted_column: str) -> str:
+    return (
+        f"CASE typeof({quoted_column}) "
+        "WHEN 'null' THEN 'null:' "
+        f"WHEN 'integer' THEN 'integer:' || printf('%lld',{quoted_column}) "
+        "WHEN 'real' THEN NULL "
+        f"WHEN 'text' THEN 'text:' || hex(CAST({quoted_column} AS BLOB)) "
+        f"WHEN 'blob' THEN 'blob:' || hex({quoted_column}) "
+        f"ELSE 'unknown:' || hex(CAST({quoted_column} AS BLOB)) END"
+    )
+
+
 def sqlite_rows_content_identity(
     bundle: BundleHandle, table: str, key_column: str, key_values: list[str]
 ) -> tuple[int, str]:
-    """Hash SQLite's typed quote() values with language-neutral byte framing."""
+    """Hash explicitly formatted typed SQLite values with language-neutral framing."""
 
     quoted_table = '"' + table.replace('"', '""') + '"'
     info = bundle.con.execute(f"PRAGMA table_info({quoted_table})").fetchall()
@@ -209,16 +222,33 @@ def sqlite_rows_content_identity(
     if not columns or key_column not in columns:
         _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", f"allowed table/key is absent: {table}")
     quoted_columns = [f'"{name.replace(chr(34), chr(34) * 2)}"' for name in columns]
-    typed_columns = [f"CAST(quote({column}) AS TEXT)" for column in quoted_columns]
+    typed_columns: list[str] = []
+    for column in quoted_columns:
+        typed_columns.extend(
+            [
+                f"typeof({column})",
+                _typed_sqlite_scalar(column),
+                f"CASE WHEN typeof({column})='real' THEN {column} ELSE NULL END",
+            ]
+        )
     placeholders = ",".join("?" for _ in key_values)
     query = (
         f"SELECT {','.join(typed_columns)} FROM {quoted_table} "
         f"WHERE \"{key_column.replace(chr(34), chr(34) * 2)}\" IN ({placeholders})"
     )
-    rows = sorted(
-        tuple(str(value) for value in row)
-        for row in bundle.con.execute(query, key_values).fetchall()
-    )
+    rows: list[tuple[str, ...]] = []
+    for raw_row in bundle.con.execute(query, key_values).fetchall():
+        encoded: list[str] = []
+        for index in range(len(columns)):
+            value_type = str(raw_row[index * 3])
+            sql_encoding = raw_row[index * 3 + 1]
+            real_value = raw_row[index * 3 + 2]
+            if value_type == "real":
+                encoded.append("real:" + struct.pack(">d", float(real_value)).hex().upper())
+            else:
+                encoded.append(str(sql_encoding))
+        rows.append(tuple(encoded))
+    rows.sort()
     canonical = bytearray(b"scworkbench-sqlite-rows-v2\n")
     canonical.extend(f"C{len(columns)}\n".encode("ascii"))
     for name in columns:

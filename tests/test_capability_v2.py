@@ -244,7 +244,7 @@ def test_hello_uses_capability_writer_and_receipt_matches_independent_rows(tmp_p
     descriptor = receipt["write_manifest"][0]
     assert descriptor["row_count"] == 2
     assert descriptor["content_sha256"] == (
-        "a4aff87fc54f4656472fb5fd42f629f2d228596195064b87c14850f655e3dfa5"
+        "6afd2e473a461f2aa6705171b9e284748dc1178a314a68e3aecb1c916f8a3ce8"
     )
 
 
@@ -291,12 +291,12 @@ def test_sqlite_row_identity_is_stable_for_float_null_text_blob_and_shared_table
             (
                 "out_a",
                 2,
-                "07217398dfb6243ab2715e9c4a3e5e45e155ddf9cc1f7df8eed2540fe4e949c3",
+                "d3a0ff82b436b6e208f53cfb77ba390ea1eb02abd4ca7e289419681b86fe7d9a",
             ),
             (
                 "out_b",
                 1,
-                "c03d4b634311b270f9efa2679bef908510dde6be349bd93ae1cb3f3b6daa6214",
+                "d7f3b14cb6ddc68826f833b5975ba6af640003dd923f0f3539465424908569d1",
             ),
         ]
         assert sqlite_rows_content_identity(

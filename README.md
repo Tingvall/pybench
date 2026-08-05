@@ -40,10 +40,11 @@ transition. Error receipts echo the capability binding but redact the runtime
 bundle path.
 
 SQLite row identities use `scworkbench-sqlite-rows-v2`: columns are sorted by
-name, values are obtained with SQLite `CAST(quote(column) AS TEXT)`, rows are
-sorted by those typed strings, and UTF-8 values are hashed in length-prefixed
-framing. This keeps floating-point, integer, NULL, text, and blob identities
-stable across R and Python. Payload allowances accept the exact declared stem,
+name; values use explicit type tags, `printf('%lld')` integers, big-endian
+IEEE-754 binary64 hex for reals, and hexadecimal text/blob bytes. Rows are
+sorted by those typed strings, then UTF-8 values are hashed in length-prefixed framing. This keeps numeric,
+NULL, text, and blob identities stable across R and Python SQLite versions.
+Payload allowances accept the exact declared stem,
 its descendants, or a same-parent `.<safe-extension>` file; underscore/dash
 sibling IDs are not included.
 
