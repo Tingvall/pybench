@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 from typing import Iterable
 
 import numpy as np
 import pandas as pd
 
-from .bundle import BundleHandle, resolve_bundle_path
+from .bundle import BundleHandle
 from .capability import authorize_sqlite, record_write
 
 
@@ -42,7 +41,9 @@ def _normalize_coords(coords, cell_id: list[str] | None = None) -> tuple[list[st
         if arr.shape[1] < 2:
             raise SpaceWriteError("coords must have at least 2 dimensions")
         if cell_id is None:
-            raise SpaceWriteError("cell_id= is required for array-like coords without embedded labels")
+            raise SpaceWriteError(
+                "cell_id= is required for array-like coords without embedded labels"
+            )
         cell_ids = [str(x) for x in cell_id]
         mat = np.array(arr, dtype=float, copy=True)
 
@@ -69,36 +70,6 @@ def _assert_cells_exist(bundle: BundleHandle, cell_ids: list[str]) -> None:
     missing = [c for c in cell_ids if c not in present]
     if missing:
         raise SpaceWriteError(f"Some cell_ids are not present in bundle. First few: {missing[:10]}")
-
-
-def _json_sanitize(x):
-    if isinstance(x, dict):
-        return {str(k): _json_sanitize(v) for k, v in x.items()}
-    if isinstance(x, (list, tuple)):
-        return [_json_sanitize(v) for v in x]
-    try:
-        if pd.isna(x):
-            return None
-    except Exception:
-        pass
-    return x
-
-
-def _refresh_manifest_spaces(bundle: BundleHandle) -> None:
-    man_path = resolve_bundle_path(
-        bundle,
-        "manifest.json",
-        expected_type="file",
-        purpose="bundle manifest",
-    )
-    manifest = json.loads(man_path.read_text())
-    spaces_df = _df(bundle.con, "SELECT * FROM spaces")
-    # JSON compatibility: convert pandas/numpy NaN to null before writing manifest.json
-    spaces_df = spaces_df.where(pd.notna(spaces_df), None)
-    manifest["spaces"] = spaces_df.to_dict(orient="list")
-    manifest = _json_sanitize(manifest)
-    man_path.write_text(json.dumps(manifest, indent=2, allow_nan=False))
-    bundle.manifest = manifest
 
 
 def add_space(
@@ -145,7 +116,9 @@ def add_space(
         )
 
         if dims == 2:
-            rows = [(sid, cell_ids[i], float(mat[i, 0]), float(mat[i, 1])) for i in range(len(cell_ids))]
+            rows = [
+                (sid, cell_ids[i], float(mat[i, 0]), float(mat[i, 1])) for i in range(len(cell_ids))
+            ]
             con.executemany(
                 "INSERT INTO space_2d(space_id, cell_id, x, y) VALUES (?, ?, ?, ?)",
                 rows,
@@ -159,7 +132,9 @@ def add_space(
                 rows = []
                 for d in range(dims):
                     dim_num = d + 1
-                    rows.extend((sid, sub_ids[i], dim_num, float(sub[i, d])) for i in range(len(sub_ids)))
+                    rows.extend(
+                        (sid, sub_ids[i], dim_num, float(sub[i, d])) for i in range(len(sub_ids))
+                    )
                 con.executemany(
                     "INSERT INTO space_coords(space_id, cell_id, dim, value) VALUES (?, ?, ?, ?)",
                     rows,
@@ -177,7 +152,6 @@ def add_space(
             except Exception:
                 pass
 
-    _refresh_manifest_spaces(bundle)
     record_write(bundle, registry_allowance)
     record_write(bundle, coords_allowance)
     return {

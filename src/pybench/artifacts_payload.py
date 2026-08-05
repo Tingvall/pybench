@@ -37,8 +37,6 @@ def _assert_artifact_type(bundle: BundleHandle, artifact_id: str, expected_type:
         raise PayloadWriteError(f"Artifact {artifact_id} has type={got}, expected={expected_type}")
 
 
-
-
 def write_artifact_cell_vector_payload(
     bundle: BundleHandle,
     artifact_id: str,
@@ -68,7 +66,9 @@ def write_artifact_cell_vector_payload(
                 try:
                     value_num = float(raw) if raw is not None else None
                 except Exception as e:  # noqa: BLE001
-                    raise PayloadWriteError(f"cell_vector: non-numeric value at index {i}: {raw!r}") from e
+                    raise PayloadWriteError(
+                        f"cell_vector: non-numeric value at index {i}: {raw!r}"
+                    ) from e
             rows.append((artifact_id, str(cell_id[i]), label, value_type, value_num))
         con.executemany(
             """
@@ -78,7 +78,12 @@ def write_artifact_cell_vector_payload(
             rows,
         )
     record_write(bundle, allowance)
-    return {"artifact_id": artifact_id, "type": "cell_vector", "rows_written": n, "value_type": value_type}
+    return {
+        "artifact_id": artifact_id,
+        "type": "cell_vector",
+        "rows_written": n,
+        "value_type": value_type,
+    }
 
 
 def write_artifact_cell_vector_family_payload(
@@ -223,7 +228,12 @@ def write_artifact_model_ref_payload(
             model_type=model_type,
         )
     record_write(bundle, sqlite_allowance)
-    return {"artifact_id": artifact_id, "type": "model_ref", "engine": str(engine), "model_space_id": str(model_space_id)}
+    return {
+        "artifact_id": artifact_id,
+        "type": "model_ref",
+        "engine": str(engine),
+        "model_space_id": str(model_space_id),
+    }
 
 
 def _write_artifact_model_ref_row(
@@ -261,6 +271,25 @@ def _remove_model_destination(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def _bundle_entry_inventory(root: Path) -> set[str]:
+    result: set[str] = set()
+    pending = [root]
+    while pending:
+        parent = pending.pop()
+        for item in parent.iterdir():
+            relative = item.relative_to(root).as_posix()
+            result.add(relative)
+            if item.is_dir() and not item.is_symlink():
+                pending.append(item)
+    return result
+
+
+def _remove_new_bundle_entries(root: Path, before: set[str]) -> None:
+    current = _bundle_entry_inventory(root)
+    for relative in sorted(current - before, key=lambda value: value.count("/"), reverse=True):
+        _remove_model_destination(root / relative)
+
+
 def publish_artifact_model_payload(
     bundle: BundleHandle,
     artifact_id: str,
@@ -293,6 +322,16 @@ def publish_artifact_model_payload(
     parent_relative = str(Path(relative).parent).replace("\\", "/")
     if parent_relative == ".":
         raise PayloadWriteError("artifact model destination requires a bundle-owned parent")
+    allowance_parent = Path(str(payload_allowance["path"])).parent.as_posix()
+    if allowance_parent == ".":
+        allowance_parent_path = bundle.bundle_dir
+    else:
+        allowance_parent_path = resolve_bundle_path(
+            bundle,
+            allowance_parent,
+            expected_type="directory",
+            purpose="artifact model allowance parent",
+        )
     parent = resolve_bundle_path(
         bundle,
         parent_relative,
@@ -308,6 +347,8 @@ def publish_artifact_model_payload(
         expected_type="directory",
         purpose="artifact model parent",
     )
+    if allowance_parent_path != bundle.bundle_dir and not allowance_parent_path.exists():
+        raise PayloadWriteError("artifact model allowance parent disappeared")
     staging_relative = f"{parent_relative}/.pybench-stage-{uuid.uuid4().hex}"
     staging = resolve_bundle_path(
         bundle,
@@ -317,6 +358,7 @@ def publish_artifact_model_payload(
     )
 
     published = False
+    bundle_entries_before = _bundle_entry_inventory(bundle.bundle_dir)
     try:
         writer(staging)
         resolve_bundle_path(
@@ -360,14 +402,18 @@ def publish_artifact_model_payload(
     except Exception:
         if published:
             _remove_model_destination(final_path)
+        _remove_new_bundle_entries(bundle.bundle_dir, bundle_entries_before)
         raise
     finally:
         _remove_model_destination(staging)
         if not parent_preexisted:
-            try:
-                parent.rmdir()
-            except OSError:
-                pass
+            current = parent
+            while current != allowance_parent_path:
+                try:
+                    current.rmdir()
+                except OSError:
+                    break
+                current = current.parent
 
     record_write(bundle, sqlite_allowance)
     record_write(bundle, payload_allowance)
@@ -412,7 +458,9 @@ def write_artifact_table_payload(
         rows = []
         for i, row in enumerate(table_rows, start=1):
             if not isinstance(row, dict):
-                raise PayloadWriteError(f"table payload rows must be dicts, got {type(row)!r} at row {i}")
+                raise PayloadWriteError(
+                    f"table payload rows must be dicts, got {type(row)!r} at row {i}"
+                )
             row_json = json.dumps(row, ensure_ascii=True, allow_nan=False)
             rows.append((artifact_id, int(i), row_json))
         if rows:
@@ -425,4 +473,10 @@ def write_artifact_table_payload(
             )
     record_write(bundle, table_allowance)
     record_write(bundle, rows_allowance)
-    return {"artifact_id": artifact_id, "type": artifact_type, "rows_written": len(table_rows), "table_type": str(table_type), "entity_kind": str(entity_kind)}
+    return {
+        "artifact_id": artifact_id,
+        "type": artifact_type,
+        "rows_written": len(table_rows),
+        "table_type": str(table_type),
+        "entity_kind": str(entity_kind),
+    }

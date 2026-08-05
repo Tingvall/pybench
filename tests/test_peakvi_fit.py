@@ -85,7 +85,9 @@ def test_build_anndata_reads_bundle_native_matrix(monkeypatch):
             self.obs = obs
             self.var = var
 
-    monkeypatch.setattr(peakvi_fit, "_import_scvi", lambda: (type("AD", (), {"AnnData": FakeAnnData}), object()))
+    monkeypatch.setattr(
+        peakvi_fit, "_import_scvi", lambda: (type("AD", (), {"AnnData": FakeAnnData}), object())
+    )
     monkeypatch.setattr(
         peakvi_fit,
         "get_matrix",
@@ -132,16 +134,22 @@ def test_build_anndata_reads_staged_matrix_chunks(tmp_path, monkeypatch):
     (stage_dir / "feature_ids.txt").write_text("f1\nf2\nf3\n")
     (stage_dir / "chunk_00001_cells.txt").write_text("c2\n")
     (stage_dir / "chunk_00002_cells.txt").write_text("c1\n")
-    spio.mmwrite(stage_dir / "chunk_00001.mtx", sps.csc_matrix(np.array([[1.0], [0.0], [3.0]], dtype=float)))
-    spio.mmwrite(stage_dir / "chunk_00002.mtx", sps.csc_matrix(np.array([[0.0], [2.0], [4.0]], dtype=float)))
+    spio.mmwrite(
+        stage_dir / "chunk_00001.mtx", sps.csc_matrix(np.array([[1.0], [0.0], [3.0]], dtype=float))
+    )
+    spio.mmwrite(
+        stage_dir / "chunk_00002.mtx", sps.csc_matrix(np.array([[0.0], [2.0], [4.0]], dtype=float))
+    )
     (stage_dir / "manifest.json").write_text(
         '{"matrix_id":"ATAC_counts","n_features":3,"n_cells":2,"chunks":['
         '{"mtx":"chunk_00001.mtx","cells":"chunk_00001_cells.txt","n_cells":1},'
         '{"mtx":"chunk_00002.mtx","cells":"chunk_00002_cells.txt","n_cells":1}'
-        ']}'
+        "]}"
     )
 
-    monkeypatch.setattr(peakvi_fit, "_import_scvi", lambda: (type("AD", (), {"AnnData": FakeAnnData}), object()))
+    monkeypatch.setattr(
+        peakvi_fit, "_import_scvi", lambda: (type("AD", (), {"AnnData": FakeAnnData}), object())
+    )
     monkeypatch.setattr(
         peakvi_fit,
         "get_meta",
@@ -151,7 +159,11 @@ def test_build_anndata_reads_staged_matrix_chunks(tmp_path, monkeypatch):
     )
 
     adata, batch_key = peakvi_fit._build_anndata(
-        req_inputs={"matrix": "ATAC_counts", "cell_ids": ["c2", "c1"], "matrix_chunks_dir": str(stage_dir)},
+        req_inputs={
+            "matrix": "ATAC_counts",
+            "cell_ids": ["c2", "c1"],
+            "matrix_chunks_dir": str(stage_dir),
+        },
         req_params={"matrix_id": "ATAC_counts", "batch_key": "batch"},
         bundle="bundle-handle",
     )
@@ -186,9 +198,7 @@ def test_staged_peakvi_chunk_paths_reject_escape_before_matrix_read(
     assert touched is False
 
 
-def test_staged_peakvi_chunk_rejects_symlink_escape_before_matrix_read(
-    tmp_path, monkeypatch
-):
+def test_staged_peakvi_chunk_rejects_symlink_escape_before_matrix_read(tmp_path, monkeypatch):
     stage = tmp_path / "stage"
     stage.mkdir()
     (stage / "feature_ids.txt").write_text("f1\n")
@@ -196,9 +206,7 @@ def test_staged_peakvi_chunk_rejects_symlink_escape_before_matrix_read(
     outside = tmp_path / "outside.mtx"
     outside.write_text("must not be read")
     (stage / "chunk.mtx").symlink_to(outside)
-    (stage / "manifest.json").write_text(
-        '{"chunks":[{"mtx":"chunk.mtx","cells":"cells.txt"}]}'
-    )
+    (stage / "manifest.json").write_text('{"chunks":[{"mtx":"chunk.mtx","cells":"cells.txt"}]}')
     touched = False
 
     def forbidden_mmread(_path):
@@ -231,6 +239,7 @@ def test_peakvi_fit_persists_relative_contained_model_path(tmp_path, monkeypatch
     (root / "manifest.json").write_text(
         json.dumps({"storage": {"sqlite": {"path": "db/app.sqlite"}}})
     )
+    (root / "artifact_models").mkdir()
 
     class FakeAdata:
         obs_names = pd.Index(["c1", "c2"])
@@ -260,9 +269,7 @@ def test_peakvi_fit_persists_relative_contained_model_path(tmp_path, monkeypatch
             sqlite_allowance(
                 "model", "peakvi_model", "model_ref", "artifact_model_ref", "artifact_id"
             ),
-            payload_allowance(
-                "model", "peakvi_model", "model_ref", "artifact_models/peakvi_model"
-            ),
+            payload_allowance("model", "peakvi_model", "model_ref", "artifact_models/peakvi_model"),
         ],
     )
     receipt = peakvi_fit._run(request)

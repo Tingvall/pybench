@@ -91,13 +91,13 @@ def _load_staged_matrix(req_inputs: dict[str, Any]):
     if manifest.get("protocol") != STAGED_PROTOCOL:
         raise ScVITrainOpError(f"unsupported staged matrix protocol: {manifest.get('protocol')!r}")
     if str(manifest.get("orientation") or "") != "features_by_cells":
-        raise ScVITrainOpError("scvi_train requires staged chunks with orientation='features_by_cells'")
+        raise ScVITrainOpError(
+            "scvi_train requires staged chunks with orientation='features_by_cells'"
+        )
 
     feat_rel = str(manifest.get("feature_ids_file") or "feature_ids.txt")
     feature_ids = _read_nonempty_lines(
-        resolve_bundle_path(
-            root, feat_rel, expected_type="file", purpose="staged feature IDs"
-        ),
+        resolve_bundle_path(root, feat_rel, expected_type="file", purpose="staged feature IDs"),
         "feature_ids file",
     )
     if len(set(feature_ids)) != len(feature_ids):
@@ -164,9 +164,7 @@ def _load_cell_metadata(
 ) -> pd.DataFrame:
     meta_path = str(req_inputs.get("cell_metadata_path") or "")
     if meta_path:
-        p = resolve_declared_input_path(
-            root, meta_path, purpose="staged cell metadata"
-        )
+        p = resolve_declared_input_path(root, meta_path, purpose="staged cell metadata")
     else:
         p = resolve_bundle_path(
             root,
@@ -239,6 +237,7 @@ def _set_seed(scvi, seed: int | None) -> None:
         pass
     try:
         import torch  # type: ignore
+
         torch.manual_seed(int(seed))
     except Exception:
         pass
@@ -443,9 +442,17 @@ def _early_stopping_evidence(
         trainer_should_stop = bool(getattr(trainer, "should_stop", False))
         max_epochs = getattr(trainer, "max_epochs", None)
         max_epochs = None if max_epochs is None else int(max_epochs)
-        if reason is not None or trainer_should_stop or (stopped_epoch is not None and stopped_epoch > 0):
+        if (
+            reason is not None
+            or trainer_should_stop
+            or (stopped_epoch is not None and stopped_epoch > 0)
+        ):
             outcome = "stopped_early"
-        elif max_epochs is not None and epochs_completed is not None and epochs_completed >= max_epochs:
+        elif (
+            max_epochs is not None
+            and epochs_completed is not None
+            and epochs_completed >= max_epochs
+        ):
             outcome = "completed_max_epochs"
         else:
             outcome = "completed_without_trigger"
@@ -457,8 +464,14 @@ def _early_stopping_evidence(
             best_score_error = None
         except Exception as e:  # noqa: BLE001
             best_score = None
-            best_score_status = "unavailable" if getattr(callback, "best_score", None) is None else "extraction_failed"
-            best_score_error = None if best_score_status == "unavailable" else f"{type(e).__name__}: {e}"
+            best_score_status = (
+                "unavailable"
+                if getattr(callback, "best_score", None) is None
+                else "extraction_failed"
+            )
+            best_score_error = (
+                None if best_score_status == "unavailable" else f"{type(e).__name__}: {e}"
+            )
 
         return {
             "outcome": outcome,
@@ -631,7 +644,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         cell_set = str(inputs.get("cell_set") or params.get("cell_set") or "all")
 
         adata, staged = _build_anndata_from_staged_chunks(inputs, params)
-        matrix_id = str(params.get("matrix_id") or staged["matrix_id"] or inputs.get("matrix") or "")
+        matrix_id = str(
+            params.get("matrix_id") or staged["matrix_id"] or inputs.get("matrix") or ""
+        )
         if not matrix_id:
             raise ScVITrainOpError("matrix_id is required")
         model, latent, scvi_version, metrics = _train_scvi(
@@ -671,11 +686,16 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
                 model_type="scvi_train",
                 model_path=f"artifact_models/{model_spec['artifact_id']}/scvi",
                 expected_type="directory",
-                writer=lambda path: model.save(
-                    str(path), overwrite=True, save_anndata=False
-                ),
+                writer=lambda path: model.save(str(path), overwrite=True, save_anndata=False),
             )
         }
+        for name, spec in outputs_spec.items():
+            if spec.get("type") == "space":
+                out_receipts[name] = {
+                    "artifact_id": spec["artifact_id"],
+                    "type": "space",
+                    **space_summary,
+                }
 
         fit_row = {
             "matrix_id": matrix_id,

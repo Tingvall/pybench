@@ -26,7 +26,7 @@ def _fail(code: str, message: str) -> None:
 def install_sqlite_authorizer(bundle: BundleHandle) -> None:
     """Deny DDL and undeclared table writes at SQLite's execution boundary."""
 
-    if bundle.access_mode != "staging_write":
+    if bundle.authorizer_installed:
         return
     allowed_tables = {
         str(item["table"])
@@ -40,16 +40,26 @@ def install_sqlite_authorizer(bundle: BundleHandle) -> None:
         scope = item["key_scope"]
         key = (str(item["table"]), str(scope["column"]))
         scopes.setdefault(key, set()).update(str(value) for value in scope["values"])
+    if bundle.access_mode == "staging_write":
+        bundle.con.execute("PRAGMA recursive_triggers = ON")
     for index, ((table, column), values) in enumerate(sorted(scopes.items())):
         quoted_table = '"' + table.replace('"', '""') + '"'
         quoted_column = '"' + column.replace('"', '""') + '"'
         literals = ",".join("'" + value.replace("'", "''") + "'" for value in sorted(values))
         for operation, condition in (
-            ("insert", f"NEW.{quoted_column} NOT IN ({literals})"),
-            ("delete", f"OLD.{quoted_column} NOT IN ({literals})"),
+            (
+                "insert",
+                f"NEW.{quoted_column} IS NULL OR NEW.{quoted_column} NOT IN ({literals})",
+            ),
+            (
+                "delete",
+                f"OLD.{quoted_column} IS NULL OR OLD.{quoted_column} NOT IN ({literals})",
+            ),
             (
                 "update",
-                f"OLD.{quoted_column} NOT IN ({literals}) OR NEW.{quoted_column} NOT IN ({literals})",
+                f"OLD.{quoted_column} IS NULL OR NEW.{quoted_column} IS NULL "
+                f"OR OLD.{quoted_column} NOT IN ({literals}) "
+                f"OR NEW.{quoted_column} NOT IN ({literals})",
             ),
         ):
             bundle.con.execute(
@@ -77,17 +87,30 @@ def install_sqlite_authorizer(bundle: BundleHandle) -> None:
         sqlite3.SQLITE_ALTER_TABLE,
         sqlite3.SQLITE_ATTACH,
         sqlite3.SQLITE_DETACH,
+        sqlite3.SQLITE_REINDEX,
+        sqlite3.SQLITE_ANALYZE,
     }
     write_actions = {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}
 
     def authorize(action: int, arg1: str | None, _arg2, _database, _trigger) -> int:
         if action in schema_actions:
             return sqlite3.SQLITE_DENY
+        # Staging operations do not need PRAGMAs after setup.  Denying all of
+        # them closes database-header, WAL, writable_schema, and checkpoint
+        # mutation routes as well as future stateful PRAGMAs by default.
+        if action == sqlite3.SQLITE_PRAGMA and str(arg1).lower() != "table_info":
+            return sqlite3.SQLITE_DENY
         if action in write_actions and str(arg1) not in allowed_tables:
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
-    bundle.con.set_authorizer(authorize)
+    installer = getattr(bundle.con, "_install_locked_authorizer", None)
+    if installer is None:
+        _fail("PYBENCH_CAPABILITY_MISMATCH", "staging connection cannot lock its authorizer")
+    installer(authorize)
+    bundle.authorizer_installed = True
+    if bundle.access_mode == "staging_write":
+        initialize_write_baseline(bundle)
 
 
 def validate_stage_marker(bundle_dir: str | Path, capability: dict[str, Any]) -> None:
@@ -216,10 +239,31 @@ def sqlite_rows_content_identity(
 ) -> tuple[int, str]:
     """Hash explicitly formatted typed SQLite values with language-neutral framing."""
 
+    placeholders = ",".join("?" for _ in key_values)
+    quoted_key = '"' + key_column.replace('"', '""') + '"'
+    return _sqlite_content_identity(
+        bundle,
+        table,
+        where_sql=f"{quoted_key} IN ({placeholders})",
+        params=key_values,
+        required_column=key_column,
+    )
+
+
+def _sqlite_content_identity(
+    bundle: BundleHandle,
+    table: str,
+    *,
+    where_sql: str = "",
+    params: list[str] | None = None,
+    required_column: str | None = None,
+) -> tuple[int, str]:
+    """Canonical identity for an arbitrary already-authorized table scope."""
+
     quoted_table = '"' + table.replace('"', '""') + '"'
     info = bundle.con.execute(f"PRAGMA table_info({quoted_table})").fetchall()
     columns = sorted(str(row[1]) for row in info)
-    if not columns or key_column not in columns:
+    if not columns or (required_column is not None and required_column not in columns):
         _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", f"allowed table/key is absent: {table}")
     quoted_columns = [f'"{name.replace(chr(34), chr(34) * 2)}"' for name in columns]
     typed_columns: list[str] = []
@@ -231,13 +275,11 @@ def sqlite_rows_content_identity(
                 f"CASE WHEN typeof({column})='real' THEN {column} ELSE NULL END",
             ]
         )
-    placeholders = ",".join("?" for _ in key_values)
-    query = (
-        f"SELECT {','.join(typed_columns)} FROM {quoted_table} "
-        f"WHERE \"{key_column.replace(chr(34), chr(34) * 2)}\" IN ({placeholders})"
-    )
+    order_by = ",".join(quoted_columns)
+    where = f" WHERE {where_sql}" if where_sql else ""
+    query = f"SELECT {','.join(typed_columns)} FROM {quoted_table}{where} ORDER BY {order_by}"
     rows: list[tuple[str, ...]] = []
-    for raw_row in bundle.con.execute(query, key_values).fetchall():
+    for raw_row in bundle.con.execute(query, params or []).fetchall():
         encoded: list[str] = []
         for index in range(len(columns)):
             value_type = str(raw_row[index * 3])
@@ -248,6 +290,8 @@ def sqlite_rows_content_identity(
             else:
                 encoded.append(str(sql_encoding))
         rows.append(tuple(encoded))
+    # The R contract re-sorts the canonical token frame before hashing; raw
+    # SQLite ordering is not the identity ordering for mixed storage classes.
     rows.sort()
     canonical = bytearray(b"scworkbench-sqlite-rows-v2\n")
     canonical.extend(f"C{len(columns)}\n".encode("ascii"))
@@ -274,13 +318,19 @@ def _rows_descriptor(bundle: BundleHandle, allowance: dict[str, Any]) -> dict[st
 
 def _payload_entries(bundle: BundleHandle, allowance: dict[str, Any]) -> list[dict[str, Any]]:
     prefix = normalize_bundle_relative_path(allowance["path"])
-    parent = resolve_bundle_path(
-        bundle, str(Path(prefix).parent), must_exist=True, expected_type="directory"
-    )
+    parent_relative = Path(prefix).parent.as_posix()
+    if parent_relative == ".":
+        parent = bundle.bundle_dir
+    else:
+        parent = resolve_bundle_path(
+            bundle, parent_relative, must_exist=False, expected_type="directory"
+        )
+    if not parent.exists():
+        return []
     wanted = Path(prefix).name
     roots = [
         item
-        for item in parent.iterdir()
+        for item in sorted(parent.iterdir())
         if item.name == wanted
         or re.fullmatch(re.escape(wanted) + r"\.[A-Za-z0-9][A-Za-z0-9._-]*", item.name)
     ]
@@ -300,6 +350,8 @@ def _payload_entries(bundle: BundleHandle, allowance: dict[str, Any]) -> list[di
                 content_sha = _R_EMPTY_DIRECTORY_SHA256
                 pending.extend(sorted(item.iterdir(), reverse=True))
             else:
+                if item.stat().st_nlink > 1:
+                    _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "payload hard link is forbidden")
                 digest = hashlib.sha256()
                 with item.open("rb") as handle:
                     for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -311,13 +363,177 @@ def _payload_entries(bundle: BundleHandle, allowance: dict[str, Any]) -> list[di
     return descriptors
 
 
+def _allowance_identity(allowance: dict[str, Any]) -> str:
+    return json.dumps(allowance, sort_keys=True, separators=(",", ":"))
+
+
+def _database_snapshot(bundle: BundleHandle) -> dict[str, Any]:
+    schema_rows = [
+        tuple(row)
+        for row in bundle.con.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+        ).fetchall()
+    ]
+    schema_sha = hashlib.sha256(
+        json.dumps(schema_rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    tables = [str(row[1]) for row in schema_rows if row[0] == "table"]
+    full = {table: _sqlite_content_identity(bundle, table) for table in tables}
+    outside: dict[str, tuple[int, str]] = {}
+    grouped: dict[str, tuple[str, set[str]]] = {}
+    for allowance in (bundle.capability or {}).get("write_allowlist", []):
+        if allowance["mutation_class"] != "sqlite_rows":
+            continue
+        table = str(allowance["table"])
+        column = str(allowance["key_scope"]["column"])
+        if table in grouped and grouped[table][0] != column:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "table allowances use different key columns")
+        grouped.setdefault(table, (column, set()))[1].update(
+            str(value) for value in allowance["key_scope"]["values"]
+        )
+    for table, (column, values) in grouped.items():
+        quoted = '"' + column.replace('"', '""') + '"'
+        placeholders = ",".join("?" for _ in values)
+        outside[table] = _sqlite_content_identity(
+            bundle,
+            table,
+            where_sql=f"{quoted} IS NULL OR {quoted} NOT IN ({placeholders})",
+            params=sorted(values),
+            required_column=column,
+        )
+    return {"schema": schema_sha, "tables": full, "outside": outside}
+
+
+def _payload_snapshot(
+    bundle: BundleHandle, *, reject_hardlinks: bool
+) -> dict[str, tuple[str, str]]:
+    db_rel = normalize_bundle_relative_path(
+        bundle.manifest["storage"]["sqlite"]["path"], purpose="bundle SQLite database"
+    )
+    ignored = {
+        STAGE_MARKER,
+        "manifest.json",
+        db_rel,
+        db_rel + "-wal",
+        db_rel + "-shm",
+        db_rel + "-journal",
+    }
+    snapshot: dict[str, tuple[str, str]] = {}
+    pending = [bundle.bundle_dir]
+    while pending:
+        parent = pending.pop()
+        for item in sorted(parent.iterdir(), reverse=True):
+            relative = item.relative_to(bundle.bundle_dir).as_posix()
+            if relative in ignored or ".scworkbench-writer.lock" in relative.split("/"):
+                continue
+            if item.is_symlink():
+                snapshot[relative] = ("symlink", "")
+            elif item.is_dir():
+                snapshot[relative] = ("dir", _R_EMPTY_DIRECTORY_SHA256)
+                pending.append(item)
+            else:
+                if reject_hardlinks and item.stat().st_nlink > 1:
+                    _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "payload hard link is forbidden")
+                digest = hashlib.sha256()
+                with item.open("rb") as handle:
+                    for block in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(block)
+                snapshot[relative] = ("file", digest.hexdigest())
+    return snapshot
+
+
+def _payload_allowance_matches(relative: str, allowance: dict[str, Any]) -> bool:
+    prefix = str(allowance["path"]).rstrip("/")
+    if relative == prefix or relative.startswith(prefix + "/"):
+        return True
+    return (
+        Path(relative).parent == Path(prefix).parent
+        and re.fullmatch(
+            re.escape(Path(prefix).name) + r"\.[A-Za-z0-9][A-Za-z0-9._-]*",
+            Path(relative).name,
+        )
+        is not None
+    )
+
+
+def initialize_write_baseline(bundle: BundleHandle) -> None:
+    """Capture authoritative pre-operation identities for receipt differencing."""
+
+    baseline: dict[str, Any] = {}
+    for allowance in (bundle.capability or {}).get("write_allowlist", []):
+        key = _allowance_identity(allowance)
+        if key in baseline:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "duplicate write allowance")
+        if allowance["mutation_class"] == "sqlite_rows":
+            descriptor = _rows_descriptor(bundle, allowance)
+            baseline[key] = (descriptor["row_count"], descriptor["content_sha256"])
+        else:
+            baseline[key] = {
+                item["path"]: item["content_sha256"] for item in _payload_entries(bundle, allowance)
+            }
+    bundle.write_baseline = baseline
+    baseline["__database__"] = _database_snapshot(bundle)
+    baseline["__payload__"] = _payload_snapshot(bundle, reject_hardlinks=False)
+
+
 def build_write_manifest(bundle: BundleHandle) -> list[dict[str, Any]]:
     if bundle.access_mode == "read_only":
         return []
+    if bundle.con.in_transaction:
+        _fail("PYBENCH_RECEIPT_MISMATCH", "cannot issue a receipt with an open transaction")
+    if not bundle.authorizer_installed or bundle.write_baseline is None:
+        _fail("PYBENCH_CAPABILITY_MISMATCH", "staging enforcement was not initialized")
+    before_db = bundle.write_baseline["__database__"]
+    after_db = _database_snapshot(bundle)
+    if after_db["schema"] != before_db["schema"]:
+        _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "SQLite schema changed")
+    allowed_tables = {
+        str(item["table"])
+        for item in (bundle.capability or {}).get("write_allowlist", [])
+        if item["mutation_class"] == "sqlite_rows"
+    }
+    for table in set(before_db["tables"]) | set(after_db["tables"]):
+        if before_db["tables"].get(table) == after_db["tables"].get(table):
+            continue
+        if table not in allowed_tables:
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", f"undeclared SQLite table mutation: {table}")
+        if before_db["outside"].get(table) != after_db["outside"].get(table):
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", f"sibling rows changed in {table}")
     result: list[dict[str, Any]] = []
-    for allowance in bundle.write_journal or []:
+    for allowance in (bundle.capability or {}).get("write_allowlist", []):
+        baseline = bundle.write_baseline[_allowance_identity(allowance)]
         if allowance["mutation_class"] == "sqlite_rows":
-            result.append(_rows_descriptor(bundle, allowance))
-        else:
-            result.extend(_payload_entries(bundle, allowance))
+            descriptor = _rows_descriptor(bundle, allowance)
+            current = (descriptor["row_count"], descriptor["content_sha256"])
+            if current != baseline:
+                result.append(descriptor)
+    before_payload = bundle.write_baseline["__payload__"]
+    after_payload = _payload_snapshot(bundle, reject_hardlinks=True)
+    for relative in sorted(set(before_payload) | set(after_payload)):
+        if before_payload.get(relative) == after_payload.get(relative):
+            continue
+        if after_payload.get(relative, (None,))[0] == "symlink":
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "payload symlink mutation is forbidden")
+        matches = [
+            allowance
+            for allowance in (bundle.capability or {}).get("write_allowlist", [])
+            if allowance["mutation_class"] == "payload_tree"
+            and _payload_allowance_matches(relative, allowance)
+        ]
+        if len(matches) != 1:
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "undeclared or ambiguous payload mutation")
+        current = after_payload.get(relative)
+        result.append(
+            {
+                **matches[0],
+                "path": relative,
+                "row_count": 0,
+                "content_sha256": (
+                    current[1]
+                    if current is not None
+                    else "71557d1c8bac9bbe3cbec8d00bb223a2f372279827064095447e569fbf5a760a"
+                ),
+            }
+        )
     return result

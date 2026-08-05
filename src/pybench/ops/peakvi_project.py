@@ -86,7 +86,9 @@ def _project_peakvi(model_path: TrustedModelPath, adata, use_gpu: bool):
 
     first_error: Exception | None = None
     try:
-        model = scvi.model.PEAKVI.load(runtime_path, adata=adata, accelerator=accelerator, device=device)
+        model = scvi.model.PEAKVI.load(
+            runtime_path, adata=adata, accelerator=accelerator, device=device
+        )
     except Exception as e:  # noqa: BLE001
         first_error = e
         try:
@@ -142,7 +144,7 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         adata, _batch_key = _build_project_anndata(inputs, params, b)
         latent, _scvi_version = _project_peakvi(model_path=model_path, adata=adata, use_gpu=use_gpu)
 
-        add_space(
+        space_summary = add_space(
             b,
             space_id=space_id_out,
             coords=latent,
@@ -153,10 +155,15 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         )
 
         dt = time.time() - t0
+        output_receipts = {
+            name: {"artifact_id": spec["artifact_id"], "type": "space", **space_summary}
+            for name, spec in req.get("outputs", {}).items()
+            if spec.get("type") == "space"
+        }
         return ok_receipt(
             op_name=op_name,
             run_id=run_id,
-            outputs={},
+            outputs=output_receipts,
             warnings=[],
             timings={"total_sec": round(dt, 6)},
             pybench_version=PYBENCH_VERSION,

@@ -290,9 +290,15 @@ def _init_bundle(root: Path) -> None:
     con = sqlite3.connect(str(root / "db" / "app.sqlite"))
     try:
         con.execute("CREATE TABLE cells (cell_id TEXT PRIMARY KEY)")
-        con.execute("CREATE TABLE spaces (space_id TEXT PRIMARY KEY, source TEXT, dims INTEGER, storage TEXT, description TEXT)")
-        con.execute("CREATE TABLE space_2d (space_id TEXT, cell_id TEXT, x REAL, y REAL, PRIMARY KEY (space_id, cell_id))")
-        con.execute("CREATE TABLE space_coords (space_id TEXT, cell_id TEXT, dim INTEGER, value REAL, PRIMARY KEY (space_id, cell_id, dim))")
+        con.execute(
+            "CREATE TABLE spaces (space_id TEXT PRIMARY KEY, source TEXT, dims INTEGER, storage TEXT, description TEXT)"
+        )
+        con.execute(
+            "CREATE TABLE space_2d (space_id TEXT, cell_id TEXT, x REAL, y REAL, PRIMARY KEY (space_id, cell_id))"
+        )
+        con.execute(
+            "CREATE TABLE space_coords (space_id TEXT, cell_id TEXT, dim INTEGER, value REAL, PRIMARY KEY (space_id, cell_id, dim))"
+        )
         con.execute(
             """
             CREATE TABLE artifacts (
@@ -351,6 +357,7 @@ def _init_bundle(root: Path) -> None:
     (root / "manifest.json").write_text(
         json.dumps({"storage": {"sqlite": {"path": "db/app.sqlite"}}}, indent=2)
     )
+    (root / "artifact_models").mkdir()
 
 
 def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path):
@@ -449,17 +456,23 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
         allowances=[
             sqlite_allowance("space_registry", "rna.scvi", "space", "spaces", "space_id"),
             sqlite_allowance("space_registry", "rna.scvi", "space", "space_coords", "space_id"),
-            sqlite_allowance("model", "model_art", "model_ref", "artifact_model_ref", "artifact_id"),
+            sqlite_allowance(
+                "model", "model_art", "model_ref", "artifact_model_ref", "artifact_id"
+            ),
             payload_allowance("model", "model_art", "model_ref", "artifact_models/model_art"),
-            sqlite_allowance("fit_summary", "summary_art", "obs_table", "artifact_tables", "artifact_id"),
-            sqlite_allowance("fit_summary", "summary_art", "obs_table", "artifact_table_rows", "artifact_id"),
+            sqlite_allowance(
+                "fit_summary", "summary_art", "obs_table", "artifact_tables", "artifact_id"
+            ),
+            sqlite_allowance(
+                "fit_summary", "summary_art", "obs_table", "artifact_table_rows", "artifact_id"
+            ),
         ],
     )
 
     rec = scvi_train._run(req)
 
     assert rec["status"] == "ok"
-    assert set(rec["outputs"]) == {"model", "fit_summary"}
+    assert set(rec["outputs"]) == {"model", "fit_summary", "space_registry"}
     con = sqlite3.connect(str(bundle_dir / "db" / "app.sqlite"))
     con.row_factory = sqlite3.Row
     try:
@@ -471,7 +484,9 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
         assert coords_n == 9
 
         model_ref = dict(
-            con.execute("SELECT * FROM artifact_model_ref WHERE artifact_id = 'model_art'").fetchone()
+            con.execute(
+                "SELECT * FROM artifact_model_ref WHERE artifact_id = 'model_art'"
+            ).fetchone()
         )
         assert model_ref["engine"] == "scvi"
         assert model_ref["model_space_id"] == "rna.scvi"
@@ -479,7 +494,9 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
         assert (bundle_dir / model_ref["model_path"] / "model.txt").exists()
 
         table = dict(
-            con.execute("SELECT * FROM artifact_tables WHERE artifact_id = 'summary_art'").fetchone()
+            con.execute(
+                "SELECT * FROM artifact_tables WHERE artifact_id = 'summary_art'"
+            ).fetchone()
         )
         assert table["table_type"] == "scvi_fit_summary"
         row_json = con.execute(

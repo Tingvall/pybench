@@ -31,11 +31,10 @@ def test_palantir_fit_persists_relative_contained_model_path(tmp_path, monkeypat
     (root / "manifest.json").write_text(
         json.dumps({"storage": {"sqlite": {"path": "db/app.sqlite"}}})
     )
+    (root / "artifact_models").mkdir()
 
     cells = ["c1", "c2", "c3"]
-    fit_df = pd.DataFrame(
-        {"cell_id": cells, "d1": [0.0, 1.0, 2.0], "d2": [2.0, 1.0, 0.0]}
-    )
+    fit_df = pd.DataFrame({"cell_id": cells, "d1": [0.0, 1.0, 2.0], "d2": [2.0, 1.0, 0.0]})
     result = SimpleNamespace(
         pseudotime=pd.Series([0.0, 0.5, 1.0], index=cells),
         branch_probs=pd.DataFrame(index=cells),

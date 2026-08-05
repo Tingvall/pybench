@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pybench.bundle import open_bundle
-from pybench.capability import STAGE_MARKER
+from pybench.bundle import _VALIDATED_STAGING_OPEN, open_bundle
+from pybench.capability import STAGE_MARKER, install_sqlite_authorizer
 from pybench.protocol import PATH_CONTRACT
 
 
@@ -31,12 +31,16 @@ def payload_allowance(output_name: str, output_id: str, output_kind: str, path: 
     }
 
 
-def raw_write_bundle(root: Path, allowances: list[dict] | None = None):
-    return open_bundle(
+def raw_write_bundle(root: Path, allowances: list[dict] | None = None, *, enforce: bool = False):
+    bundle = open_bundle(
         root,
         access_mode="staging_write",
         capability={"write_allowlist": allowances or []},
+        _staging_token=_VALIDATED_STAGING_OPEN,
     )
+    if enforce:
+        install_sqlite_authorizer(bundle)
+    return bundle
 
 
 def v2_request(

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -20,6 +21,8 @@ class BundleHandle:
     access_mode: Literal["read_only", "staging_write"] = "read_only"
     capability: dict[str, Any] | None = None
     write_journal: list[dict[str, Any]] | None = None
+    write_baseline: dict[str, Any] | None = None
+    authorizer_installed: bool = False
 
 
 class BundleError(RuntimeError):
@@ -89,7 +92,9 @@ def _audit_contained_tree(path: Path, root: Path, raw: object, purpose: str) -> 
         try:
             entries = list(os.scandir(current))
         except OSError as exc:
-            raise BundleError(f"Unable to inspect contained {purpose} tree {current}: {exc}") from exc
+            raise BundleError(
+                f"Unable to inspect contained {purpose} tree {current}: {exc}"
+            ) from exc
         for entry in entries:
             entry_path = Path(entry.path)
             if entry.is_symlink():
@@ -113,6 +118,13 @@ def _audit_contained_tree(path: Path, root: Path, raw: object, purpose: str) -> 
                     pending.append(resolved)
             elif entry.is_dir(follow_symlinks=False):
                 pending.append(entry_path)
+            elif entry.stat(follow_symlinks=False).st_nlink > 1:
+                raise _path_error(
+                    "PATH_HARDLINK_FORBIDDEN",
+                    raw,
+                    "payload tree contains a multiply-linked file",
+                    purpose,
+                )
 
 
 def resolve_bundle_path(
@@ -196,7 +208,9 @@ def bundle_relative_path(
 ) -> tuple[str, Path]:
     """Return the normalized portable value and its checked runtime path."""
 
-    relative = normalize_bundle_relative_path(path, purpose=kwargs.get("purpose", "durable portable payload"))
+    relative = normalize_bundle_relative_path(
+        path, purpose=kwargs.get("purpose", "durable portable payload")
+    )
     return relative, resolve_bundle_path(bundle_or_root, relative, **kwargs)
 
 
@@ -238,11 +252,56 @@ def resolve_declared_input_path(
     )
 
 
+_VALIDATED_STAGING_OPEN = object()
+
+
+class _CapabilityConnection(sqlite3.Connection):
+    """Connection whose installed capability guard cannot be casually replaced."""
+
+    _pybench_authorizer_locked = False
+
+    def set_authorizer(self, authorizer_callback):
+        if self._pybench_authorizer_locked:
+            raise sqlite3.DatabaseError(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION: SQLite authorizer is locked"
+            )
+        return super().set_authorizer(authorizer_callback)
+
+    def _install_locked_authorizer(self, authorizer_callback) -> None:
+        super().set_authorizer(authorizer_callback)
+        self._pybench_authorizer_locked = True
+
+    def enable_load_extension(self, enabled: bool) -> None:
+        if self._pybench_authorizer_locked:
+            raise sqlite3.DatabaseError(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION: SQLite extensions are disabled"
+            )
+        super().enable_load_extension(enabled)
+
+    def load_extension(self, path: str, *, entrypoint: str | None = None) -> None:
+        if self._pybench_authorizer_locked:
+            raise sqlite3.DatabaseError(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION: SQLite extensions are disabled"
+            )
+        if entrypoint is None:
+            super().load_extension(path)
+        else:  # pragma: no cover - entrypoint is only available on newer Python
+            super().load_extension(path, entrypoint=entrypoint)
+
+    def deserialize(self, data: bytes, /, *, name: str = "main") -> None:
+        if self._pybench_authorizer_locked:
+            raise sqlite3.DatabaseError(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION: SQLite deserialize is disabled"
+            )
+        super().deserialize(data, name=name)
+
+
 def open_bundle(
     bundle_dir: str | Path,
     *,
     access_mode: Literal["read_only", "staging_write"] = "read_only",
     capability: dict[str, Any] | None = None,
+    _staging_token: object | None = None,
 ) -> BundleHandle:
     try:
         root = Path(bundle_dir).expanduser().resolve(strict=True)
@@ -274,36 +333,48 @@ def open_bundle(
     )
     # SQLite may automatically open sidecars. Reject an escaping sidecar link
     # before sqlite3 can inspect or read it.
-    db_relative = normalize_bundle_relative_path(
-        db_rel, purpose="bundle SQLite database"
-    )
+    db_relative = normalize_bundle_relative_path(db_rel, purpose="bundle SQLite database")
+    sidecars = []
     for suffix in ("-wal", "-shm", "-journal"):
-        resolve_bundle_path(
-            root,
-            db_relative + suffix,
-            expected_type="file",
-            must_exist=False,
-            purpose="bundle SQLite sidecar",
+        sidecars.append(
+            resolve_bundle_path(
+                root,
+                db_relative + suffix,
+                expected_type="file",
+                must_exist=False,
+                purpose="bundle SQLite sidecar",
+            )
         )
     if access_mode not in {"read_only", "staging_write"}:
         raise BundleError(f"unsupported bundle access mode: {access_mode!r}")
-    if access_mode == "staging_write" and capability is None:
+    if access_mode == "read_only" and any(path.exists() for path in sidecars):
         raise BundleError(
-            "PYBENCH_CAPABILITY_MISMATCH: staging_write requires a validated execution capability"
+            "PYBENCH_SOURCE_WRITE_ATTEMPT: read-only bundle has a live SQLite sidecar"
+        )
+    if access_mode == "staging_write" and (
+        capability is None or _staging_token is not _VALIDATED_STAGING_OPEN
+    ):
+        raise BundleError(
+            "PYBENCH_CAPABILITY_MISMATCH: staging_write requires a validated v2 request"
         )
     if access_mode == "read_only":
-        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        con = sqlite3.connect(
+            f"{db_path.as_uri()}?mode=ro&immutable=1",
+            uri=True,
+            factory=_CapabilityConnection,
+        )
         con.execute("PRAGMA query_only = ON")
     else:
-        con = sqlite3.connect(str(db_path))
+        con = sqlite3.connect(str(db_path), factory=_CapabilityConnection)
     con.row_factory = sqlite3.Row
     return BundleHandle(
         bundle_dir=root,
         manifest=manifest,
         con=con,
         access_mode=access_mode,
-        capability=capability,
+        capability=deepcopy(capability),
         write_journal=[],
+        write_baseline={},
     )
 
 

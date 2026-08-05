@@ -44,9 +44,7 @@ def _cell_ids_from_request(req_inputs: dict[str, Any]) -> list[str]:
         stage_dir = str(req_inputs.get("matrix_chunks_dir") or "")
         if not stage_dir:
             raise PeakVIFitOpError("cell_ids_path requires an explicit matrix_chunks_dir root")
-        p = resolve_declared_input_path(
-            stage_dir, cell_ids_path, purpose="staged PeakVI cell IDs"
-        )
+        p = resolve_declared_input_path(stage_dir, cell_ids_path, purpose="staged PeakVI cell IDs")
         out = [str(x) for x in p.read_text().splitlines() if str(x)]
         if out:
             return out
@@ -153,9 +151,13 @@ def _build_anndata(req_inputs: dict[str, Any], req_params: dict[str, Any], bundl
     else:
         cell_ids = _cell_ids_from_request(req_inputs)
         try:
-            X_fc, feature_ids, cell_ids = get_matrix(bundle, matrix_id=matrix_id, cells_order=cell_ids)
+            X_fc, feature_ids, cell_ids = get_matrix(
+                bundle, matrix_id=matrix_id, cells_order=cell_ids
+            )
         except Exception as e:  # noqa: BLE001
-            raise PeakVIFitOpError(f"failed to read bundle matrix '{matrix_id}' via Python BPCells: {e}") from e
+            raise PeakVIFitOpError(
+                f"failed to read bundle matrix '{matrix_id}' via Python BPCells: {e}"
+            ) from e
 
     X_cf = X_fc.transpose().tocsr()
 
@@ -202,6 +204,7 @@ def _train_peakvi(
             pass
         try:
             import torch  # type: ignore
+
             torch.manual_seed(int(seed))
         except Exception:
             pass
@@ -297,7 +300,7 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             use_gpu=use_gpu,
         )
 
-        add_space(
+        space_summary = add_space(
             b,
             space_id=space_id_out,
             coords=latent,
@@ -318,11 +321,16 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
                 model_type="peakvi_fit",
                 model_path=f"artifact_models/{model_artifact_id}/peakvi",
                 expected_type="directory",
-                writer=lambda path: model.save(
-                    str(path), overwrite=True, save_anndata=False
-                ),
+                writer=lambda path: model.save(str(path), overwrite=True, save_anndata=False),
             )
         }
+        for name, spec in outputs_spec.items():
+            if spec.get("type") == "space":
+                out_receipts[name] = {
+                    "artifact_id": spec["artifact_id"],
+                    "type": "space",
+                    **space_summary,
+                }
 
         dt = time.time() - t0
         return ok_receipt(

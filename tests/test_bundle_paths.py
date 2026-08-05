@@ -56,6 +56,7 @@ def _init_bundle(root: Path) -> Path:
     (root / "manifest.json").write_text(
         json.dumps({"storage": {"sqlite": {"path": "db/app.sqlite"}}})
     )
+    (root / "artifact_models/imported").mkdir(parents=True)
     return root
 
 
@@ -67,9 +68,7 @@ def _open_test_stage(root: Path):
                 "model", "model_art", "model_ref", "artifact_model_ref", "artifact_id"
             ),
             payload_allowance("model", "model_art", "model_ref", "artifact_models/model"),
-            payload_allowance(
-                "model", "model_art", "model_ref", "artifact_models/model_art"
-            ),
+            payload_allowance("model", "model_art", "model_ref", "artifact_models/model_art"),
             payload_allowance(
                 "model",
                 "model_art",
@@ -119,14 +118,20 @@ def test_canonical_resolver_distinguishes_missing_type_and_symlink_escape(tmp_pa
     assert escape.value.code == "PATH_SYMLINK_ESCAPE"
 
 
-@pytest.mark.parametrize("db_path", ["../outside.sqlite", "/tmp/outside.sqlite", "C:\\outside.sqlite", "\\\\host\\share\\outside.sqlite"])
+@pytest.mark.parametrize(
+    "db_path",
+    [
+        "../outside.sqlite",
+        "/tmp/outside.sqlite",
+        "C:\\outside.sqlite",
+        "\\\\host\\share\\outside.sqlite",
+    ],
+)
 def test_open_bundle_rejects_sqlite_traversal_and_absolute_before_connect(
     tmp_path: Path, monkeypatch, db_path: str
 ):
     root = _init_bundle(tmp_path / "bundle")
-    (root / "manifest.json").write_text(
-        json.dumps({"storage": {"sqlite": {"path": db_path}}})
-    )
+    (root / "manifest.json").write_text(json.dumps({"storage": {"sqlite": {"path": db_path}}}))
     connected = False
 
     def forbidden_connect(*_args, **_kwargs):
@@ -191,9 +196,7 @@ def test_matrix_registry_path_and_nested_tree_links_are_rejected(tmp_path: Path)
     root = _init_bundle(tmp_path / "bundle")
     b = _open_test_stage(root)
     try:
-        b.con.execute(
-            "INSERT INTO matrices(matrix_id, path) VALUES ('m1', '../outside-matrix')"
-        )
+        b.con.execute("INSERT INTO matrices(matrix_id, path) VALUES ('m1', '../outside-matrix')")
         b.con.commit()
         with pytest.raises(BundlePathError, match="PATH_ESCAPE"):
             matrix_dir(b, "m1")
@@ -212,7 +215,6 @@ def test_matrix_registry_path_and_nested_tree_links_are_rejected(tmp_path: Path)
 
 def test_model_writer_stores_only_relative_contained_paths(tmp_path: Path):
     root = _init_bundle(tmp_path / "bundle")
-    (root / "artifact_models").mkdir()
     (root / "artifact_models" / "model.pkl").write_bytes(b"model")
     b = _open_test_stage(root)
     try:
@@ -279,6 +281,8 @@ def test_publication_rejects_top_level_and_nested_symlink_escape(tmp_path: Path)
     outside = tmp_path / "outside"
     outside.mkdir()
     root = _init_bundle(tmp_path / "bundle")
+    (root / "artifact_models/imported").rmdir()
+    (root / "artifact_models").rmdir()
     (root / "artifact_models").symlink_to(outside, target_is_directory=True)
     b = _open_test_stage(root)
     try:
@@ -326,7 +330,6 @@ def test_recipient_path_inspection_never_deserializes_adversarial_model(
 ):
     root = _init_bundle(tmp_path / "bundle")
     model = root / "artifact_models" / "adversarial.pkl"
-    model.parent.mkdir()
     model.write_bytes(b"cos\nsystem\n(S'touch /tmp/pybench-should-not-run'\ntR.")
 
     def forbidden_load(*_args, **_kwargs):

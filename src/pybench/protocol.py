@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .bundle import PATH_CONTRACT_VERSION, BundleHandle, open_bundle, resolve_bundle_path
+from .bundle import (
+    _VALIDATED_STAGING_OPEN,
+    PATH_CONTRACT_VERSION,
+    BundleHandle,
+    open_bundle,
+    resolve_bundle_path,
+)
 from .capability import build_write_manifest, install_sqlite_authorizer, validate_stage_marker
 
 PROTOCOL_VERSION = "pybench-op-v2"
@@ -185,7 +193,9 @@ def validate_request(request: dict[str, Any]) -> dict[str, Any]:
         raise ProtocolError("request.run must contain exactly session_id and run_id")
     _require_nonempty_str(run["session_id"], "request.run.session_id")
     _require_nonempty_str(run["run_id"], "request.run.run_id")
-    capability = _validate_capability(request.get("execution_capability"), "request.execution_capability")
+    capability = _validate_capability(
+        request.get("execution_capability"), "request.execution_capability"
+    )
     if run["session_id"] != capability["session_id"] or run["run_id"] != capability["run_id"]:
         raise ProtocolError("PYBENCH_CAPABILITY_MISMATCH: run identity differs from capability")
     if not isinstance(request.get("inputs"), dict) or not isinstance(request.get("params"), dict):
@@ -196,9 +206,14 @@ def validate_request(request: dict[str, Any]) -> dict[str, Any]:
         if name not in request["outputs"]:
             raise ProtocolError("PYBENCH_CAPABILITY_MISMATCH: allowance names unknown output")
         spec = request["outputs"][name]
-        if allowance["output_id"] != spec["artifact_id"] or allowance["output_kind"] != spec["type"]:
+        if (
+            allowance["output_id"] != spec["artifact_id"]
+            or allowance["output_kind"] != spec["type"]
+        ):
             raise ProtocolError("PYBENCH_CAPABILITY_MISMATCH: allowance output binding differs")
-        if allowance["mutation_class"] == "sqlite_rows" and allowance["key_scope"]["values"] != [allowance["output_id"]]:
+        if allowance["mutation_class"] == "sqlite_rows" and allowance["key_scope"]["values"] != [
+            allowance["output_id"]
+        ]:
             raise ProtocolError("PYBENCH_CAPABILITY_MISMATCH: key scope must bind exact output")
     return request
 
@@ -212,6 +227,7 @@ def open_bundle_for_request(request: dict[str, Any]) -> BundleHandle:
         request["bundle_dir"],
         access_mode=capability["mode"],
         capability=capability,
+        _staging_token=(_VALIDATED_STAGING_OPEN if capability["mode"] == "staging_write" else None),
     )
     install_sqlite_authorizer(bundle)
     return bundle
@@ -246,9 +262,18 @@ def validate_receipt(
     if not isinstance(receipt, dict):
         raise ProtocolError("receipt must be a JSON object")
     if receipt.get("protocol_version") != PROTOCOL_VERSION:
-        raise ProtocolError(f"unsupported receipt protocol_version: {receipt.get('protocol_version')!r}")
+        raise ProtocolError(
+            f"unsupported receipt protocol_version: {receipt.get('protocol_version')!r}"
+        )
     status = _require_nonempty_str(receipt.get("status"), "receipt.status")
-    required = {"message_type", "protocol_version", "status", "op_name", "run_id", "capability_echo"}
+    required = {
+        "message_type",
+        "protocol_version",
+        "status",
+        "op_name",
+        "run_id",
+        "capability_echo",
+    }
     required |= {"outputs", "write_manifest"} if status == "ok" else {"error_class", "message"}
     if set(receipt) != required:
         raise ProtocolError("receipt fields do not match canonical v2 schema")
@@ -260,7 +285,10 @@ def validate_receipt(
     if request is not None:
         if echo != request["execution_capability"]:
             raise ProtocolError("PYBENCH_CAPABILITY_MISMATCH: capability echo differs")
-        if receipt["op_name"] != request["op_name"] or receipt["run_id"] != request["run"]["run_id"]:
+        if (
+            receipt["op_name"] != request["op_name"]
+            or receipt["run_id"] != request["run"]["run_id"]
+        ):
             raise ProtocolError("PYBENCH_RECEIPT_MISMATCH: operation/run differs")
     if status == "ok":
         _validate_output_specs(receipt.get("outputs"), "receipt.outputs")
@@ -273,15 +301,12 @@ def validate_receipt(
             for name, output in receipt["outputs"].items():
                 expected = request["outputs"].get(name)
                 if expected is None:
-                    raise ProtocolError(
-                        "PYBENCH_RECEIPT_MISMATCH: receipt names unknown output"
-                    )
-                if output.get("artifact_id") != expected["artifact_id"] or output.get(
-                    "type"
-                ) != expected["type"]:
-                    raise ProtocolError(
-                        "PYBENCH_RECEIPT_MISMATCH: receipt output binding differs"
-                    )
+                    raise ProtocolError("PYBENCH_RECEIPT_MISMATCH: receipt names unknown output")
+                if (
+                    output.get("artifact_id") != expected["artifact_id"]
+                    or output.get("type") != expected["type"]
+                ):
+                    raise ProtocolError("PYBENCH_RECEIPT_MISMATCH: receipt output binding differs")
             for descriptor in manifest:
                 matches = []
                 for allowed in request["execution_capability"]["write_allowlist"]:
@@ -297,9 +322,10 @@ def validate_receipt(
                     if not same:
                         continue
                     if descriptor["mutation_class"] == "sqlite_rows":
-                        same = descriptor["table"] == allowed["table"] and descriptor[
-                            "key_scope"
-                        ] == allowed["key_scope"]
+                        same = (
+                            descriptor["table"] == allowed["table"]
+                            and descriptor["key_scope"] == allowed["key_scope"]
+                        )
                     else:
                         relative = descriptor["path"].rstrip("/")
                         prefix = allowed["path"].rstrip("/")
@@ -307,8 +333,7 @@ def validate_receipt(
                         if not same and Path(relative).parent == Path(prefix).parent:
                             same = (
                                 re.fullmatch(
-                                    re.escape(Path(prefix).name)
-                                    + r"\.[A-Za-z0-9][A-Za-z0-9._-]*",
+                                    re.escape(Path(prefix).name) + r"\.[A-Za-z0-9][A-Za-z0-9._-]*",
                                     Path(relative).name,
                                 )
                                 is not None
@@ -335,7 +360,13 @@ def write_receipt(
     request: dict[str, Any] | None = None,
 ) -> None:
     validate_receipt(receipt, request=request)
-    Path(path).write_text(json.dumps(receipt, indent=2, allow_nan=False))
+    destination = Path(path)
+    temporary = destination.with_name(f".{destination.name}.pybench-{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(receipt, indent=2, allow_nan=False))
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def ok_receipt(
@@ -353,7 +384,7 @@ def ok_receipt(
         "status": "ok",
         "op_name": op_name,
         "run_id": run_id,
-        "capability_echo": request["execution_capability"],
+        "capability_echo": bundle.capability,
         "outputs": outputs,
         "write_manifest": build_write_manifest(bundle),
     }
