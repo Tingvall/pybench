@@ -497,3 +497,15 @@ def test_named_ops_mock_only_training_and_use_real_v2_writers(
     assert receipt["status"] == "ok"
     assert receipt["write_manifest"]
     assert all(item["content_sha256"] != "0" * 64 for item in receipt["write_manifest"])
+    if any(spec["type"] == "model_ref" for spec in outputs.values()):
+        expected_engine = {
+            "scvi_train": "scvi",
+            "peakvi_fit": "peakvi",
+            "palantir_fit": "palantir",
+        }[op_name]
+        connection = sqlite3.connect(root / "db/app.sqlite")
+        row = connection.execute(
+            "SELECT engine, model_type FROM artifact_model_ref WHERE artifact_id='model'"
+        ).fetchone()
+        connection.close()
+        assert row == (expected_engine, expected_engine)

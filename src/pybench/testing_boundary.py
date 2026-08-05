@@ -108,13 +108,18 @@ def run_mock_training_boundary(
         elif kind == "model_ref":
             model_space_id = space_id or str(inputs.get("fit_space") or "mock_space")
             relative = f"artifact_models/{artifact_id}_mock"
+            engine = {
+                "scvi_train": "scvi",
+                "peakvi_fit": "peakvi",
+                "palantir_fit": "palantir",
+            }.get(request["op_name"], request["op_name"])
 
             def writer(path: Path) -> None:
                 path.mkdir(parents=True)
                 (path / "model.json").write_text(
                     json.dumps(
                         {
-                            "engine": request["op_name"],
+                            "engine": engine,
                             "run_id": request["run"]["run_id"],
                             "cell_ids": cell_ids,
                         },
@@ -127,7 +132,7 @@ def run_mock_training_boundary(
             result[name] = publish_artifact_model_payload(
                 bundle,
                 artifact_id,
-                engine=request["op_name"],
+                engine=engine,
                 model_space_id=model_space_id,
                 model_path=relative,
                 writer=writer,
