@@ -45,8 +45,6 @@ def test_palantir_project_loads_moved_contained_model_only_through_trusted_reque
         assert trusted.absolute == (moved / relative).resolve()
 
         with pytest.raises(BundlePathError, match="PATH_ABSOLUTE"):
-            trusted_model_path(
-                request, bundle, str(source / relative), expected_type="file"
-            )
+            trusted_model_path(request, bundle, str(source / relative), expected_type="file")
     finally:
         close_bundle(bundle)

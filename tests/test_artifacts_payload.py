@@ -12,9 +12,7 @@ from pybench.artifacts_payload import write_artifact_cell_vector_payload
 from pybench.bundle import close_bundle, open_bundle
 from pybench.getters import art_get_row, art_list
 
-GOLDEN_BUNDLE = Path(
-    "/home/dirk/Projects/lymphocyte_trajectory/fixtures/golden_bundle/scwb_golden"
-)
+GOLDEN_BUNDLE = Path("/home/dirk/Projects/lymphocyte_trajectory/fixtures/golden_bundle/scwb_golden")
 
 
 def _copy_golden_bundle(tmp_path: Path) -> Path:
@@ -124,7 +122,11 @@ def test_write_artifact_cell_vector_payload_matches_scworkbench_shape(tmp_path: 
 
     b = raw_write_bundle(
         bundle_dir,
-        [sqlite_allowance("vector", "cell_vector_test", "cell_vector", "artifact_labels", "artifact_id")],
+        [
+            sqlite_allowance(
+                "vector", "cell_vector_test", "cell_vector", "artifact_labels", "artifact_id"
+            )
+        ],
     )
     try:
         receipt = write_artifact_cell_vector_payload(

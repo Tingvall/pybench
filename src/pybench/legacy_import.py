@@ -119,9 +119,7 @@ def import_legacy_model(
             staging.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_path, staging)
         if _source_checksum(staging) != checksum:
-            raise LegacyModelImportError(
-                "legacy model source changed while it was being imported"
-            )
+            raise LegacyModelImportError("legacy model source changed while it was being imported")
 
     def record_provenance(con, relative: str) -> None:
         record["contained_model_path"] = relative

@@ -23,9 +23,7 @@ def enabled() -> bool:
     return os.environ.get("PYBENCH_TEST_MOCK_TRAINING") == "1"
 
 
-def run_mock_training_boundary(
-    request: dict[str, Any], bundle: BundleHandle
-) -> dict[str, Any]:
+def run_mock_training_boundary(request: dict[str, Any], bundle: BundleHandle) -> dict[str, Any]:
     """Exercise real v2 writers while replacing only expensive model computation."""
 
     outputs = request["outputs"]

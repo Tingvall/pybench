@@ -38,15 +38,11 @@ def test_scworkbench_python_path_contract_is_exactly_in_lockstep():
     assert version is not None
     r_contract = {
         "version": version.group(1),
-        "durable_paths": re.search(
-            r'durable_paths\s*=\s*"([^"]+)"', protocol_source
-        ).group(1),
-        "external_inputs": re.search(
-            r'external_inputs\s*=\s*"([^"]+)"', protocol_source
-        ).group(1),
-        "serialized_models": re.search(
-            r'serialized_models\s*=\s*"([^"]+)"', protocol_source
-        ).group(1),
+        "durable_paths": re.search(r'durable_paths\s*=\s*"([^"]+)"', protocol_source).group(1),
+        "external_inputs": re.search(r'external_inputs\s*=\s*"([^"]+)"', protocol_source).group(1),
+        "serialized_models": re.search(r'serialized_models\s*=\s*"([^"]+)"', protocol_source).group(
+            1
+        ),
     }
     assert r_contract == PATH_CONTRACT
     assert "path_contract = .wb_pyproto_path_contract()" in bridge_source

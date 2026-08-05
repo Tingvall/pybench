@@ -113,7 +113,12 @@ def main() -> int:
     try:
         rec = _run(req)
     except Exception as e:  # noqa: BLE001
-        rec = error_receipt_from_exception(op_name=str(req.get("op_name", "<unknown>")), run_id=str((req.get("run") or {}).get("run_id", "<unknown>")), exc=e, request=req)
+        rec = error_receipt_from_exception(
+            op_name=str(req.get("op_name", "<unknown>")),
+            run_id=str((req.get("run") or {}).get("run_id", "<unknown>")),
+            exc=e,
+            request=req,
+        )
         write_receipt(args.receipt, rec, request=None)
         return 1
 

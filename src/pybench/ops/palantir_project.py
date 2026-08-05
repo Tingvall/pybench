@@ -64,7 +64,7 @@ def _resolve_model_path(inputs: dict[str, Any]) -> str:
         v = inputs.get(key)
         if isinstance(v, str) and v:
             # `model` may be passed as a path string by the R bridge.
-            if key == "model" and not (v.endswith('.pkl') or v.endswith('.rds') or '/' in v):
+            if key == "model" and not (v.endswith(".pkl") or v.endswith(".rds") or "/" in v):
                 continue
             return v
         if isinstance(v, dict):
@@ -106,7 +106,9 @@ def _load_palantir_model_payload(model_path: TrustedModelPath) -> dict[str, Any]
     return payload
 
 
-def _compute_branch_masks(pseudotime: pd.Series, branch_probs: pd.DataFrame, *, q: float = 1e-2, eps: float = 1e-2) -> pd.DataFrame:
+def _compute_branch_masks(
+    pseudotime: pd.Series, branch_probs: pd.DataFrame, *, q: float = 1e-2, eps: float = 1e-2
+) -> pd.DataFrame:
     # Use Palantir's native branch selection logic instead of a simple branch_prob threshold.
     idx = [str(x) for x in pseudotime.index.astype(str).tolist()]
     pt = pd.Series(pd.to_numeric(pseudotime, errors="coerce"), index=idx)
@@ -114,7 +116,9 @@ def _compute_branch_masks(pseudotime: pd.Series, branch_probs: pd.DataFrame, *, 
     bp.index = bp.index.astype(str)
     bp = bp.reindex(idx)
     if bp.isna().any(axis=None):
-        raise PalantirProjectOpError("branch_probs contains missing values after alignment for branch_masks")
+        raise PalantirProjectOpError(
+            "branch_probs contains missing values after alignment for branch_masks"
+        )
     ad = AnnData(X=np.zeros((len(idx), 0), dtype=float))
     ad.obs_names = idx
     ad.obs["palantir_pseudotime"] = pt.to_numpy(dtype=float)
@@ -137,12 +141,14 @@ def _compute_branch_masks(pseudotime: pd.Series, branch_probs: pd.DataFrame, *, 
     return out
 
 
-def _fit_branch_curve(pt: np.ndarray,
-                      xy: np.ndarray,
-                      *,
-                      smoothness: float,
-                      sample_points: int,
-                      pt_interval: tuple[float, float] | None = None) -> np.ndarray:
+def _fit_branch_curve(
+    pt: np.ndarray,
+    xy: np.ndarray,
+    *,
+    smoothness: float,
+    sample_points: int,
+    pt_interval: tuple[float, float] | None = None,
+) -> np.ndarray:
     if pt.size < 3 or xy.shape[0] < 3:
         raise PalantirProjectOpError("branch has too few cells for trajectory interpolation")
     if xy.shape[1] != 2:
@@ -176,7 +182,7 @@ def _fit_branch_curve(pt: np.ndarray,
 
     grid = np.linspace(lo, hi, int(sample_points), dtype=float)
     span = np.max(xy_u, axis=0) - np.min(xy_u, axis=0)
-    ls = float(smoothness) * float(np.sqrt(np.sum(span ** 2))) / 20.0
+    ls = float(smoothness) * float(np.sqrt(np.sum(span**2))) / 20.0
     if not np.isfinite(ls) or ls <= 0:
         ls = 1.0
 
@@ -241,7 +247,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         branch_probs = pd.DataFrame(branch_probs)
         branch_probs.index = branch_probs.index.astype(str)
         if branch_probs.empty or branch_probs.shape[1] == 0:
-            raise PalantirProjectOpError("PResults branch_probs is empty; palantir_project cannot derive branch trajectories")
+            raise PalantirProjectOpError(
+                "PResults branch_probs is empty; palantir_project cannot derive branch trajectories"
+            )
 
         prob_min = float(params.get("prob_min", 0.05))
         smoothness = float(params.get("smoothness", 1.0))
@@ -259,7 +267,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         hi = params.get("pseudotime_max")
         if lo is not None or hi is not None:
             if lo is None or hi is None:
-                raise PalantirProjectOpError("pseudotime_min and pseudotime_max must be provided together")
+                raise PalantirProjectOpError(
+                    "pseudotime_min and pseudotime_max must be provided together"
+                )
             pt_interval = (float(lo), float(hi))
 
         # Align plot space rows to pseudotime/branch_probs cell order.
@@ -268,12 +278,16 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         plot_df = plot_df.reindex(cells_order)
         if plot_df.isna().any(axis=None):
             missing = int(plot_df.isna().any(axis=1).sum())
-            raise PalantirProjectOpError(f"plot_space missing coordinates for {missing} Palantir cells")
+            raise PalantirProjectOpError(
+                f"plot_space missing coordinates for {missing} Palantir cells"
+            )
 
         branch_masks = _compute_branch_masks(pseudotime, branch_probs, q=mask_q, eps=mask_eps)
         if branch_masks.empty or branch_masks.shape[1] == 0:
             raise PalantirProjectOpError("Palantir branch_masks selection returned no branches")
-        branch_masks = branch_masks.reindex(index=cells_order, columns=branch_probs.columns, fill_value=False)
+        branch_masks = branch_masks.reindex(
+            index=cells_order, columns=branch_probs.columns, fill_value=False
+        )
 
         lineage_ids: list[str] = []
         points: list[int] = []

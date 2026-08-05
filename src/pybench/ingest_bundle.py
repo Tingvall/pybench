@@ -56,10 +56,14 @@ def _refresh_manifest(bundle: BundleHandle) -> None:
             df = df.where(pd.notna(df), None)
             manifest[table_name] = df.to_dict(orient="list")
     if _table_exists(con, "cell_set_membership"):
-        vals = _df(
-            con,
-            "SELECT DISTINCT cell_set FROM cell_set_membership WHERE cell_set IS NOT NULL AND cell_set <> '' ORDER BY cell_set",
-        )["cell_set"].astype(str).tolist()
+        vals = (
+            _df(
+                con,
+                "SELECT DISTINCT cell_set FROM cell_set_membership WHERE cell_set IS NOT NULL AND cell_set <> '' ORDER BY cell_set",
+            )["cell_set"]
+            .astype(str)
+            .tolist()
+        )
         if "core" in vals:
             vals = ["core"] + [v for v in vals if v != "core"]
         manifest["cell_sets"] = vals
@@ -150,14 +154,24 @@ def define_cells(
         cells_df = pd.concat([cells_df, md.reset_index(drop=True)], axis=1)
 
     _ensure_cell_columns(bundle, cells_df)
-    rows = [tuple(None if pd.isna(v) else v for v in row) for row in cells_df.itertuples(index=False, name=None)]
+    rows = [
+        tuple(None if pd.isna(v) else v for v in row)
+        for row in cells_df.itertuples(index=False, name=None)
+    ]
     cols = list(cells_df.columns)
     ph = ",".join(["?"] * len(cols))
     col_sql = ", ".join([f'"{c}"' for c in cols])
     with con:
         con.executemany(f"INSERT INTO cells({col_sql}) VALUES ({ph})", rows)
         csm_rows = [
-            (cell_set_name, cid, str(source), _now(), created_by, f"Defined cells for {cell_set_name}")
+            (
+                cell_set_name,
+                cid,
+                str(source),
+                _now(),
+                created_by,
+                f"Defined cells for {cell_set_name}",
+            )
             for cid in ids
         ]
         con.executemany(
@@ -232,7 +246,9 @@ def _coerce_count_matrix(mat, *, require_integer: bool = True):
     if vals.size and np.any(vals < 0):
         raise IngestError("count matrix contains negative values")
     if require_integer and vals.size and not np.allclose(vals, np.round(vals)):
-        raise IngestError("count matrix contains non-integer values; set require_integer=False for explicit experimental float ingest")
+        raise IngestError(
+            "count matrix contains non-integer values; set require_integer=False for explicit experimental float ingest"
+        )
 
     if require_integer:
         out.data = np.asarray(np.round(out.data), dtype=np.uint32)
@@ -387,7 +403,9 @@ def attach_matrix(
         )
         feature_rows = []
         for fid in feature_ids_norm:
-            chrom, start, end = _parse_peak_id(fid) if feature_type == "peak" else (None, None, None)
+            chrom, start, end = (
+                _parse_peak_id(fid) if feature_type == "peak" else (None, None, None)
+            )
             feature_rows.append((matrix_id, fid, str(feature_type), chrom, start, end))
         con.executemany(
             "INSERT INTO features(matrix_id, feature_id, feature_type, chr, start, end) VALUES (?, ?, ?, ?, ?, ?)",

@@ -74,7 +74,9 @@ def test_build_project_anndata_uses_staged_chunks(monkeypatch, tmp_path):
             self.var = var
             self.obs_names = obs.index
 
-    monkeypatch.setattr(peakvi_project, "_import_scvi", lambda: (type("AD", (), {"AnnData": FakeAnnData}), object()))
+    monkeypatch.setattr(
+        peakvi_project, "_import_scvi", lambda: (type("AD", (), {"AnnData": FakeAnnData}), object())
+    )
     monkeypatch.setattr(
         peakvi_project,
         "_build_matrix_from_staged_chunks",
@@ -95,6 +97,7 @@ def test_build_project_anndata_uses_staged_chunks(monkeypatch, tmp_path):
 
     # patch imported getter inside function namespace
     import pybench.getters as getters
+
     monkeypatch.setattr(
         getters,
         "meta",

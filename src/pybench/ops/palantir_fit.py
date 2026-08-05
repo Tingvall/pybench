@@ -101,7 +101,9 @@ def _terminal_states_from_cells(terminal_cells: list[str] | None) -> list[str] |
 def _space_to_df(space_obj, *, cols_prefix: str = "dim") -> pd.DataFrame:
     if isinstance(space_obj, tuple):
         mat, cell_order, dims = space_obj
-        return pd.DataFrame(mat, index=[str(c) for c in cell_order], columns=[f"{cols_prefix}{d}" for d in dims])
+        return pd.DataFrame(
+            mat, index=[str(c) for c in cell_order], columns=[f"{cols_prefix}{d}" for d in dims]
+        )
     # 2D path from pybench.getters.space returns DataFrame(cell_id, x, y)
     df = space_obj.copy()
     if "cell_id" not in df.columns:
@@ -118,7 +120,9 @@ def _canonical_branch_key(col_name: Any) -> str:
     return f"branch:{str(col_name)}"
 
 
-def _build_branch_membership(branch_probs: pd.DataFrame) -> tuple[list[str], list[str], list[float]]:
+def _build_branch_membership(
+    branch_probs: pd.DataFrame,
+) -> tuple[list[str], list[str], list[float]]:
     keys: list[str] = []
     cell_ids: list[str] = []
     weights: list[float] = []
@@ -150,24 +154,28 @@ def _build_branch_summary(branch_probs: pd.DataFrame) -> list[dict[str, Any]]:
         s = pd.to_numeric(bp[col], errors="coerce")
         s_non_na = s.dropna()
         if s_non_na.empty:
-            rows.append({
-                "relation_key": _canonical_branch_key(col),
-                "branch": str(col),
-                "n_cells_prob_gt_0": 0,
-                "mean_prob": 0.0,
-                "max_prob": 0.0,
-                "top_cell_id": None,
-            })
+            rows.append(
+                {
+                    "relation_key": _canonical_branch_key(col),
+                    "branch": str(col),
+                    "n_cells_prob_gt_0": 0,
+                    "mean_prob": 0.0,
+                    "max_prob": 0.0,
+                    "top_cell_id": None,
+                }
+            )
             continue
         top_idx = s_non_na.idxmax() if len(s_non_na) else None
-        rows.append({
-            "relation_key": _canonical_branch_key(col),
-            "branch": str(col),
-            "n_cells_prob_gt_0": int((s_non_na > 0).sum()),
-            "mean_prob": float(s_non_na.mean()),
-            "max_prob": float(s_non_na.max()),
-            "top_cell_id": None if top_idx is None else str(top_idx),
-        })
+        rows.append(
+            {
+                "relation_key": _canonical_branch_key(col),
+                "branch": str(col),
+                "n_cells_prob_gt_0": int((s_non_na > 0).sum()),
+                "mean_prob": float(s_non_na.mean()),
+                "max_prob": float(s_non_na.max()),
+                "top_cell_id": None if top_idx is None else str(top_idx),
+            }
+        )
     return rows
 
 
@@ -211,7 +219,8 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             missing_terminals = [cid for cid in terminal_cells if cid not in set(cell_ids)]
             if missing_terminals:
                 raise PalantirOpError(
-                    "terminal_cells not found in effective cells: " + ", ".join(missing_terminals[:10])
+                    "terminal_cells not found in effective cells: "
+                    + ", ".join(missing_terminals[:10])
                 )
 
         dims = _as_int_list(params.get("dims"))
@@ -220,7 +229,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
         n_waypoints = int(params.get("n_waypoints", 300))
         seed = params.get("seed", 20)
         seed = None if seed is None else int(seed)
-        use_early_cell_as_start = _as_bool(params.get("use_early_cell_as_start", True), default=True)
+        use_early_cell_as_start = _as_bool(
+            params.get("use_early_cell_as_start", True), default=True
+        )
 
         X = _space_to_df(get_space(b, fit_space_id, cells_order=cell_ids, dims=dims))
         if root_cell not in X.index:
@@ -275,7 +286,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             spec = outputs_spec["pseudotime"]
             pt_aligned = pseudotime.reindex(cell_ids)
             if pt_aligned.isna().any():
-                raise PalantirOpError("pseudotime contains missing values after reindex to effective cells")
+                raise PalantirOpError(
+                    "pseudotime contains missing values after reindex to effective cells"
+                )
             out_receipts["pseudotime"] = write_artifact_cell_vector_payload(
                 b,
                 artifact_id=spec["artifact_id"],
@@ -286,7 +299,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
 
         if "branch_membership" in outputs_spec:
             spec = outputs_spec["branch_membership"]
-            keys, rel_cells, weights = _build_branch_membership(branch_probs if branch_probs is not None else pd.DataFrame(index=cell_ids))
+            keys, rel_cells, weights = _build_branch_membership(
+                branch_probs if branch_probs is not None else pd.DataFrame(index=cell_ids)
+            )
             out_receipts["branch_membership"] = write_artifact_relation_family_payload(
                 b,
                 artifact_id=spec["artifact_id"],
@@ -297,7 +312,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
 
         if "branch_summary" in outputs_spec:
             spec = outputs_spec["branch_summary"]
-            rows = _build_branch_summary(branch_probs if branch_probs is not None else pd.DataFrame(index=cell_ids))
+            rows = _build_branch_summary(
+                branch_probs if branch_probs is not None else pd.DataFrame(index=cell_ids)
+            )
             out_receipts["branch_summary"] = write_artifact_table_payload(
                 b,
                 artifact_id=spec["artifact_id"],
@@ -317,7 +334,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
             ent_aligned = entropy.reindex(cell_ids)
             # entropy may be missing for some cells in edge cases; write NaN will fail. enforce presence in v1.
             if ent_aligned.isna().any():
-                raise PalantirOpError("entropy contains missing values after reindex to effective cells")
+                raise PalantirOpError(
+                    "entropy contains missing values after reindex to effective cells"
+                )
             out_receipts["entropy"] = write_artifact_cell_vector_payload(
                 b,
                 artifact_id=spec["artifact_id"],
@@ -337,9 +356,9 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
                 "params": {
                     "knn": knn,
                     "n_diffusion_components": n_diffusion_components,
-                        "n_waypoints": n_waypoints,
-                        "seed": seed,
-                        "use_early_cell_as_start": use_early_cell_as_start,
+                    "n_waypoints": n_waypoints,
+                    "seed": seed,
+                    "use_early_cell_as_start": use_early_cell_as_start,
                 },
                 "palantir_version": getattr(palantir, "__version__", None),
                 "presults": pres,

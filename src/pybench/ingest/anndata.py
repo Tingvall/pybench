@@ -52,7 +52,7 @@ def _space_df_from_obsm(ad, key: str) -> pd.DataFrame:
     if dims == 2:
         pdf.columns = ["cell_id", "x", "y"]
     else:
-        pdf.columns = ["cell_id"] + [f"dim_{i+1}" for i in range(dims)]
+        pdf.columns = ["cell_id"] + [f"dim_{i + 1}" for i in range(dims)]
     return pdf
 
 

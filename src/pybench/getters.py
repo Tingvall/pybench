@@ -21,7 +21,6 @@ def _df(con, sql: str, params: Iterable[object] | None = None) -> pd.DataFrame:
     return pd.read_sql_query(sql, con, params=tuple(params or ()))
 
 
-
 def meta(
     bundle: BundleHandle,
     cells_order: list[str] | None = None,
@@ -63,6 +62,7 @@ def meta(
         df = df[df["cell_id"].isin(want)].copy()
         df = df.assign(_ord=df["cell_id"].map(pos)).sort_values("_ord").drop(columns=["_ord"])
     return df.reset_index(drop=True)
+
 
 def cells(bundle: BundleHandle, cell_set: str = "core", dataset_id: str | None = None) -> list[str]:
     con = bundle.con
@@ -117,7 +117,6 @@ def resolve_cell_set(bundle: BundleHandle, cell_set: str = "core") -> list[str]:
     return _df(bundle.con, q, [cell_set])["cell_id"].astype(str).tolist()
 
 
-
 def matrices(bundle: BundleHandle) -> pd.DataFrame:
     q = """
     SELECT matrix_id, layer, feature_type, n_features, n_cells, storage, path
@@ -165,7 +164,9 @@ def _matrix_relative_path(bundle: BundleHandle, matrix_id: str) -> str:
     return relative
 
 
-def features(bundle: BundleHandle, matrix_id: str | None = None, feature_type: str | None = None) -> pd.DataFrame:
+def features(
+    bundle: BundleHandle, matrix_id: str | None = None, feature_type: str | None = None
+) -> pd.DataFrame:
     q = "SELECT matrix_id, feature_id, feature_type, chr, start, end FROM features"
     where = []
     params: list[object] = []
@@ -276,7 +277,9 @@ def matrix(
         pos = {fid: i for i, fid in enumerate(all_feature_ids)}
         missing = [fid for fid in use_feature_ids if fid not in pos]
         if missing:
-            raise GetterError(f"Some requested features not found in matrix {matrix_id}: {missing[:5]}")
+            raise GetterError(
+                f"Some requested features not found in matrix {matrix_id}: {missing[:5]}"
+            )
         feature_idx = [int(pos[fid]) for fid in use_feature_ids]
 
     if cells_order is None:
@@ -286,7 +289,9 @@ def matrix(
         pos = {cid: i for i, cid in enumerate(all_cell_ids)}
         missing = [cid for cid in use_cell_ids if cid not in pos]
         if missing:
-            raise GetterError(f"Some requested cells not found in matrix {matrix_id}: {missing[:5]}")
+            raise GetterError(
+                f"Some requested cells not found in matrix {matrix_id}: {missing[:5]}"
+            )
     cell_pos = {cid: i for i, cid in enumerate(all_cell_ids)}
     cell_idx = [int(cell_pos[cid]) for cid in use_cell_ids]
 
@@ -336,7 +341,12 @@ def feature_sets(
     """
     where = []
     params: list[object] = []
-    for col, val in (("fs.matrix_id", matrix_id), ("fs.namespace", namespace), ("fs.organism", organism), ("fs.origin", origin)):
+    for col, val in (
+        ("fs.matrix_id", matrix_id),
+        ("fs.namespace", namespace),
+        ("fs.organism", organism),
+        ("fs.origin", origin),
+    ):
         if val is not None:
             where.append(f"{col} = ?")
             params.append(val)
@@ -361,6 +371,7 @@ def feature_set_get(bundle: BundleHandle, feature_set: str, matrix_id: str) -> l
     """
     return _df(bundle.con, q, [feature_set, matrix_id])["feature_id"].astype(str).tolist()
 
+
 def spaces(bundle: BundleHandle) -> pd.DataFrame:
     q = "SELECT space_id, source, dims, storage, description FROM spaces ORDER BY space_id"
     df = _df(bundle.con, q)
@@ -375,7 +386,12 @@ def space_info(bundle: BundleHandle, space_id: str | None = None) -> pd.DataFram
     return _df(bundle.con, "SELECT * FROM spaces WHERE space_id = ?", [space_id])
 
 
-def space(bundle: BundleHandle, space_id: str, cells_order: list[str] | None = None, dims: list[int] | None = None):
+def space(
+    bundle: BundleHandle,
+    space_id: str,
+    cells_order: list[str] | None = None,
+    dims: list[int] | None = None,
+):
     info = space_info(bundle, space_id)
     if info.empty:
         raise GetterError(f"Unknown space_id: {space_id}")
@@ -439,11 +455,12 @@ def space(bundle: BundleHandle, space_id: str, cells_order: list[str] | None = N
     return mat, cells_order, dims
 
 
-
 def art_list(bundle: BundleHandle, type: str | None = None) -> pd.DataFrame:
     if type is None:
         return _df(bundle.con, "SELECT * FROM artifacts ORDER BY created_at DESC")
-    return _df(bundle.con, "SELECT * FROM artifacts WHERE type = ? ORDER BY created_at DESC", [type])
+    return _df(
+        bundle.con, "SELECT * FROM artifacts WHERE type = ? ORDER BY created_at DESC", [type]
+    )
 
 
 def art_get_row(bundle: BundleHandle, artifact_id: str) -> dict:

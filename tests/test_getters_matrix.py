@@ -15,9 +15,7 @@ def test_matrix_getter_chunks_large_cell_selection(monkeypatch):
         return sps.csc_matrix(data)
 
     monkeypatch.setattr(getters, "_read_matrix_chunk_subprocess", fake_read_chunk)
-    monkeypatch.setattr(
-        getters, "_matrix_relative_path", lambda bundle, matrix_id: "mat/fake"
-    )
+    monkeypatch.setattr(getters, "_matrix_relative_path", lambda bundle, matrix_id: "mat/fake")
     monkeypatch.setattr(getters, "feature_ids", lambda bundle, matrix_id: ["f1", "f2", "f3"])
     monkeypatch.setattr(
         getters,

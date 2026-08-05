@@ -24,7 +24,9 @@ def _init_min_bundle(root: Path) -> None:
         con.execute(
             "CREATE TABLE cell_set_membership (cell_set TEXT NOT NULL, cell_id TEXT NOT NULL, source TEXT, created_at TEXT NOT NULL, created_by TEXT, description TEXT, PRIMARY KEY (cell_set, cell_id))"
         )
-        con.execute("CREATE TABLE spaces (space_id TEXT PRIMARY KEY, source TEXT, dims INTEGER, storage TEXT, description TEXT)")
+        con.execute(
+            "CREATE TABLE spaces (space_id TEXT PRIMARY KEY, source TEXT, dims INTEGER, storage TEXT, description TEXT)"
+        )
         con.execute(
             "CREATE TABLE space_coords (space_id TEXT, cell_id TEXT, dim INTEGER, value REAL, PRIMARY KEY (space_id, cell_id, dim))"
         )
@@ -52,7 +54,9 @@ def test_ingest_anndata_stage_obs_and_obsm(tmp_path: Path):
 
     ad = anndata.AnnData(
         X=np.array([[1.0, 0.0], [0.0, 2.0], [3.0, 4.0]], dtype=float),
-        obs=pd.DataFrame({"batch": ["a", "a", "b"], "score": [1.0, 2.0, 3.0]}, index=["c1", "c2", "c3"]),
+        obs=pd.DataFrame(
+            {"batch": ["a", "a", "b"], "score": [1.0, 2.0, 3.0]}, index=["c1", "c2", "c3"]
+        ),
         var=pd.DataFrame(index=["g1", "g2"]),
     )
     ad.obsm["X_umap"] = np.array([[0.0, 0.0], [1.0, 1.5], [2.0, 0.5]], dtype=float)
@@ -165,7 +169,9 @@ def test_ingest_anndata_stage_writes_integer_matrix(tmp_path: Path):
         assert mi.iloc[0]["storage"] == "bpcells"
         assert feature_ids(b, "RNA_counts") == ["g1", "g2"]
 
-        m, feats, cids = matrix(b, "RNA_counts", cells_order=["c3", "c1"], feature_order=["g2", "g1"])
+        m, feats, cids = matrix(
+            b, "RNA_counts", cells_order=["c3", "c1"], feature_order=["g2", "g1"]
+        )
         assert feats == ["g2", "g1"]
         assert cids == ["c3", "c1"]
         assert m.toarray().tolist() == [[4, 0], [3, 1]]
