@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -16,6 +16,10 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.1",
 ]
+
+[project.urls]
+Homepage = "https://gitlab.liu.se/hende58/pybench"
+Issues = "https://gitlab.liu.se/hende58/pybench/-/issues"
 
 [project.optional-dependencies]
 dev = [
