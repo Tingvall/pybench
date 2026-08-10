@@ -294,10 +294,7 @@ def _init_bundle(root: Path) -> None:
             "CREATE TABLE spaces (space_id TEXT PRIMARY KEY, source TEXT, dims INTEGER, storage TEXT, description TEXT)"
         )
         con.execute(
-            "CREATE TABLE space_2d (space_id TEXT, cell_id TEXT, x REAL, y REAL, PRIMARY KEY (space_id, cell_id))"
-        )
-        con.execute(
-            "CREATE TABLE space_coords (space_id TEXT, cell_id TEXT, dim INTEGER, value REAL, PRIMARY KEY (space_id, cell_id, dim))"
+            "CREATE TABLE space_payloads (space_id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, schema_version TEXT NOT NULL, n_cells INTEGER NOT NULL, n_dims INTEGER NOT NULL, cell_ids_sha256 TEXT NOT NULL, dim_labels_json TEXT NOT NULL, dtype TEXT NOT NULL, endianness TEXT NOT NULL, chunk_rows INTEGER NOT NULL, chunk_dims INTEGER NOT NULL, content_sha256 TEXT NOT NULL, content_identity_scheme TEXT NOT NULL, provenance_identity TEXT, created_at TEXT NOT NULL)"
         )
         con.execute(
             """
@@ -455,7 +452,8 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
         outputs=outputs,
         allowances=[
             sqlite_allowance("space_registry", "rna.scvi", "space", "spaces", "space_id"),
-            sqlite_allowance("space_registry", "rna.scvi", "space", "space_coords", "space_id"),
+            sqlite_allowance("space_registry", "rna.scvi", "space", "space_payloads", "space_id"),
+            payload_allowance("space_registry", "rna.scvi", "space", "space_payloads"),
             sqlite_allowance(
                 "model", "model_art", "model_ref", "artifact_model_ref", "artifact_id"
             ),
@@ -478,10 +476,10 @@ def test_run_writes_space_model_ref_and_fit_summary(monkeypatch, tmp_path: Path)
     try:
         space = con.execute("SELECT * FROM spaces WHERE space_id = 'rna.scvi'").fetchone()
         assert dict(space)["dims"] == 3
-        coords_n = con.execute(
-            "SELECT COUNT(*) FROM space_coords WHERE space_id = 'rna.scvi'"
-        ).fetchone()[0]
-        assert coords_n == 9
+        payload = con.execute("SELECT * FROM space_payloads WHERE space_id = 'rna.scvi'").fetchone()
+        assert payload["n_cells"] == 3
+        assert payload["n_dims"] == 3
+        assert (bundle_dir / payload["path"]).is_file()
 
         model_ref = dict(
             con.execute(

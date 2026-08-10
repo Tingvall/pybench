@@ -10,7 +10,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from .bundle import BundleHandle, bundle_relative_path
+from .bundle import BundleHandle, bundle_relative_path, resolve_bundle_path
 
 
 class GetterError(RuntimeError):
@@ -401,6 +401,35 @@ def space(
     dims_total = int(dims_total) if pd.notna(dims_total) else None
 
     con = bundle.con
+    if storage == "hdf5:dense-space:v1":
+        import h5py
+
+        row = con.execute("SELECT * FROM space_payloads WHERE space_id = ?", (space_id,)).fetchone()
+        if row is None:
+            raise GetterError(f"No payload found for space_id: {space_id}")
+        payload = resolve_bundle_path(
+            bundle, str(row["path"]), expected_type="file", purpose="dense-space payload"
+        )
+        with h5py.File(payload, "r") as handle:
+            all_cells = [str(value) for value in handle["cell_ids"].asstr(encoding="utf-8")[:]]
+            all_labels = [str(value) for value in handle["dim_labels"].asstr(encoding="utf-8")[:]]
+            selected_dims = (
+                list(range(1, len(all_labels) + 1)) if dims is None else [int(d) for d in dims]
+            )
+            if any(d < 1 or d > len(all_labels) for d in selected_dims):
+                raise GetterError("Requested dense-space dimensions are invalid")
+            requested = all_cells if cells_order is None else [str(value) for value in cells_order]
+            positions = {value: index for index, value in enumerate(all_cells)}
+            missing = [value for value in requested if value not in positions]
+            if missing:
+                raise GetterError(f"Some requested cells not found in space payload: {missing[:5]}")
+            row_index = [positions[value] for value in requested]
+            values = np.asarray(handle["coordinates"][[d - 1 for d in selected_dims], :]).T
+            values = values[row_index, :]
+        if len(all_labels) == 2 and dims is None:
+            return pd.DataFrame({"cell_id": requested, "x": values[:, 0], "y": values[:, 1]})
+        return values, requested, selected_dims
+
     if storage.startswith("wide:space_2d") or (dims_total == 2):
         df = _df(
             con,

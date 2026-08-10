@@ -86,8 +86,13 @@ def _init_bundle(root: Path) -> Path:
           space_id TEXT PRIMARY KEY, source TEXT, dims INTEGER,
           storage TEXT, description TEXT
         );
-        CREATE TABLE space_2d(space_id TEXT, cell_id TEXT, x REAL, y REAL);
-        CREATE TABLE space_coords(space_id TEXT, cell_id TEXT, dim INTEGER, value REAL);
+        CREATE TABLE space_payloads(
+          space_id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, schema_version TEXT NOT NULL,
+          n_cells INTEGER NOT NULL, n_dims INTEGER NOT NULL, cell_ids_sha256 TEXT NOT NULL,
+          dim_labels_json TEXT NOT NULL, dtype TEXT NOT NULL, endianness TEXT NOT NULL,
+          chunk_rows INTEGER NOT NULL, chunk_dims INTEGER NOT NULL, content_sha256 TEXT NOT NULL,
+          content_identity_scheme TEXT NOT NULL, provenance_identity TEXT, created_at TEXT NOT NULL
+        );
         INSERT INTO cells VALUES ('c1','d'),('c2','d');
         INSERT INTO cell_set_membership VALUES ('core','c1'),('core','c2');
         INSERT INTO artifacts VALUES
@@ -668,7 +673,8 @@ def test_named_ops_mock_only_training_and_use_real_v2_writers(
             allowances.extend(
                 [
                     sqlite_allowance(name, output_id, kind, "spaces", "space_id"),
-                    sqlite_allowance(name, output_id, kind, "space_2d", "space_id"),
+                    sqlite_allowance(name, output_id, kind, "space_payloads", "space_id"),
+                    payload_allowance(name, output_id, kind, "space_payloads"),
                 ]
             )
         elif kind == "model_ref":

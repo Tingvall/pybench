@@ -378,6 +378,11 @@ def ok_receipt(
     bundle: BundleHandle,
     **_ignored: Any,
 ) -> dict[str, Any]:
+    manifest = build_write_manifest(bundle)
+    for action in bundle.finalize_actions or []:
+        action()
+    bundle.finalize_actions = []
+    bundle.rollback_actions = []
     return {
         "message_type": "receipt",
         "protocol_version": PROTOCOL_VERSION,
@@ -386,7 +391,7 @@ def ok_receipt(
         "run_id": run_id,
         "capability_echo": bundle.capability,
         "outputs": outputs,
-        "write_manifest": build_write_manifest(bundle),
+        "write_manifest": manifest,
     }
 
 

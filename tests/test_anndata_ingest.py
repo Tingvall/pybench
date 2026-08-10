@@ -8,7 +8,7 @@ import anndata
 import numpy as np
 import pandas as pd
 
-from capability_helpers import raw_write_bundle, sqlite_allowance
+from capability_helpers import payload_allowance, raw_write_bundle, sqlite_allowance
 from pybench.bundle import close_bundle
 from pybench.getters import cells, feature_ids, matrix, matrix_info, meta, space, spaces
 from pybench.ingest.anndata import ingest_anndata_stage
@@ -28,7 +28,7 @@ def _init_min_bundle(root: Path) -> None:
             "CREATE TABLE spaces (space_id TEXT PRIMARY KEY, source TEXT, dims INTEGER, storage TEXT, description TEXT)"
         )
         con.execute(
-            "CREATE TABLE space_coords (space_id TEXT, cell_id TEXT, dim INTEGER, value REAL, PRIMARY KEY (space_id, cell_id, dim))"
+            "CREATE TABLE space_payloads (space_id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, schema_version TEXT NOT NULL, n_cells INTEGER NOT NULL, n_dims INTEGER NOT NULL, cell_ids_sha256 TEXT NOT NULL, dim_labels_json TEXT NOT NULL, dtype TEXT NOT NULL, endianness TEXT NOT NULL, chunk_rows INTEGER NOT NULL, chunk_dims INTEGER NOT NULL, content_sha256 TEXT NOT NULL, content_identity_scheme TEXT NOT NULL, provenance_identity TEXT, created_at TEXT NOT NULL)"
         )
         con.execute(
             "CREATE TABLE space_2d (space_id TEXT, cell_id TEXT, x REAL, y REAL, PRIMARY KEY (space_id, cell_id))"
@@ -69,13 +69,8 @@ def test_ingest_anndata_stage_obs_and_obsm(tmp_path: Path):
         allowances.extend(
             [
                 sqlite_allowance(space_id, space_id, "space", "spaces", "space_id"),
-                sqlite_allowance(
-                    space_id,
-                    space_id,
-                    "space",
-                    "space_2d" if space_id == "umap" else "space_coords",
-                    "space_id",
-                ),
+                sqlite_allowance(space_id, space_id, "space", "space_payloads", "space_id"),
+                payload_allowance(space_id, space_id, "space", "space_payloads"),
             ]
         )
     b = raw_write_bundle(bundle_dir, allowances)

@@ -7,7 +7,7 @@ import sqlite3
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 PATH_CONTRACT_VERSION = "scworkbench-bundle-path-v1"
 PathType = Literal["either", "file", "directory"]
@@ -23,6 +23,8 @@ class BundleHandle:
     write_journal: list[dict[str, Any]] | None = None
     write_baseline: dict[str, Any] | None = None
     authorizer_installed: bool = False
+    rollback_actions: list[Callable[[], None]] | None = None
+    finalize_actions: list[Callable[[], None]] | None = None
 
 
 class BundleError(RuntimeError):
@@ -375,8 +377,14 @@ def open_bundle(
         capability=deepcopy(capability),
         write_journal=[],
         write_baseline={},
+        rollback_actions=[],
+        finalize_actions=[],
     )
 
 
 def close_bundle(bundle: BundleHandle) -> None:
+    for action in reversed(bundle.rollback_actions or []):
+        action()
+    bundle.rollback_actions = []
+    bundle.finalize_actions = []
     bundle.con.close()
