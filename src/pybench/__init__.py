@@ -6,6 +6,13 @@ from .bundle import (
     open_bundle,
     resolve_bundle_path,
 )
+from .operation_packs import (
+    CellVector,
+    OperationPackContext,
+    OperationPackError,
+    OperationPackHandlers,
+    operation_pack_handlers,
+)
 from .spaces_write import add_space
 
 __all__ = [
@@ -16,4 +23,9 @@ __all__ = [
     "close_bundle",
     "resolve_bundle_path",
     "add_space",
+    "CellVector",
+    "OperationPackContext",
+    "OperationPackError",
+    "OperationPackHandlers",
+    "operation_pack_handlers",
 ]
