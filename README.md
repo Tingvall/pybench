@@ -156,6 +156,54 @@ cd /home/dirk/Projects/pybench
 intentionally does not enforce `E501`: long SQL statements and compact SQLite
 fixture DDL are schema contracts where wrapping does not improve reviewability.
 
+## Python operation packs
+
+PyBench implements the Python-owned operation-pack v1 runtime seam. Installation
+is inert. Discovery and activation are explicit trust decisions:
+
+```bash
+pybench-operation-pack discover --manifest /installed/pack/operation-pack.json
+pybench-operation-pack execute \
+  --manifest /installed/pack/operation-pack.json \
+  --request request.json --receipt receipt.json \
+  --runtime-attestation runtime.json \
+  --expected-pack-sha256 PACK_SHA256 \
+  --expected-definition-sha256 DEFINITION_SHA256 \
+  --expected-distribution-sha256 INSTALLED_CONTENT_SHA256
+```
+
+Discovery resolves only `manifest.package.name`, compares distribution names by
+PEP 503 normalization and versions by PEP 440 equivalence, and authenticates
+exactly one entry point in `scworkbench.operation_packs.v1` whose name equals
+`manifest.entry_point`. It does not import pack code. Activation loads only that
+installed metadata target and requires it to return handler bindings matching
+the manifest operation names exactly.
+
+The manifest owns scientific definitions and canonical identities. Python code
+supplies runtime handlers only. Handlers receive `OperationPackContext`, with
+typed `read_cell_vector()`, `parameter()`, `write_cell_vector()`, and
+`write_obs_table()` methods. They receive no public SQLite connection, arbitrary
+payload writer, registry API, promoter, custom primitive, or validation hook.
+Execution re-authenticates installed content, opens only the engine-created v2
+stage, delegates writes to existing capability-bound writers, builds and
+validates the ordinary v2 receipt, and emits the frozen Python runtime
+attestation sidecar for Forge Request 03.
+
+Installed artifact identity uses
+`python-installed-distribution-tree-sha256-v1`: sorted distribution-relative
+regular files (excluding bytecode caches) are framed with their individual
+SHA-256 values and hashed. This truthfully identifies installed contents when
+original wheel bytes are unavailable. Dependency identity uses the canonical
+sorted installed distribution set under `python-distribution-set-v1`.
+
+Trusted pack code is not host-sandboxed. Capability enforcement governs
+scientific-state mutation, and conformance is not scientific validation. V1
+packs cannot add primitives, storage formats, getters, promotion functions, or
+provenance/validation hooks. A recipient can inspect retained promoted outputs
+without the pack; replay and continuation retain scworkbench's
+`OPERATION_PACK_REQUIRED` behavior until the exact compatible pack is installed
+and explicitly activated.
+
 ## scVI Fit Summary
 
 `scvi_train` writes a one-row `scvi_fit_summary` `obs_table` alongside its

@@ -298,6 +298,10 @@ def validate_receipt(
         for index, item in enumerate(manifest):
             _validate_allowance(item, f"receipt.write_manifest[{index}]", receipt=True)
         if request is not None:
+            if set(receipt["outputs"]) != set(request["outputs"]):
+                raise ProtocolError(
+                    "PYBENCH_RECEIPT_MISMATCH: receipt outputs differ from requested outputs"
+                )
             for name, output in receipt["outputs"].items():
                 expected = request["outputs"].get(name)
                 if expected is None:
