@@ -4,9 +4,11 @@ import copy
 import hashlib
 import importlib.metadata as metadata
 import json
+import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -503,3 +505,70 @@ def test_cli_discovery_execution_receipt_and_runtime_sidecar(tmp_path: Path):
     validate_receipt(json.loads(receipt_path.read_text()), request)
     runtime = json.loads(runtime_path.read_text())
     assert runtime["schema"] == "scworkbench.operation_pack_runtime.python.v1"
+
+
+def test_killed_subprocess_is_confined_to_disposable_stage_and_retryable(tmp_path: Path):
+    stage = tmp_path / "killed-stage"
+    request = _init_stage(stage)
+    source = tmp_path / "committed-source"
+    shutil.copytree(stage, source)
+    (source / ".scworkbench-pybench-stage.json").unlink()
+    source_before = (source / "db/app.sqlite").read_bytes()
+    _discovery, expected = _identities()
+    request_path = tmp_path / "killed-request.json"
+    signal_path = tmp_path / "write-complete"
+    request_path.write_text(json.dumps(request))
+    script = tmp_path / "killed_handler.py"
+    script.write_text(
+        """
+import importlib.metadata as metadata
+import json
+import sys
+import time
+from pathlib import Path
+from pybench import operation_pack_handlers
+from pybench.operation_packs import execute_operation_pack
+
+request = json.loads(Path(sys.argv[1]).read_text())
+manifest = Path(sys.argv[2])
+
+def handler(context):
+    signal = context.read_cell_vector("signal")
+    context.write_cell_vector("vector", signal.cell_id, signal.value)
+    Path(sys.argv[3]).write_text("written")
+    time.sleep(60)
+
+registration = operation_pack_handlers({"scwbpython::affine_cell_vector": handler})
+metadata.EntryPoint.load = lambda self: (lambda: registration)
+execute_operation_pack(
+    request,
+    manifest,
+    expected_pack_sha256=sys.argv[4],
+    expected_definition_sha256=sys.argv[5],
+    expected_distribution_sha256=sys.argv[6],
+)
+"""
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(script),
+            str(request_path),
+            str(MANIFEST),
+            str(signal_path),
+            expected["expected_pack_sha256"],
+            expected["expected_definition_sha256"],
+            expected["expected_distribution_sha256"],
+        ]
+    )
+    deadline = time.monotonic() + 15
+    while not signal_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert signal_path.exists()
+    process.kill()
+    assert process.wait(timeout=5) != 0
+    assert (source / "db/app.sqlite").read_bytes() == source_before
+
+    retry = _init_stage(tmp_path / "retry-stage")
+    receipt, _attestation = execute_operation_pack(retry, MANIFEST, **expected)
+    validate_receipt(receipt, retry)
