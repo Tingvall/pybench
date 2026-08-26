@@ -8,12 +8,15 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import sys
 import sysconfig
 import tempfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+from urllib.parse import unquote, urlparse
 
 from jsonschema import Draft202012Validator
 from packaging.utils import canonicalize_name
@@ -271,12 +274,13 @@ def _distribution_build_metadata(distribution: metadata.Distribution) -> dict[st
         return path.read_text(encoding="utf-8").strip() if path.is_file() else None
 
     direct_url = text_suffix(".dist-info/direct_url.json")
-    parsed_direct_url = json.loads(direct_url) if direct_url else None
-    revision = None
-    if isinstance(parsed_direct_url, dict):
-        vcs = parsed_direct_url.get("vcs_info")
-        if isinstance(vcs, dict):
-            revision = vcs.get("commit_id")
+    try:
+        parsed_direct_url = json.loads(direct_url) if direct_url else None
+    except (json.JSONDecodeError, TypeError):
+        parsed_direct_url = None
+    if not isinstance(parsed_direct_url, dict):
+        parsed_direct_url = None
+    revision = _distribution_bound_source_revision(distribution, parsed_direct_url)
     return {
         "installer": text_suffix(".dist-info/INSTALLER"),
         "wheel_metadata": text_suffix(".dist-info/WHEEL"),
@@ -418,19 +422,73 @@ def _dependency_attestation() -> dict[str, Any]:
     }
 
 
-def _pybench_revision() -> str | None:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / ".git").exists():
-            try:
-                import subprocess
+def _distribution_bound_source_revision(
+    distribution: metadata.Distribution,
+    direct_url: Mapping[str, Any] | None,
+    *,
+    module_path: Path | None = None,
+) -> str | None:
+    """Return only source identity bound to this installed distribution."""
+    if not isinstance(direct_url, Mapping):
+        return None
 
-                return subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=parent, text=True, stderr=subprocess.DEVNULL
-                ).strip()
-            except (OSError, subprocess.SubprocessError):
-                return None
-    return None
+    vcs_info = direct_url.get("vcs_info")
+    if isinstance(vcs_info, Mapping):
+        vcs = vcs_info.get("vcs")
+        commit_id = vcs_info.get("commit_id")
+        if (
+            isinstance(vcs, str)
+            and vcs.strip()
+            and isinstance(commit_id, str)
+            and commit_id.strip()
+        ):
+            return commit_id.strip()
+        return None
+
+    dir_info = direct_url.get("dir_info")
+    if not isinstance(dir_info, Mapping) or dir_info.get("editable") is not True:
+        return None
+    url = direct_url.get("url")
+    if not isinstance(url, str):
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+        return None
+    try:
+        origin = Path(unquote(parsed.path)).resolve(strict=True)
+        loaded_module = (module_path or Path(__file__)).resolve(strict=True)
+        loaded_module.relative_to(origin)
+        project = tomllib.loads((origin / "pyproject.toml").read_text(encoding="utf-8"))
+        project_name = project["project"]["name"]
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError, tomllib.TOMLDecodeError):
+        return None
+    distribution_name = distribution.metadata.get("Name", "")
+    if canonicalize_name(str(project_name)) != canonicalize_name(distribution_name):
+        return None
+    try:
+        top_level = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=origin,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if Path(top_level).resolve(strict=True) != origin:
+            return None
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=origin,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return revision or None
+
+
+def _pybench_revision(distribution: metadata.Distribution) -> str | None:
+    build_metadata = _distribution_build_metadata(distribution)
+    revision = build_metadata.get("source_revision")
+    return revision if isinstance(revision, str) and revision else None
 
 
 def runtime_attestation(
@@ -441,6 +499,7 @@ def runtime_attestation(
         pybench_name = pybench_dist.metadata.get("Name", "pybench")
         pybench_version = pybench_dist.version
     except metadata.PackageNotFoundError:
+        pybench_dist = None
         pybench_name, pybench_version = "pybench", "unknown"
     return {
         "schema": RUNTIME_SCHEMA_VERSION,
@@ -472,7 +531,7 @@ def runtime_attestation(
             "protocol": PROTOCOL_VERSION,
             "distribution_name": pybench_name,
             "distribution_version": pybench_version,
-            "source_revision": _pybench_revision(),
+            "source_revision": _pybench_revision(pybench_dist) if pybench_dist else None,
         },
         "device": {
             "type": "cpu",

@@ -18,6 +18,8 @@ from pybench.operation_packs import (
     ENTRY_POINT_GROUP,
     OperationPackError,
     OperationPackHandlers,
+    _distribution_bound_source_revision,
+    _distribution_build_metadata,
     activate_operation_pack,
     canonical_sha256,
     discover_operation_pack,
@@ -176,6 +178,183 @@ def test_runtime_attestation_has_frozen_shape_and_stable_content_identity():
     assert first["dependencies"]["sha256"] == canonical_sha256(
         first["dependencies"]["distributions"]
     )
+
+
+class _FakeDistribution:
+    version = "0.1.0"
+
+    def __init__(self, root: Path, direct_url: str | None = None):
+        self.root = root
+        self.metadata = {"Name": "pybench"}
+        self.files = []
+        if direct_url is not None:
+            relative = metadata.PackagePath("pybench-0.1.0.dist-info/direct_url.json")
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(direct_url, encoding="utf-8")
+            self.files.append(relative)
+
+    def locate_file(self, path):
+        return self.root / path
+
+
+def _git_checkout(path: Path, *, project_name: str = "pybench") -> tuple[Path, str]:
+    module = path / "src/pybench/operation_packs.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("# test module\n", encoding="utf-8")
+    (path / "pyproject.toml").write_text(
+        f'[project]\nname = "{project_name}"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "test@example.invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "PyBench test"], check=True)
+    subprocess.run(["git", "-C", str(path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "fixture"], check=True)
+    revision = subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
+    ).strip()
+    return module, revision
+
+
+def test_source_revision_accepts_distribution_bound_vcs_commit(tmp_path: Path):
+    revision = "a" * 40
+    distribution = _FakeDistribution(tmp_path)
+    assert (
+        _distribution_bound_source_revision(
+            distribution,
+            {
+                "url": "https://example.invalid/pybench.git",
+                "vcs_info": {"vcs": "git", "commit_id": revision},
+            },
+        )
+        == revision
+    )
+    assert (
+        _distribution_bound_source_revision(
+            distribution,
+            {"vcs_info": {"vcs": "git"}},
+        )
+        is None
+    )
+
+
+def test_editable_source_revision_requires_verified_pybench_checkout(tmp_path: Path):
+    checkout = tmp_path / "pybench-checkout"
+    module, revision = _git_checkout(checkout)
+    distribution = _FakeDistribution(tmp_path / "site-packages")
+    direct_url = {"url": checkout.as_uri(), "dir_info": {"editable": True}}
+    assert (
+        _distribution_bound_source_revision(distribution, direct_url, module_path=module)
+        == revision
+    )
+
+    unrelated_module = tmp_path / "pack/src/pybench/operation_packs.py"
+    unrelated_module.parent.mkdir(parents=True)
+    unrelated_module.write_text("# unrelated\n", encoding="utf-8")
+    assert (
+        _distribution_bound_source_revision(distribution, direct_url, module_path=unrelated_module)
+        is None
+    )
+
+
+def test_source_revision_rejects_nested_ambient_repo_and_missing_git(tmp_path: Path, monkeypatch):
+    outer = tmp_path / "operation-pack"
+    outer.mkdir()
+    subprocess.run(["git", "init", "-q", str(outer)], check=True)
+    subprocess.run(
+        ["git", "-C", str(outer), "config", "user.email", "test@example.invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(outer), "config", "user.name", "Pack test"], check=True)
+    (outer / "pack.txt").write_text("unrelated\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(outer), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(outer), "commit", "-qm", "pack"], check=True)
+    ambient_revision = subprocess.check_output(
+        ["git", "-C", str(outer), "rev-parse", "HEAD"], text=True
+    ).strip()
+
+    checkout = outer / ".venv/src/pybench"
+    module = checkout / "src/pybench/operation_packs.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("# installed below unrelated repository\n", encoding="utf-8")
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "pybench"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    distribution = _FakeDistribution(outer / ".venv/site-packages")
+    direct_url = {"url": checkout.as_uri(), "dir_info": {"editable": True}}
+    reported = _distribution_bound_source_revision(distribution, direct_url, module_path=module)
+    assert reported is None
+    assert reported != ambient_revision
+
+    monkeypatch.setattr(
+        "pybench.operation_packs.subprocess.check_output",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("git")),
+    )
+    assert _distribution_bound_source_revision(distribution, direct_url, module_path=module) is None
+
+
+@pytest.mark.parametrize(
+    "direct_url",
+    [
+        "{malformed",
+        json.dumps(
+            {
+                "url": "file:///moved/or/missing/pybench-0.1.0.whl",
+                "archive_info": {"hash": "sha256=" + "b" * 64},
+            }
+        ),
+        json.dumps({"url": "file:///source/archive.tar.gz", "archive_info": {}}),
+        json.dumps({"url": "file:///source/tree", "dir_info": {"editable": False}}),
+    ],
+)
+def test_wheel_archive_and_malformed_direct_urls_have_unknown_revision(
+    tmp_path: Path, direct_url: str
+):
+    distribution = _FakeDistribution(tmp_path, direct_url)
+    build_metadata = _distribution_build_metadata(distribution)
+    assert build_metadata["source_revision"] is None
+
+
+def test_runtime_attestation_is_cwd_and_enclosing_repo_invariant(tmp_path: Path, monkeypatch):
+    discovery = discover_operation_pack(MANIFEST)
+    outer = tmp_path / "unrelated-pack"
+    outer.mkdir()
+    subprocess.run(["git", "init", "-q", str(outer)], check=True)
+    subprocess.run(
+        ["git", "-C", str(outer), "config", "user.email", "test@example.invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(outer), "config", "user.name", "Pack test"], check=True)
+    (outer / "pack.txt").write_text("unrelated\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(outer), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(outer), "commit", "-qm", "pack"], check=True)
+    ambient_revision = subprocess.check_output(
+        ["git", "-C", str(outer), "rev-parse", "HEAD"], text=True
+    ).strip()
+    distribution = _FakeDistribution(
+        outer / ".venv/site-packages",
+        json.dumps(
+            {
+                "url": "file:///original/pybench-0.1.0-py3-none-any.whl",
+                "archive_info": {"hash": "sha256=" + "c" * 64},
+            }
+        ),
+    )
+    original_distribution = metadata.distribution
+    monkeypatch.setattr(
+        metadata,
+        "distribution",
+        lambda name: distribution if name == "pybench" else original_distribution(name),
+    )
+
+    monkeypatch.chdir(outer)
+    first = runtime_attestation(discovery)
+    monkeypatch.chdir(tmp_path)
+    second = runtime_attestation(discovery)
+    assert first["pybench"]["source_revision"] is None
+    assert second["pybench"]["source_revision"] is None
+    assert first["pybench"]["source_revision"] != ambient_revision
+    assert first["pybench"] == second["pybench"]
 
 
 @pytest.mark.parametrize(

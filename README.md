@@ -196,6 +196,17 @@ SHA-256 values and hashed. This truthfully identifies installed contents when
 original wheel bytes are unavailable. Dependency identity uses the canonical
 sorted installed distribution set under `python-distribution-set-v1`.
 
+The runtime attestation's nullable `pybench.source_revision` is derived only
+from metadata bound to the installed PyBench distribution. A PEP 610 VCS
+`commit_id` is accepted directly. For an editable local install, PyBench
+verifies that the declared `file://` origin contains the loaded module, names
+the PyBench distribution, and is itself the Git root before reading `HEAD`.
+Ordinary wheel and archive installs without bound revision evidence report
+`null`; enclosing repositories and the current working directory are never
+used as source identity. Installed-content, interpreter, dependency, protocol,
+pack, and entry-point attestations remain available when the revision is
+unknown.
+
 Trusted pack code is not host-sandboxed. Capability enforcement governs
 scientific-state mutation, and conformance is not scientific validation. V1
 packs cannot add primitives, storage formats, getters, promotion functions, or
