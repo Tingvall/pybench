@@ -21,11 +21,14 @@ from pybench.operation_packs import (
     _distribution_bound_source_revision,
     _distribution_build_metadata,
     activate_operation_pack,
+    canonical_json,
     canonical_sha256,
     discover_operation_pack,
     execute_operation_pack,
     operation_pack_handlers,
     operation_pack_identity,
+    parse_canonical_json,
+    protocol_asset,
     runtime_attestation,
     validate_manifest,
 )
@@ -33,7 +36,20 @@ from pybench.protocol import validate_receipt
 
 REPO = Path(__file__).parents[1]
 FIXTURES = REPO / "protocol/fixtures/operation-pack-v1"
-MANIFEST = FIXTURES / "valid/python-hyphen.json"
+
+
+def _installed_pack_manifest() -> Path:
+    distribution = metadata.distribution("scworkbench-python-pack")
+    matches = [
+        Path(distribution.locate_file(item))
+        for item in distribution.files or []
+        if str(item).replace("\\", "/").endswith("/operation-pack.json")
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+MANIFEST = _installed_pack_manifest()
 
 
 def _init_stage(root: Path) -> dict:
@@ -106,7 +122,7 @@ def _identities():
 def test_schema_fixture_inventory_and_frozen_identities_are_exact():
     schema = REPO / "protocol/operation-pack-v1.schema.json"
     assert hashlib.sha256(schema.read_bytes()).hexdigest() == (
-        "01248103dc8527062eda8732a2dc8e3ad9227579c457b65b013606e348e8fe5f"
+        "39112be67f3d022725d8dc57a569d7bfd94ea0242f1421be4d2d479be56795bb"
     )
     expected = json.loads((FIXTURES / "canonical-identities.json").read_text())
     for manifest_path in sorted((FIXTURES / "valid").glob("python-*.json")):
@@ -119,6 +135,49 @@ def test_schema_fixture_inventory_and_frozen_identities_are_exact():
         assert set(identity["operation_definition_sha256"].values()) == {
             expected["python_reference"]["operation_definition_sha256"]
         }
+
+
+def test_canonical_protocol_assets_and_corpus_are_exact():
+    expected = {
+        "operation-pack-v1.schema.json": (
+            "39112be67f3d022725d8dc57a569d7bfd94ea0242f1421be4d2d479be56795bb"
+        ),
+        "operation-pack-canonical-json-v1.md": (
+            "7fa992ab7dcb8b07f9d75621b4a5eb27cd29c21edac33ad962e6c1393999361e"
+        ),
+        "fixtures/operation-pack-canonical-json-v1/cases.json": (
+            "6c3da09b7840be621aae02e2bc17ac38435124992864da50e4c06819829e5d0c"
+        ),
+        "fixtures/operation-pack-v1/canonical-identities.json": (
+            "d5ee6fcc1e4c906d204d0e901b136ed9ee0cb1a7d9d8ebe1b4507a18d4310a68"
+        ),
+    }
+    for relative, digest in expected.items():
+        assert hashlib.sha256(protocol_asset(relative).read_bytes()).hexdigest() == digest
+
+    corpus = json.loads(
+        protocol_asset("fixtures/operation-pack-canonical-json-v1/cases.json").read_text()
+    )
+    for case in corpus["valid"]:
+        assert canonical_json(parse_canonical_json(case["input_json"])) == case["canonical_json"]
+    for case in corpus["invalid"]:
+        with pytest.raises(OperationPackError) as caught:
+            canonical_json(parse_canonical_json(case["input_json"]))
+        assert caught.value.code == case["code"]
+
+
+def test_identity_scheme_defaults_and_explicit_mismatch():
+    manifest = json.loads(MANIFEST.read_text())
+    assert "identity_scheme" not in manifest
+    normalized = validate_manifest(manifest)
+    assert normalized["identity_scheme"] == "scworkbench.operation_pack.canonical_json.v1"
+    assert operation_pack_identity(manifest)["identity_scheme"] == (
+        "scworkbench.operation_pack.canonical_json.v1"
+    )
+    manifest["identity_scheme"] = "scworkbench.operation_pack.canonical_json.v999"
+    with pytest.raises(OperationPackError) as caught:
+        validate_manifest(manifest)
+    assert caught.value.code == "OPERATION_PACK_IDENTITY_SCHEME_MISMATCH"
 
 
 def test_canonical_identity_is_independent_process_deterministic():
@@ -148,6 +207,98 @@ def test_real_installed_distribution_discovery_is_inert_and_explicit(monkeypatch
     assert discovery.entry_point.name == "reference-pack"
     assert discovery.entry_point.value == "scwbpython.entrypoint:register"
     assert discovery.artifact_identity["scheme"] == ("python-installed-distribution-tree-sha256-v1")
+    assert discovery.manifest_source == {
+        "scheme": "python-installed-operation-pack-manifest-v1",
+        "distribution_relative_path": "scwbpython/operation-pack.json",
+        "bytes_sha256": hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
+        "manifest_sha256": discovery.identity["manifest_sha256"],
+    }
+
+
+class _RelocatedPackDistribution:
+    def __init__(self, base, root: Path):
+        self.base = base
+        self.root = root
+        self.metadata = base.metadata
+        self.version = base.version
+        self.entry_points = base.entry_points
+        self.files = base.files
+        for item in self.files or []:
+            relative = str(item).replace("\\", "/")
+            if relative.endswith("/operation-pack.json"):
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(base.locate_file(item), destination)
+
+    def locate_file(self, path):
+        relative = str(path).replace("\\", "/")
+        relocated = self.root / relative
+        return relocated if relocated.is_file() else self.base.locate_file(path)
+
+    @property
+    def manifest_path(self) -> Path:
+        matches = [
+            self.root / str(item).replace("\\", "/")
+            for item in self.files or []
+            if str(item).replace("\\", "/").endswith("/operation-pack.json")
+        ]
+        assert len(matches) == 1
+        return matches[0]
+
+
+def _assert_no_absolute_paths(value):
+    if isinstance(value, dict):
+        for child in value.values():
+            _assert_no_absolute_paths(child)
+    elif isinstance(value, list):
+        for child in value:
+            _assert_no_absolute_paths(child)
+    elif isinstance(value, str):
+        assert not value.startswith("/")
+        assert not value.startswith("file://")
+
+
+def test_relocated_distribution_manifest_is_authenticated_without_host_paths(
+    tmp_path: Path, monkeypatch
+):
+    original_distribution = metadata.distribution
+    base = original_distribution("scworkbench-python-pack")
+    relocated = _RelocatedPackDistribution(base, tmp_path / "relocated/site-packages")
+    monkeypatch.setattr(
+        metadata,
+        "distribution",
+        lambda name: (
+            relocated if name == "scworkbench-python-pack" else original_distribution(name)
+        ),
+    )
+    discovery = discover_operation_pack(relocated.manifest_path)
+    public = discovery.as_dict()
+    runtime = runtime_attestation(discovery)
+    assert public["manifest_source"]["distribution_relative_path"] == (
+        "scwbpython/operation-pack.json"
+    )
+    assert (
+        public["manifest_source"]["bytes_sha256"]
+        == hashlib.sha256(relocated.manifest_path.read_bytes()).hexdigest()
+    )
+    _assert_no_absolute_paths(public)
+    _assert_no_absolute_paths(runtime)
+
+
+def test_manifest_copy_outside_distribution_is_rejected_before_registration(monkeypatch):
+    loaded = False
+
+    def forbidden_load(_self):
+        nonlocal loaded
+        loaded = True
+        raise AssertionError("entry point must remain inert")
+
+    monkeypatch.setattr(metadata.EntryPoint, "load", forbidden_load)
+    copied_fixture = FIXTURES / "valid/python-hyphen.json"
+    with pytest.raises(OperationPackError) as caught:
+        discover_operation_pack(copied_fixture)
+    assert caught.value.code == "OPERATION_PACK_MANIFEST_SOURCE_REQUIRED"
+    assert not loaded
 
 
 def test_activation_loads_exact_installed_entry_point_and_handlers():
@@ -165,6 +316,8 @@ def test_runtime_attestation_has_frozen_shape_and_stable_content_identity():
     assert set(first) == {
         "schema",
         "backend",
+        "identity_scheme",
+        "manifest_source",
         "distribution",
         "entry_point",
         "interpreter",
@@ -508,6 +661,89 @@ def test_execution_identity_substitution_fails_before_mutation(tmp_path: Path, f
         execute_operation_pack(request, MANIFEST, **expected)
     assert caught.value.code == code
     assert (tmp_path / field / "db/app.sqlite").read_bytes() == before
+
+
+def test_manifest_tamper_between_discovery_and_activation_is_pre_registration(
+    tmp_path: Path, monkeypatch
+):
+    original_distribution = metadata.distribution
+    base = original_distribution("scworkbench-python-pack")
+    relocated = _RelocatedPackDistribution(base, tmp_path / "installed")
+    monkeypatch.setattr(
+        metadata,
+        "distribution",
+        lambda name: (
+            relocated if name == "scworkbench-python-pack" else original_distribution(name)
+        ),
+    )
+    initial = discover_operation_pack(relocated.manifest_path)
+    expected = {
+        "expected_pack_sha256": initial.identity["pack_sha256"],
+        "expected_definition_sha256": initial.identity["operation_definition_sha256"][
+            "scwbpython::affine_cell_vector"
+        ],
+        "expected_distribution_sha256": initial.artifact_identity["sha256"],
+    }
+    request = _init_stage(tmp_path / "stage")
+    before = (tmp_path / "stage/db/app.sqlite").read_bytes()
+    module = __import__("pybench.operation_packs", fromlist=["discover_operation_pack"])
+    original_discover = module.discover_operation_pack
+    calls = 0
+
+    def tampering_discover(path):
+        nonlocal calls
+        discovery = original_discover(path)
+        calls += 1
+        if calls == 1:
+            text = relocated.manifest_path.read_text(encoding="utf-8")
+            relocated.manifest_path.write_text(
+                text.replace('"default": 1,', '"default": 2,', 1), encoding="utf-8"
+            )
+        return discovery
+
+    loaded = False
+
+    def forbidden_load(_self):
+        nonlocal loaded
+        loaded = True
+        raise AssertionError("tampered manifest must fail before registration")
+
+    monkeypatch.setattr(module, "discover_operation_pack", tampering_discover)
+    monkeypatch.setattr(metadata.EntryPoint, "load", forbidden_load)
+    with pytest.raises(OperationPackError) as caught:
+        execute_operation_pack(request, relocated.manifest_path, **expected)
+    assert caught.value.code == "OPERATION_PACK_IDENTITY_MISMATCH"
+    assert calls == 2
+    assert not loaded
+    assert (tmp_path / "stage/db/app.sqlite").read_bytes() == before
+
+
+def test_runtime_scheme_mismatch_is_pre_registration_and_pre_mutation(tmp_path: Path, monkeypatch):
+    request = _init_stage(tmp_path / "runtime-mismatch")
+    _discovery, expected = _identities()
+    before = (tmp_path / "runtime-mismatch/db/app.sqlite").read_bytes()
+    module = __import__("pybench.operation_packs", fromlist=["runtime_attestation"])
+    original_runtime = module.runtime_attestation
+
+    def wrong_runtime(*args, **kwargs):
+        value = original_runtime(*args, **kwargs)
+        value["identity_scheme"] = "scworkbench.operation_pack.canonical_json.v999"
+        return value
+
+    loaded = False
+
+    def forbidden_load(_self):
+        nonlocal loaded
+        loaded = True
+        raise AssertionError("runtime mismatch must fail before registration")
+
+    monkeypatch.setattr(module, "runtime_attestation", wrong_runtime)
+    monkeypatch.setattr(metadata.EntryPoint, "load", forbidden_load)
+    with pytest.raises(OperationPackError) as caught:
+        execute_operation_pack(request, MANIFEST, **expected)
+    assert caught.value.code == "OPERATION_PACK_IDENTITY_SCHEME_MISMATCH"
+    assert not loaded
+    assert (tmp_path / "runtime-mismatch/db/app.sqlite").read_bytes() == before
 
 
 @pytest.mark.parametrize(

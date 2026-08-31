@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.metadata as metadata
 import inspect
@@ -41,7 +42,10 @@ MANIFEST_SCHEMA_VERSION = "scworkbench.operation_pack.v1"
 RUNTIME_SCHEMA_VERSION = "scworkbench.operation_pack_runtime.python.v1"
 INSTALLED_CONTENT_SCHEME = "python-installed-distribution-tree-sha256-v1"
 DEPENDENCY_SET_SCHEME = "python-distribution-set-v1"
+IDENTITY_SCHEME = "scworkbench.operation_pack.canonical_json.v1"
+MANIFEST_SOURCE_SCHEME = "python-installed-operation-pack-manifest-v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_JSON_NUMBER = re.compile(r"^(-)?(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$")
 _ENTRY_VALUE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?::[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)?$")
 _PRIMITIVES = {
     "matrix",
@@ -84,23 +88,172 @@ def protocol_asset(name: str) -> Path:
     return path
 
 
-def canonical_json(value: Any) -> str:
-    """Canonical JSON: recursive key order, stable arrays, compact UTF-8."""
+class _CanonicalInt(int):
+    def __new__(cls, token: str):
+        value = super().__new__(cls, token)
+        value.token = token
+        return value
 
-    try:
-        return json.dumps(
-            value,
-            sort_keys=True,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
+
+class _CanonicalFloat(float):
+    def __new__(cls, token: str):
+        value = super().__new__(cls, token)
+        value.token = token
+        return value
+
+
+def _canonical_number(token: str) -> str:
+    match = _JSON_NUMBER.fullmatch(token)
+    if match is None:
+        _fail(
+            "OPERATION_PACK_CANONICAL_NUMBER_INVALID",
+            f"canonical identity received a malformed JSON number: {token}",
+            number=token,
         )
-    except (TypeError, ValueError) as exc:
-        _fail("OPERATION_PACK_MANIFEST_INVALID", f"value is not canonical JSON: {exc}")
+    negative, integer, fraction, exponent_text = match.groups()
+    try:
+        exponent = int(exponent_text or "0")
+    except ValueError:
+        _fail(
+            "OPERATION_PACK_CANONICAL_NUMBER_RANGE",
+            f"canonical identity number exponent is outside the parsing boundary: {token}",
+            number=token,
+        )
+    if abs(exponent) > 10000:
+        _fail(
+            "OPERATION_PACK_CANONICAL_NUMBER_RANGE",
+            f"canonical identity number exponent is outside the parsing boundary: {token}",
+            number=token,
+        )
+    digits = integer + (fraction or "")
+    first = next((index for index, digit in enumerate(digits) if digit != "0"), None)
+    if first is None:
+        return "0"
+    last = max(index for index, digit in enumerate(digits) if digit != "0")
+    significant = digits[first : last + 1]
+    if len(significant) > 15:
+        _fail(
+            "OPERATION_PACK_CANONICAL_NUMBER_PRECISION",
+            f"canonical identity numbers may contain at most 15 significant digits: {token}",
+            number=token,
+        )
+    adjusted = exponent + len(integer) - first - 1
+    if not -307 <= adjusted <= 308:
+        _fail(
+            "OPERATION_PACK_CANONICAL_NUMBER_RANGE",
+            f"canonical identity number is outside adjusted exponent range: {token}",
+            number=token,
+        )
+    coefficient = significant if len(significant) == 1 else f"{significant[0]}.{significant[1:]}"
+    return f"{'-' if negative else ''}{coefficient}e{adjusted}"
+
+
+def _canonical_string(value: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        _fail(
+            "OPERATION_PACK_CANONICAL_STRING_INVALID",
+            "canonical identity strings must contain valid Unicode scalar values",
+        )
+    escapes = {
+        '"': '\\"',
+        "\\": "\\\\",
+        "\b": "\\b",
+        "\t": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+    }
+    encoded = "".join(
+        escapes.get(character, f"\\u{ord(character):04x}" if ord(character) < 32 else character)
+        for character in value
+    )
+    return f'"{encoded}"'
+
+
+def canonical_json(value: Any) -> str:
+    """Encode the language-neutral operation-pack canonical JSON v1 product."""
+
+    def encode(item: Any) -> str:
+        if item is None:
+            return "null"
+        if item is True:
+            return "true"
+        if item is False:
+            return "false"
+        if isinstance(item, _CanonicalInt | _CanonicalFloat):
+            return _canonical_number(item.token)
+        if isinstance(item, int):
+            return _canonical_number(str(item))
+        if isinstance(item, float):
+            if not __import__("math").isfinite(item):
+                _fail(
+                    "OPERATION_PACK_CANONICAL_NUMBER_INVALID",
+                    "canonical identity numbers must be finite",
+                )
+            return _canonical_number(format(item, ".15g"))
+        if isinstance(item, str):
+            return _canonical_string(item)
+        if isinstance(item, (list, tuple)):
+            return "[" + ",".join(encode(child) for child in item) + "]"
+        if isinstance(item, Mapping):
+            if not all(isinstance(key, str) for key in item):
+                _fail(
+                    "OPERATION_PACK_CANONICAL_OBJECT_INVALID",
+                    "canonical identity object keys must be strings",
+                )
+            try:
+                keys = sorted(item, key=lambda key: key.encode("utf-8"))
+            except UnicodeEncodeError:
+                _fail(
+                    "OPERATION_PACK_CANONICAL_STRING_INVALID",
+                    "canonical identity object keys must be valid Unicode scalar values",
+                )
+            return (
+                "{"
+                + ",".join(f"{_canonical_string(key)}:{encode(item[key])}" for key in keys)
+                + "}"
+            )
+        _fail(
+            "OPERATION_PACK_CANONICAL_VALUE_INVALID",
+            f"unsupported canonical identity value type: {type(item).__name__}",
+        )
+
+    return encode(value)
 
 
 def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def parse_canonical_json(text: str) -> Any:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                _fail(
+                    "OPERATION_PACK_CANONICAL_OBJECT_INVALID",
+                    f"canonical identity object duplicates key {key!r}",
+                )
+            result[key] = value
+        return result
+
+    def invalid_constant(token: str) -> None:
+        _fail("OPERATION_PACK_MANIFEST_INVALID", f"invalid JSON constant: {token}")
+
+    try:
+        return json.loads(
+            text,
+            parse_int=_CanonicalInt,
+            parse_float=_CanonicalFloat,
+            parse_constant=invalid_constant,
+            object_pairs_hook=object_pairs,
+        )
+    except OperationPackError:
+        raise
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        _fail("OPERATION_PACK_MANIFEST_INVALID", f"operation-pack input is not valid JSON: {exc}")
 
 
 def load_manifest(path: str | os.PathLike[str]) -> dict[str, Any]:
@@ -108,8 +261,8 @@ def load_manifest(path: str | os.PathLike[str]) -> dict[str, Any]:
     if not manifest_path.is_file() or manifest_path.is_symlink():
         _fail("OPERATION_PACK_MANIFEST_NOT_FOUND", "manifest must be a regular file")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest = parse_canonical_json(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
         _fail("OPERATION_PACK_MANIFEST_INVALID", f"manifest is unreadable: {exc}")
     if not isinstance(manifest, dict):
         _fail("OPERATION_PACK_MANIFEST_INVALID", "manifest must be a JSON object")
@@ -122,6 +275,12 @@ def _schema_validator() -> Draft202012Validator:
 
 
 def _validate_operation(operation: dict[str, Any], namespace: str) -> None:
+    operation.setdefault("optional_requires", {})
+    operation.setdefault("coverage", {})
+    operation.setdefault(
+        "interface_produces",
+        {key: {"kind": value} for key, value in operation.get("produces", {}).items()},
+    )
     name = str(operation.get("name", ""))
     if not name.startswith(namespace + "::"):
         _fail("OPERATION_PACK_NAMESPACE_MISMATCH", f"operation {name!r} has wrong namespace")
@@ -145,9 +304,7 @@ def _validate_operation(operation: dict[str, Any], namespace: str) -> None:
             )
     if not produces or any(kind not in _PRIMITIVES for kind in produces.values()):
         _fail("OPERATION_PACK_PRIMITIVE_UNSUPPORTED", f"operation {name!r} has unknown output")
-    interface = operation.get(
-        "interface_produces", {key: {"kind": val} for key, val in produces.items()}
-    )
+    interface = operation["interface_produces"]
     replay = operation.get("replay_equivalence", {})
     if set(interface) != set(produces) or set(replay) != set(produces):
         _fail("OPERATION_PACK_OUTPUT_INVALID", f"operation {name!r} output maps disagree")
@@ -170,17 +327,31 @@ def _validate_operation(operation: dict[str, Any], namespace: str) -> None:
 
 def validate_manifest(
     manifest_or_path: Mapping[str, Any] | str | os.PathLike[str],
+    *,
+    expected_backend: str | None = "Python",
 ) -> dict[str, Any]:
     manifest = (
         load_manifest(manifest_or_path)
         if isinstance(manifest_or_path, (str, os.PathLike))
-        else json.loads(json.dumps(dict(manifest_or_path), allow_nan=False))
+        else copy.deepcopy(dict(manifest_or_path))
     )
+    identity_scheme = manifest.get("identity_scheme", IDENTITY_SCHEME)
+    if identity_scheme != IDENTITY_SCHEME:
+        _fail(
+            "OPERATION_PACK_IDENTITY_SCHEME_MISMATCH",
+            f"manifest claims unsupported identity scheme {identity_scheme!r}",
+            expected_identity_scheme=IDENTITY_SCHEME,
+            observed_identity_scheme=identity_scheme,
+        )
+    manifest["identity_scheme"] = IDENTITY_SCHEME
     backend = manifest.get("backend")
     if backend not in {"R", "Python"}:
         _fail("OPERATION_PACK_BACKEND_UNSUPPORTED", f"unsupported backend: {backend!r}")
-    if backend != "Python":
-        _fail("OPERATION_PACK_BACKEND_MISMATCH", "PyBench executes only Python packs")
+    if expected_backend is not None and backend != expected_backend:
+        _fail(
+            "OPERATION_PACK_BACKEND_MISMATCH",
+            f"backend {backend!r} cannot be admitted by runtime {expected_backend!r}",
+        )
     errors = sorted(_schema_validator().iter_errors(manifest), key=lambda item: list(item.path))
     if errors:
         first = errors[0]
@@ -206,11 +377,12 @@ def validate_manifest(
 def operation_pack_identity(
     manifest_or_path: Mapping[str, Any] | str | os.PathLike[str],
 ) -> dict[str, Any]:
-    manifest = validate_manifest(manifest_or_path)
+    manifest = validate_manifest(manifest_or_path, expected_backend=None)
     hashes = {
         operation["name"]: canonical_sha256(operation) for operation in manifest["operations"]
     }
     identity: dict[str, Any] = {
+        "identity_scheme": IDENTITY_SCHEME,
         "schema_version": manifest["schema_version"],
         "protocol_version": manifest["protocol_version"],
         "manifest_sha256": canonical_sha256(manifest),
@@ -220,13 +392,14 @@ def operation_pack_identity(
         "compatibility": manifest["compatibility"],
         "entry_point": manifest["entry_point"],
         "operation_definition_sha256": hashes,
-        "distribution": {
+    }
+    if manifest["backend"] == "Python":
+        identity["distribution"] = {
             "declared_name": manifest["package"]["name"],
             "normalized_name": canonicalize_name(manifest["package"]["name"]),
             "version": manifest["package"]["version"],
-        },
-        "entry_point_group": ENTRY_POINT_GROUP,
-    }
+        }
+        identity["entry_point_group"] = ENTRY_POINT_GROUP
     identity["pack_sha256"] = canonical_sha256(identity)
     return identity
 
@@ -263,6 +436,63 @@ def _distribution_content_identity(distribution: metadata.Distribution) -> dict[
     }
 
 
+def _installed_manifest(
+    distribution: metadata.Distribution,
+    supplied_path: str | os.PathLike[str],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    candidates: list[tuple[str, Any]] = []
+    for item in distribution.files or []:
+        relative = str(item).replace("\\", "/")
+        parts = relative.split("/")
+        if parts[-1:] == ["operation-pack.json"]:
+            if relative.startswith("/") or ".." in parts or any(not part for part in parts):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_IDENTITY_MISMATCH",
+                    "installed manifest has an unsafe distribution-relative path",
+                )
+            candidates.append((relative, item))
+    if len(candidates) != 1:
+        _fail(
+            "OPERATION_PACK_MANIFEST_SOURCE_REQUIRED",
+            "distribution must contain exactly one operation-pack.json",
+            observed_count=len(candidates),
+        )
+    relative, item = candidates[0]
+    installed_path = Path(distribution.locate_file(item))
+    try:
+        supplied = Path(supplied_path).expanduser().resolve(strict=True)
+        installed = installed_path.resolve(strict=True)
+    except OSError:
+        _fail(
+            "OPERATION_PACK_MANIFEST_SOURCE_REQUIRED",
+            "supplied installed-distribution manifest is unavailable",
+        )
+    if (
+        installed_path.is_symlink()
+        or not installed.is_file()
+        or supplied != installed
+        or not supplied.samefile(installed)
+    ):
+        _fail(
+            "OPERATION_PACK_MANIFEST_SOURCE_REQUIRED",
+            "supplied manifest is not the installed distribution manifest",
+        )
+    raw = installed.read_bytes()
+    try:
+        manifest = parse_canonical_json(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        _fail("OPERATION_PACK_MANIFEST_INVALID", "installed manifest is not valid UTF-8")
+    if not isinstance(manifest, dict):
+        _fail("OPERATION_PACK_MANIFEST_INVALID", "installed manifest must be a JSON object")
+    normalized = validate_manifest(manifest)
+    return normalized, {
+        "scheme": MANIFEST_SOURCE_SCHEME,
+        "distribution_relative_path": relative,
+        "bytes_sha256": hashlib.sha256(raw).hexdigest(),
+        "manifest_sha256": operation_pack_identity(normalized)["manifest_sha256"],
+    }
+
+
 def _distribution_build_metadata(distribution: metadata.Distribution) -> dict[str, Any]:
     files = {str(item).replace("\\", "/"): item for item in distribution.files or []}
 
@@ -281,6 +511,8 @@ def _distribution_build_metadata(distribution: metadata.Distribution) -> dict[st
     if not isinstance(parsed_direct_url, dict):
         parsed_direct_url = None
     revision = _distribution_bound_source_revision(distribution, parsed_direct_url)
+    if parsed_direct_url is not None:
+        parsed_direct_url = {key: value for key, value in parsed_direct_url.items() if key != "url"}
     return {
         "installer": text_suffix(".dist-info/INSTALLER"),
         "wheel_metadata": text_suffix(".dist-info/WHEEL"),
@@ -296,12 +528,15 @@ class PackDiscovery:
     distribution: metadata.Distribution
     entry_point: metadata.EntryPoint
     artifact_identity: dict[str, str]
+    manifest_source: dict[str, str]
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "schema": "pybench.operation_pack_discovery.v1",
             "backend": "Python",
+            "identity_scheme": IDENTITY_SCHEME,
             "manifest_identity": self.identity,
+            "manifest_source": self.manifest_source,
             "distribution": {
                 "declared_name": self.manifest["package"]["name"],
                 "normalized_name": canonicalize_name(self.manifest["package"]["name"]),
@@ -309,7 +544,6 @@ class PackDiscovery:
                 "metadata_name": self.distribution.metadata["Name"],
                 "metadata_normalized_name": canonicalize_name(self.distribution.metadata["Name"]),
                 "metadata_version": self.distribution.version,
-                "installed_location": str(Path(self.distribution.locate_file("")).resolve()),
                 "artifact_identity": self.artifact_identity,
                 "build_metadata": _distribution_build_metadata(self.distribution),
             },
@@ -323,7 +557,6 @@ class PackDiscovery:
 
 def discover_operation_pack(manifest_path: str | os.PathLike[str]) -> PackDiscovery:
     manifest = validate_manifest(manifest_path)
-    identity = operation_pack_identity(manifest)
     declared = manifest["package"]
     try:
         distribution = metadata.distribution(declared["name"])
@@ -341,6 +574,14 @@ def discover_operation_pack(manifest_path: str | os.PathLike[str]) -> PackDiscov
         versions_match = False
     if not versions_match:
         _fail("OPERATION_PACK_DISTRIBUTION_IDENTITY_MISMATCH", "distribution version differs")
+    installed_manifest, manifest_source = _installed_manifest(distribution, manifest_path)
+    if canonical_json(installed_manifest) != canonical_json(manifest):
+        _fail(
+            "OPERATION_PACK_MANIFEST_IDENTITY_MISMATCH",
+            "supplied manifest differs from installed distribution manifest",
+        )
+    manifest = installed_manifest
+    identity = operation_pack_identity(manifest)
     candidates = [
         entry
         for entry in distribution.entry_points
@@ -360,7 +601,12 @@ def discover_operation_pack(manifest_path: str | os.PathLike[str]) -> PackDiscov
     if not _ENTRY_VALUE.fullmatch(entry.value):
         _fail("OPERATION_PACK_ENTRY_POINT_INVALID", "installed entry-point target is malformed")
     return PackDiscovery(
-        manifest, identity, distribution, entry, _distribution_content_identity(distribution)
+        manifest,
+        identity,
+        distribution,
+        entry,
+        _distribution_content_identity(distribution),
+        manifest_source,
     )
 
 
@@ -504,6 +750,8 @@ def runtime_attestation(
     return {
         "schema": RUNTIME_SCHEMA_VERSION,
         "backend": "Python",
+        "identity_scheme": IDENTITY_SCHEME,
+        "manifest_source": discovery.manifest_source,
         "distribution": {
             "declared_name": discovery.manifest["package"]["name"],
             "normalized_name": canonicalize_name(discovery.manifest["package"]["name"]),
@@ -523,7 +771,6 @@ def runtime_attestation(
             "version": platform.python_version(),
             "abi": sysconfig.get_config_var("SOABI") or "unknown",
             "platform": sysconfig.get_platform(),
-            "executable": str(Path(sys.executable).resolve()),
             "executable_sha256": _hash_file(Path(sys.executable).resolve()),
         },
         "dependencies": _dependency_attestation(),
@@ -736,6 +983,110 @@ def _validate_execution_bindings(
     return operation
 
 
+def _assert_discovery_binding(expected: PackDiscovery, observed: PackDiscovery) -> None:
+    if canonical_json(observed.identity) != canonical_json(expected.identity):
+        _fail("OPERATION_PACK_IDENTITY_MISMATCH", "manifest identity changed before activation")
+    if canonical_json(observed.manifest_source) != canonical_json(expected.manifest_source):
+        _fail(
+            "OPERATION_PACK_MANIFEST_IDENTITY_MISMATCH",
+            "installed manifest changed before activation",
+        )
+    if observed.artifact_identity != expected.artifact_identity:
+        _fail(
+            "OPERATION_PACK_DISTRIBUTION_IDENTITY_MISMATCH",
+            "installed distribution changed before activation",
+        )
+    expected_distribution = (
+        canonicalize_name(expected.distribution.metadata.get("Name", "")),
+        Version(expected.distribution.version),
+    )
+    observed_distribution = (
+        canonicalize_name(observed.distribution.metadata.get("Name", "")),
+        Version(observed.distribution.version),
+    )
+    if observed_distribution != expected_distribution:
+        _fail(
+            "OPERATION_PACK_DISTRIBUTION_IDENTITY_MISMATCH",
+            "installed distribution metadata changed before activation",
+        )
+    expected_entry = (
+        expected.entry_point.group,
+        expected.entry_point.name,
+        expected.entry_point.value,
+    )
+    observed_entry = (
+        observed.entry_point.group,
+        observed.entry_point.name,
+        observed.entry_point.value,
+    )
+    if observed_entry != expected_entry:
+        _fail("OPERATION_PACK_ENTRY_POINT_INVALID", "entry point changed before activation")
+
+
+def _assert_runtime_binding(attestation: Mapping[str, Any], discovery: PackDiscovery) -> None:
+    if attestation.get("identity_scheme") != IDENTITY_SCHEME:
+        _fail(
+            "OPERATION_PACK_IDENTITY_SCHEME_MISMATCH",
+            "runtime attestation claims an incompatible identity scheme",
+        )
+    if canonical_json(attestation.get("manifest_source")) != canonical_json(
+        discovery.manifest_source
+    ):
+        _fail(
+            "OPERATION_PACK_MANIFEST_IDENTITY_MISMATCH",
+            "runtime manifest source differs from discovery",
+        )
+    distribution = attestation.get("distribution")
+    if not isinstance(distribution, Mapping):
+        _fail("OPERATION_PACK_RUNTIME_ATTESTATION_INVALID", "runtime distribution is absent")
+    expected_distribution = {
+        "declared_name": discovery.manifest["package"]["name"],
+        "normalized_name": canonicalize_name(discovery.manifest["package"]["name"]),
+        "version": discovery.manifest["package"]["version"],
+        "metadata_name": discovery.distribution.metadata["Name"],
+        "metadata_normalized_name": canonicalize_name(discovery.distribution.metadata["Name"]),
+        "metadata_version": discovery.distribution.version,
+        "artifact_identity": discovery.artifact_identity,
+    }
+    if canonical_json(distribution) != canonical_json(expected_distribution):
+        _fail(
+            "OPERATION_PACK_DISTRIBUTION_IDENTITY_MISMATCH",
+            "runtime distribution differs from authenticated discovery",
+        )
+    entry = attestation.get("entry_point")
+    expected_entry = {
+        "group": discovery.entry_point.group,
+        "name": discovery.entry_point.name,
+        "value": discovery.entry_point.value,
+    }
+    if canonical_json(entry) != canonical_json(expected_entry):
+        _fail("OPERATION_PACK_ENTRY_POINT_INVALID", "runtime entry point differs from discovery")
+    dependencies = attestation.get("dependencies")
+    if (
+        not isinstance(dependencies, Mapping)
+        or dependencies.get("scheme") != DEPENDENCY_SET_SCHEME
+        or dependencies.get("sha256") != canonical_sha256(dependencies.get("distributions"))
+    ):
+        _fail(
+            "OPERATION_PACK_RUNTIME_ATTESTATION_INVALID",
+            "runtime dependency-set identity is invalid",
+        )
+    pybench = attestation.get("pybench")
+    if not isinstance(pybench, Mapping) or pybench.get("protocol") != PROTOCOL_VERSION:
+        _fail(
+            "OPERATION_PACK_RUNTIME_ATTESTATION_INVALID",
+            "runtime PyBench protocol is incompatible",
+        )
+    interpreter = attestation.get("interpreter")
+    if not isinstance(interpreter, Mapping) or not _SHA256.fullmatch(
+        str(interpreter.get("executable_sha256", ""))
+    ):
+        _fail(
+            "OPERATION_PACK_RUNTIME_ATTESTATION_INVALID",
+            "runtime interpreter identity is invalid",
+        )
+
+
 def execute_operation_pack(
     request: dict[str, Any],
     manifest_path: str | os.PathLike[str],
@@ -765,20 +1116,27 @@ def execute_operation_pack(
             "installed distribution contents changed",
         )
     operation = _validate_execution_bindings(request, discovery)
+    rediscovery = discover_operation_pack(manifest_path)
+    _assert_discovery_binding(discovery, rediscovery)
+    discovery = rediscovery
+    attestation = runtime_attestation(
+        discovery,
+        seed=request["params"].get(
+            discovery.manifest["operations"][0].get("determinism", {}).get("seed_parameter")
+        )
+        if discovery.manifest["operations"][0].get("determinism", {}).get("seed_parameter")
+        else None,
+        seed_declared=bool(
+            discovery.manifest["operations"][0].get("determinism", {}).get("seed_parameter")
+        ),
+    )
+    _assert_runtime_binding(attestation, discovery)
     registration = activate_operation_pack(discovery)
     if _distribution_content_identity(discovery.distribution) != discovery.artifact_identity:
         _fail(
             "OPERATION_PACK_DISTRIBUTION_IDENTITY_MISMATCH",
             "installed distribution contents changed during activation",
         )
-    seed_parameter = (
-        discovery.manifest["operations"][0].get("determinism", {}).get("seed_parameter")
-    )
-    attestation = runtime_attestation(
-        discovery,
-        seed=request["params"].get(seed_parameter) if seed_parameter else None,
-        seed_declared=bool(seed_parameter),
-    )
     bundle = open_bundle_for_request(request)
     rollback = _StageRollback(bundle)
     success = False
