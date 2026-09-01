@@ -175,19 +175,28 @@ pybench-operation-pack execute \
 Discovery resolves only `manifest.package.name`, compares distribution names by
 PEP 503 normalization and versions by PEP 440 equivalence, and authenticates
 exactly one entry point in `scworkbench.operation_packs.v1` whose name equals
-`manifest.entry_point`. It does not import pack code. Activation loads only that
-installed metadata target and requires it to return handler bindings matching
-the manifest operation names exactly.
+`manifest.entry_point`. The supplied manifest must be the distribution's unique
+packaged `operation-pack.json`; discovery records only its distribution-relative
+path plus raw and canonical SHA-256 identities. It does not import pack code.
+Activation loads only that installed metadata target and requires it to return
+handler bindings matching the manifest operation names exactly.
 
-The manifest owns scientific definitions and canonical identities. Python code
-supplies runtime handlers only. Handlers receive `OperationPackContext`, with
+The manifest owns scientific definitions. Identity uses
+`scworkbench.operation_pack.canonical_json.v1`, whose UTF-8 ordering, escaping,
+restricted decimal normalization, defaults, and identity field sets are
+specified in `protocol/operation-pack-canonical-json-v1.md`. PyBench implements
+that byte contract independently and uses it for manifest, definition, pack,
+and dependency-set identities. Python code supplies runtime handlers only.
+Handlers receive `OperationPackContext`, with
 typed `read_cell_vector()`, `parameter()`, `write_cell_vector()`, and
 `write_obs_table()` methods. They receive no public SQLite connection, arbitrary
 payload writer, registry API, promoter, custom primitive, or validation hook.
-Execution re-authenticates installed content, opens only the engine-created v2
-stage, delegates writes to existing capability-bound writers, builds and
-validates the ordinary v2 receipt, and emits the frozen Python runtime
-attestation sidecar for Forge Request 03.
+Execution re-resolves and re-hashes the packaged manifest, definitions, pack,
+distribution, entry point, interpreter, dependency set, and protocol before
+handler registration. It then opens only the engine-created v2 stage, delegates
+writes to existing capability-bound writers, builds and validates the ordinary
+v2 receipt, and emits the frozen Python runtime attestation sidecar. Discovery
+and runtime records contain no absolute host paths.
 
 Installed artifact identity uses
 `python-installed-distribution-tree-sha256-v1`: sorted distribution-relative
