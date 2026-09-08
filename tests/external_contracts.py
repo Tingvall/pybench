@@ -10,6 +10,7 @@ import pytest
 GOLDEN_BUNDLE_ENV = "PYBENCH_GOLDEN_BUNDLE"
 GOLDEN_BUNDLE_SHA256_ENV = "PYBENCH_GOLDEN_BUNDLE_SHA256"
 SCWORKBENCH_PROTOCOL_ENV = "PYBENCH_SCWORKBENCH_PROTOCOL_DIR"
+SCWORKBENCH_SOURCE_ENV = "PYBENCH_SCWORKBENCH_SOURCE_DIR"
 DIRECTORY_IDENTITY_SCHEME = "pybench-external-directory-sha256-v1"
 
 
@@ -68,6 +69,25 @@ def scworkbench_protocol_directory() -> Path:
         SCWORKBENCH_PROTOCOL_ENV,
         purpose="scworkbench protocol byte-identity contract",
     )
+
+
+def scworkbench_source_directory() -> Path:
+    path = configured_directory(
+        SCWORKBENCH_SOURCE_ENV,
+        purpose="scworkbench source-tree path-contract tripwire",
+    )
+    required = (
+        "R/python_protocol.R",
+        "R/path_containment.R",
+        "R/op_python_bridge.R",
+    )
+    missing = [relative for relative in required if not (path / relative).is_file()]
+    if missing:
+        pytest.fail(
+            f"scworkbench source-tree path-contract tripwire: {SCWORKBENCH_SOURCE_ENV} "
+            f"is structurally invalid; missing regular files: {', '.join(missing)}"
+        )
+    return path
 
 
 if __name__ == "__main__":

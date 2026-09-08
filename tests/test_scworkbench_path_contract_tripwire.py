@@ -1,32 +1,13 @@
 from __future__ import annotations
 
-import os
 import re
-from pathlib import Path
 
-import pytest
-
+from external_contracts import scworkbench_source_directory
 from pybench.protocol import PATH_CONTRACT
 
 
-def _scworkbench_repo() -> Path:
-    configured = os.environ.get("SCWORKBENCH_REPO")
-    candidates = [] if not configured else [Path(configured)]
-    pybench_repo = Path(__file__).resolve().parents[1]
-    candidates.extend(
-        [
-            pybench_repo.parent / "lymphocyte_trajectory" / "scworkbench",
-            pybench_repo.parent / "scworkbench",
-        ]
-    )
-    for candidate in candidates:
-        if (candidate / "R" / "python_protocol.R").is_file():
-            return candidate
-    pytest.skip("scworkbench source checkout is not available for the cross-repository tripwire")
-
-
 def test_scworkbench_python_path_contract_is_exactly_in_lockstep():
-    repo = _scworkbench_repo()
+    repo = scworkbench_source_directory()
     protocol_source = (repo / "R" / "python_protocol.R").read_text()
     containment_source = (repo / "R" / "path_containment.R").read_text()
     bridge_source = (repo / "R" / "op_python_bridge.R").read_text()

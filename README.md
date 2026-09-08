@@ -156,13 +156,16 @@ cd "$(git rev-parse --show-toplevel)"
 intentionally does not enforce `E501`: long SQL statements and compact SQLite
 fixture DDL are schema contracts where wrapping does not improve reviewability.
 
-Two optional cross-repository tests use explicit external fixture contracts:
+Three optional cross-repository tests use explicit external fixture contracts:
 
 - `PYBENCH_GOLDEN_BUNDLE` names the generated scworkbench golden bundle.
   `PYBENCH_GOLDEN_BUNDLE_SHA256` must contain its lowercase
   `pybench-external-directory-sha256-v1` identity.
 - `PYBENCH_SCWORKBENCH_PROTOCOL_DIR` names the pinned scworkbench
   `inst/protocol` directory used for byte-identity checks.
+- `PYBENCH_SCWORKBENCH_SOURCE_DIR` names the pinned scworkbench source checkout
+  used by the Python path-contract tripwire. It must contain
+  `R/python_protocol.R`, `R/path_containment.R`, and `R/op_python_bridge.R`.
 
 Compute and supply the golden identity, then run the complete core suite:
 
@@ -172,13 +175,16 @@ golden_identity="$(PYTHONPATH=tests .venv/bin/python -m external_contracts \
   "$PYBENCH_GOLDEN_BUNDLE")"
 export PYBENCH_GOLDEN_BUNDLE_SHA256="${golden_identity#*:}"
 export PYBENCH_SCWORKBENCH_PROTOCOL_DIR="${SCWORKBENCH_PROTOCOL_DIR}"
+export PYBENCH_SCWORKBENCH_SOURCE_DIR="${SCWORKBENCH_SOURCE_DIR}"
 .venv/bin/python -m pytest -q
 ```
 
 If a path variable is absent, only its external contract test is explicitly
 skipped. A configured missing path, malformed or mismatched golden identity, or
-protocol inventory/byte mismatch is a test failure. Tests never search a
-developer filesystem or compare PyBench protocol files with themselves.
+protocol inventory/byte mismatch is a test failure. A configured scworkbench
+source checkout that lacks any required R source file also fails explicitly.
+Tests never search a developer filesystem, infer a sibling checkout, or compare
+PyBench protocol files with themselves.
 
 Release artifacts must be built from an immutable Git archive extracted away
 from any checkout or linked-worktree metadata:

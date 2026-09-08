@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -173,23 +174,31 @@ def _inventory(root: Path) -> dict[str, str]:
     return result
 
 
+def _assert_protocol_inventories_match(local: Path, external: Path) -> None:
+    assert _inventory(local) == _inventory(external)
+
+
 def test_schema_and_all_fixtures_are_byte_identical_to_forge():
     forge_protocol = scworkbench_protocol_directory()
-    local_files = sorted(
-        path.relative_to(REPO / "protocol") for path in (REPO / "protocol").rglob("*.json")
-    )
-    forge_files = sorted(
-        path.relative_to(forge_protocol) for path in forge_protocol.rglob("*.json")
-    )
-    assert local_files == forge_files
-    for relative in local_files:
-        assert (REPO / "protocol" / relative).read_bytes() == (
-            forge_protocol / relative
-        ).read_bytes()
+    _assert_protocol_inventories_match(REPO / "protocol", forge_protocol)
     assert (
         hashlib.sha256((REPO / "protocol/pybench-op-v2.schema.json").read_bytes()).hexdigest()
         == "d5e80b58e4f18b37d0e906e7dac127fd17fbb88ea56dd83926406691303b655b"
     )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ("pybench-op-v2.schema.json", "operation-pack-canonical-json-v1.md"),
+    ids=("json", "markdown"),
+)
+def test_complete_protocol_inventory_rejects_byte_mismatch(tmp_path: Path, relative: str):
+    external = tmp_path / "protocol"
+    shutil.copytree(REPO / "protocol", external)
+    with (external / relative).open("ab") as stream:
+        stream.write(b"\nexternal tamper\n")
+    with pytest.raises(AssertionError):
+        _assert_protocol_inventories_match(REPO / "protocol", external)
 
 
 def test_invalid_v1_missing_and_unknown_capability_fields_are_rejected(tmp_path: Path):
