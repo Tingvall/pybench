@@ -64,11 +64,43 @@ def golden_bundle_directory() -> Path:
     return path
 
 
-def scworkbench_protocol_directory() -> Path:
-    return configured_directory(
-        SCWORKBENCH_PROTOCOL_ENV,
-        purpose="scworkbench protocol byte-identity contract",
-    )
+def scworkbench_protocol_directory(local_protocol: Path) -> Path:
+    configured = os.environ.get(SCWORKBENCH_PROTOCOL_ENV)
+    purpose = "scworkbench protocol byte-identity contract"
+    if not configured:
+        pytest.skip(
+            f"{purpose} skipped: set {SCWORKBENCH_PROTOCOL_ENV} to its external fixture directory"
+        )
+    candidate = Path(configured).expanduser()
+    if not candidate.is_dir():
+        pytest.fail(
+            f"{purpose}: {SCWORKBENCH_PROTOCOL_ENV} does not name an existing directory: "
+            f"{configured}"
+        )
+    resolved = candidate.resolve(strict=True)
+    if Path(os.path.abspath(candidate)) != resolved:
+        pytest.fail(
+            f"{purpose}: {SCWORKBENCH_PROTOCOL_ENV} must not contain a symlink alias: {configured}"
+        )
+    local = local_protocol.resolve(strict=True)
+    if resolved == local:
+        pytest.fail(
+            f"{purpose}: {SCWORKBENCH_PROTOCOL_ENV} resolves to PyBench's local protocol tree"
+        )
+
+    source = scworkbench_source_directory()
+    expected = source / "inst" / "protocol"
+    expected_resolved = expected.resolve(strict=True) if expected.exists() else None
+    if expected_resolved is not None and Path(os.path.abspath(expected)) != expected_resolved:
+        pytest.fail(
+            f"{purpose}: {SCWORKBENCH_PROTOCOL_ENV} source-bound inst/protocol must not be a symlink"
+        )
+    if not expected.is_dir() or resolved != expected_resolved:
+        pytest.fail(
+            f"{purpose}: {SCWORKBENCH_PROTOCOL_ENV} must resolve to "
+            f"{SCWORKBENCH_SOURCE_ENV}/inst/protocol"
+        )
+    return resolved
 
 
 def scworkbench_source_directory() -> Path:

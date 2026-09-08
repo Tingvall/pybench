@@ -162,7 +162,8 @@ Three optional cross-repository tests use explicit external fixture contracts:
   `PYBENCH_GOLDEN_BUNDLE_SHA256` must contain its lowercase
   `pybench-external-directory-sha256-v1` identity.
 - `PYBENCH_SCWORKBENCH_PROTOCOL_DIR` names the pinned scworkbench
-  `inst/protocol` directory used for byte-identity checks.
+  `inst/protocol` directory used for byte-identity checks. It must resolve to
+  the exact `inst/protocol` child of `PYBENCH_SCWORKBENCH_SOURCE_DIR`.
 - `PYBENCH_SCWORKBENCH_SOURCE_DIR` names the pinned scworkbench source checkout
   used by the Python path-contract tripwire. It must contain
   `R/python_protocol.R`, `R/path_containment.R`, and `R/op_python_bridge.R`.
@@ -184,7 +185,8 @@ skipped. A configured missing path, malformed or mismatched golden identity, or
 protocol inventory/byte mismatch is a test failure. A configured scworkbench
 source checkout that lacks any required R source file also fails explicitly.
 Tests never search a developer filesystem, infer a sibling checkout, or compare
-PyBench protocol files with themselves.
+PyBench protocol files with themselves. Direct, aliased, copied-but-unbound, or
+internally symlinked protocol trees are rejected before byte comparison.
 
 Release artifacts must be built from an immutable Git archive extracted away
 from any checkout or linked-worktree metadata:

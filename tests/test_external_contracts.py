@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from external_contracts import (
     configured_directory,
     directory_identity,
     golden_bundle_directory,
+    scworkbench_protocol_directory,
     scworkbench_source_directory,
 )
 
@@ -48,6 +50,13 @@ def _write_scworkbench_source_contract(root: Path) -> None:
         (source_dir / filename).write_text("# fixture\n")
 
 
+def _write_scworkbench_protocol_contract(root: Path) -> Path:
+    protocol = root / "inst" / "protocol"
+    protocol.mkdir(parents=True)
+    (protocol / "schema.json").write_text("{}\n")
+    return protocol
+
+
 def test_scworkbench_source_absent_skips_without_nearby_layout_fallback(
     tmp_path: Path, monkeypatch
 ):
@@ -78,6 +87,54 @@ def test_scworkbench_source_valid_explicit_configuration(tmp_path: Path, monkeyp
     _write_scworkbench_source_contract(source)
     monkeypatch.setenv(SCWORKBENCH_SOURCE_ENV, str(source))
     assert scworkbench_source_directory() == source.resolve()
+
+
+def test_scworkbench_protocol_rejects_direct_local_tree(tmp_path: Path, monkeypatch):
+    local = Path(__file__).resolve().parents[1] / "protocol"
+    source = tmp_path / "scworkbench"
+    _write_scworkbench_source_contract(source)
+    _write_scworkbench_protocol_contract(source)
+    monkeypatch.setenv(SCWORKBENCH_SOURCE_ENV, str(source))
+    monkeypatch.setenv(SCWORKBENCH_PROTOCOL_ENV, str(local))
+    with pytest.raises(pytest.fail.Exception, match=SCWORKBENCH_PROTOCOL_ENV):
+        scworkbench_protocol_directory(local)
+
+
+def test_scworkbench_protocol_rejects_symlink_alias_to_local_tree(tmp_path: Path, monkeypatch):
+    local = Path(__file__).resolve().parents[1] / "protocol"
+    alias = tmp_path / "protocol-alias"
+    alias.symlink_to(local, target_is_directory=True)
+    source = tmp_path / "scworkbench"
+    _write_scworkbench_source_contract(source)
+    _write_scworkbench_protocol_contract(source)
+    monkeypatch.setenv(SCWORKBENCH_SOURCE_ENV, str(source))
+    monkeypatch.setenv(SCWORKBENCH_PROTOCOL_ENV, str(alias))
+    with pytest.raises(pytest.fail.Exception, match=SCWORKBENCH_PROTOCOL_ENV):
+        scworkbench_protocol_directory(local)
+
+
+def test_scworkbench_protocol_rejects_arbitrary_unbound_copy(tmp_path: Path, monkeypatch):
+    local = Path(__file__).resolve().parents[1] / "protocol"
+    copied = tmp_path / "copied-protocol"
+    shutil.copytree(local, copied)
+    source = tmp_path / "scworkbench"
+    _write_scworkbench_source_contract(source)
+    _write_scworkbench_protocol_contract(source)
+    monkeypatch.setenv(SCWORKBENCH_SOURCE_ENV, str(source))
+    monkeypatch.setenv(SCWORKBENCH_PROTOCOL_ENV, str(copied))
+    with pytest.raises(pytest.fail.Exception, match=SCWORKBENCH_PROTOCOL_ENV):
+        scworkbench_protocol_directory(local)
+
+
+def test_scworkbench_protocol_accepts_source_bound_external_tree(tmp_path: Path, monkeypatch):
+    local = tmp_path / "pybench-protocol"
+    local.mkdir()
+    source = tmp_path / "scworkbench"
+    _write_scworkbench_source_contract(source)
+    protocol = _write_scworkbench_protocol_contract(source)
+    monkeypatch.setenv(SCWORKBENCH_SOURCE_ENV, str(source))
+    monkeypatch.setenv(SCWORKBENCH_PROTOCOL_ENV, str(protocol))
+    assert scworkbench_protocol_directory(local) == protocol.resolve()
 
 
 def test_golden_bundle_requires_matching_immutable_identity(tmp_path: Path, monkeypatch):

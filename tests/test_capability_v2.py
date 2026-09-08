@@ -16,7 +16,7 @@ from capability_helpers import (
     sqlite_allowance,
     v2_request,
 )
-from external_contracts import scworkbench_protocol_directory
+from external_contracts import SCWORKBENCH_PROTOCOL_ENV, scworkbench_protocol_directory
 from pybench.artifacts_payload import (
     publish_artifact_model_payload,
     write_artifact_cell_vector_payload,
@@ -175,11 +175,28 @@ def _inventory(root: Path) -> dict[str, str]:
 
 
 def _assert_protocol_inventories_match(local: Path, external: Path) -> None:
-    assert _inventory(local) == _inventory(external)
+    assert _protocol_inventory(local) == _protocol_inventory(external)
+
+
+def _protocol_inventory(root: Path) -> dict[str, str]:
+    if root.is_symlink():
+        pytest.fail(f"{SCWORKBENCH_PROTOCOL_ENV}: protocol inventory root must not be a symlink")
+    result = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            relative = path.relative_to(root).as_posix()
+            pytest.fail(
+                f"{SCWORKBENCH_PROTOCOL_ENV}: protocol inventory contains symlink: {relative}"
+            )
+        if path.is_file():
+            result[path.relative_to(root).as_posix()] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+    return result
 
 
 def test_schema_and_all_fixtures_are_byte_identical_to_forge():
-    forge_protocol = scworkbench_protocol_directory()
+    forge_protocol = scworkbench_protocol_directory(REPO / "protocol")
     _assert_protocol_inventories_match(REPO / "protocol", forge_protocol)
     assert (
         hashlib.sha256((REPO / "protocol/pybench-op-v2.schema.json").read_bytes()).hexdigest()
@@ -199,6 +216,22 @@ def test_complete_protocol_inventory_rejects_byte_mismatch(tmp_path: Path, relat
         stream.write(b"\nexternal tamper\n")
     with pytest.raises(AssertionError):
         _assert_protocol_inventories_match(REPO / "protocol", external)
+
+
+@pytest.mark.parametrize("side", ("local", "external"))
+@pytest.mark.parametrize("kind", ("file", "directory"))
+def test_complete_protocol_inventory_rejects_internal_symlink(tmp_path: Path, side: str, kind: str):
+    local = tmp_path / "local"
+    external = tmp_path / "external"
+    shutil.copytree(REPO / "protocol", local)
+    shutil.copytree(REPO / "protocol", external)
+    root = local if side == "local" else external
+    if kind == "file":
+        (root / "schema-alias.json").symlink_to(root / "pybench-op-v2.schema.json")
+    else:
+        (root / "fixtures-alias").symlink_to(root / "fixtures", target_is_directory=True)
+    with pytest.raises(pytest.fail.Exception, match=SCWORKBENCH_PROTOCOL_ENV):
+        _assert_protocol_inventories_match(local, external)
 
 
 def test_invalid_v1_missing_and_unknown_capability_fields_are_rejected(tmp_path: Path):
