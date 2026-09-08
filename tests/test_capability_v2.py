@@ -15,6 +15,7 @@ from capability_helpers import (
     sqlite_allowance,
     v2_request,
 )
+from external_contracts import scworkbench_protocol_directory
 from pybench.artifacts_payload import (
     publish_artifact_model_payload,
     write_artifact_cell_vector_payload,
@@ -50,7 +51,6 @@ from pybench.protocol import (
 from pybench.spaces_write import add_space
 
 REPO = Path(__file__).resolve().parents[1]
-FORGE_PROTOCOL = Path("/home/dirk/Projects/lymphocyte_trajectory/scworkbench/inst/protocol")
 
 
 def _init_bundle(root: Path) -> Path:
@@ -174,17 +174,17 @@ def _inventory(root: Path) -> dict[str, str]:
 
 
 def test_schema_and_all_fixtures_are_byte_identical_to_forge():
-    assert FORGE_PROTOCOL.is_dir(), "Forge authoritative protocol directory is required"
+    forge_protocol = scworkbench_protocol_directory()
     local_files = sorted(
         path.relative_to(REPO / "protocol") for path in (REPO / "protocol").rglob("*.json")
     )
     forge_files = sorted(
-        path.relative_to(FORGE_PROTOCOL) for path in FORGE_PROTOCOL.rglob("*.json")
+        path.relative_to(forge_protocol) for path in forge_protocol.rglob("*.json")
     )
     assert local_files == forge_files
     for relative in local_files:
         assert (REPO / "protocol" / relative).read_bytes() == (
-            FORGE_PROTOCOL / relative
+            forge_protocol / relative
         ).read_bytes()
     assert (
         hashlib.sha256((REPO / "protocol/pybench-op-v2.schema.json").read_bytes()).hexdigest()

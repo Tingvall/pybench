@@ -54,6 +54,9 @@ packages = ["src/pybench"]
 "CITATION.cff" = "pybench/CITATION.cff"
 "protocol" = "pybench/protocol_assets"
 
+[tool.hatch.build.targets.sdist]
+exclude = ["/.git", "/.git/**"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

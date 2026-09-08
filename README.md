@@ -136,7 +136,7 @@ The canonical core developer/test profile is Python 3.11 with the `dev` and
 ingest and staged sparse-matrix helpers.
 
 ```bash
-cd /home/dirk/Projects/pybench
+cd "$(git rev-parse --show-toplevel)"
 python3.11 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e '.[dev,ingest]'
@@ -147,7 +147,7 @@ python3.11 -m venv .venv
 The optional model profiles build on the core profile:
 
 ```bash
-cd /home/dirk/Projects/pybench
+cd "$(git rev-parse --show-toplevel)"
 .venv/bin/python -m pip install -e '.[dev,ingest,scvi]'      # scVI and PeakVI
 .venv/bin/python -m pip install -e '.[dev,ingest,palantir]'  # Palantir
 ```
@@ -155,6 +155,53 @@ cd /home/dirk/Projects/pybench
 `ruff check src tests` enforces syntax/import correctness. The project
 intentionally does not enforce `E501`: long SQL statements and compact SQLite
 fixture DDL are schema contracts where wrapping does not improve reviewability.
+
+Two optional cross-repository tests use explicit external fixture contracts:
+
+- `PYBENCH_GOLDEN_BUNDLE` names the generated scworkbench golden bundle.
+  `PYBENCH_GOLDEN_BUNDLE_SHA256` must contain its lowercase
+  `pybench-external-directory-sha256-v1` identity.
+- `PYBENCH_SCWORKBENCH_PROTOCOL_DIR` names the pinned scworkbench
+  `inst/protocol` directory used for byte-identity checks.
+
+Compute and supply the golden identity, then run the complete core suite:
+
+```bash
+export PYBENCH_GOLDEN_BUNDLE="${GOLDEN_BUNDLE_DIR}"
+golden_identity="$(PYTHONPATH=tests .venv/bin/python -m external_contracts \
+  "$PYBENCH_GOLDEN_BUNDLE")"
+export PYBENCH_GOLDEN_BUNDLE_SHA256="${golden_identity#*:}"
+export PYBENCH_SCWORKBENCH_PROTOCOL_DIR="${SCWORKBENCH_PROTOCOL_DIR}"
+.venv/bin/python -m pytest -q
+```
+
+If a path variable is absent, only its external contract test is explicitly
+skipped. A configured missing path, malformed or mismatched golden identity, or
+protocol inventory/byte mismatch is a test failure. Tests never search a
+developer filesystem or compare PyBench protocol files with themselves.
+
+Release artifacts must be built from an immutable Git archive extracted away
+from any checkout or linked-worktree metadata:
+
+```bash
+commit="$(git rev-parse HEAD)"
+release_root="$(mktemp -d)"
+source_archive="$release_root/pybench-$commit.tar"
+git archive --format=tar --prefix="pybench-$commit/" "$commit" > "$source_archive"
+sha256sum "$source_archive"
+tar -tf "$source_archive"
+tar -xf "$source_archive" -C "$release_root"
+source_root="$release_root/pybench-$commit"
+test ! -e "$source_root/.git"
+(cd "$source_root" && python3.11 -m build --outdir "$release_root/dist")
+python3.11 -m zipfile -l "$release_root"/dist/*.whl
+tar -tzf "$release_root"/dist/*.tar.gz
+```
+
+Qualification must retain the archive listings and recursively scan the Git
+archive, extracted source, wheel, and sdist for `.git` members, personal
+absolute paths, credentials, private keys, and undeclared payloads before an
+artifact is accepted.
 
 ## Python operation packs
 

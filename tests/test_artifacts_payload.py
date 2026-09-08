@@ -5,21 +5,16 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 from capability_helpers import raw_write_bundle, sqlite_allowance
+from external_contracts import golden_bundle_directory
 from pybench.artifacts_payload import write_artifact_cell_vector_payload
 from pybench.bundle import close_bundle, open_bundle
 from pybench.getters import art_get_row, art_list
 
-GOLDEN_BUNDLE = Path("/home/dirk/Projects/lymphocyte_trajectory/fixtures/golden_bundle/scwb_golden")
-
 
 def _copy_golden_bundle(tmp_path: Path) -> Path:
-    if not GOLDEN_BUNDLE.exists():
-        pytest.skip(f"golden bundle fixture not found: {GOLDEN_BUNDLE}")
     dst = tmp_path / "scwb_golden"
-    shutil.copytree(GOLDEN_BUNDLE, dst)
+    shutil.copytree(golden_bundle_directory(), dst)
     return dst
 
 
