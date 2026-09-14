@@ -1,0 +1,1177 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import importlib
+import importlib.metadata as metadata
+import importlib.util
+import json
+import os
+import platform
+import shutil
+import sys
+import sysconfig
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from jsonschema import Draft202012Validator
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
+
+from .operation_packs import OperationPackError, canonical_json, canonical_sha256, protocol_asset
+from .operation_packs_v2 import (
+    PROCESS_PROTOCOL_V3,
+    PackDiscoveryV2,
+    _identity,
+    active_operation_packs_v2,
+    distribution_identity_v2,
+)
+
+REQUEST_SCHEMA = "scworkbench.operation_pack.transition_request.v2"
+RECEIPT_SCHEMA = "scworkbench.operation_pack.transition_receipt.v2"
+_REQUEST_ASSET = "operation-pack-transition-request-v2.schema.json"
+_RECEIPT_ASSET = "operation-pack-transition-receipt-v2.schema.json"
+_WRITER_METHODS = {
+    "write_matrix",
+    "write_space",
+    "write_space_2d",
+    "write_model_ref",
+    "write_terminal_primitive",
+    "write_path_2d_family",
+    "write_space_path_family",
+    "request_cell_set_admission",
+}
+_CELL_KINDS = {
+    "matrix",
+    "space",
+    "space_2d",
+    "cell_vector",
+    "cell_vector_family",
+    "relation_family",
+}
+_CONSUMED_CAPABILITIES: set[str] = set()
+
+
+def _fail(code: str, message: str, phase: str, **details: Any) -> None:
+    raise OperationPackError(code, message, phase=phase, **details)
+
+
+def _validate_schema(value: Any, asset: str, code: str, phase: str) -> None:
+    schema = json.loads(protocol_asset(asset).read_text(encoding="utf-8"))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(value),
+        key=lambda error: (list(error.absolute_path), error.message),
+    )
+    if errors:
+        first = errors[0]
+        _fail(
+            code,
+            f"Value failed Draft 2020-12 validation: {first.message}",
+            phase,
+            instance_path=list(first.absolute_path),
+        )
+
+
+def _assert_self_identity(value: Mapping[str, Any], field: str, code: str, phase: str) -> None:
+    claimed = value.get(field)
+    payload = {key: item for key, item in value.items() if key != field}
+    if not isinstance(claimed, Mapping) or claimed.get("sha256") != canonical_sha256(payload):
+        _fail(code, f"Self identity mismatch at {field}", phase, identity_field=field)
+
+
+def _no_absolute_paths(value: Any) -> None:
+    if isinstance(value, Mapping):
+        for child in value.values():
+            _no_absolute_paths(child)
+    elif isinstance(value, list):
+        for child in value:
+            _no_absolute_paths(child)
+    elif isinstance(value, str):
+        path = Path(value)
+        if (
+            value.startswith("file:")
+            or path.is_absolute()
+            or (len(value) > 2 and value[1:3] == ":\\")
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "V3 request and receipt values may not expose absolute host paths",
+                "staging",
+            )
+
+
+def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) -> dict[str, Any]:
+    value = copy.deepcopy(dict(request))
+    if value.get("process_protocol_version") != PROCESS_PROTOCOL_V3:
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "V3 execution rejects non-v3 process transport",
+            "staging",
+        )
+    _validate_schema(value, _REQUEST_ASSET, "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    _no_absolute_paths(value)
+    _assert_self_identity(
+        value["transition"], "transition_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging"
+    )
+    for item in value["inputs"]:
+        _assert_self_identity(
+            item["descriptor"],
+            "descriptor_identity",
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "resolution",
+        )
+    for item in value["outputs"]:
+        _assert_self_identity(
+            item["descriptor"], "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging"
+        )
+    _assert_self_identity(
+        value["execution_capability"],
+        "capability_identity",
+        "PYBENCH_CAPABILITY_MISMATCH",
+        "staging",
+    )
+    _assert_self_identity(value, "request_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    identity = discovery.identity
+    name = value["operation_authentication"]["name"]
+    expected_authentication = {
+        "name": name,
+        "pack_identity": identity["pack_identity"],
+        "manifest_identity": identity["manifest_identity"],
+        "manifest_source_identity": discovery.manifest_source_identity,
+        "distribution_identity": discovery.distribution_identity,
+        "operation_definition_identity": identity["operation_definition_identities"].get(name),
+        "entry_point": {
+            "value": discovery.manifest["entry_point"],
+            "identity": discovery.entry_point_identity,
+        },
+    }
+    if canonical_json(value["operation_authentication"]) != canonical_json(expected_authentication):
+        _fail(
+            "PYBENCH_CAPABILITY_MISMATCH",
+            "Request operation authentication differs from installed pack",
+            "staging",
+        )
+    operation = next(
+        (item for item in discovery.manifest["operations"] if item["qualified_name"] == name), None
+    )
+    if operation is None:
+        _fail("OPERATION_PACK_REQUIRED", f"Operation {name!r} is absent", "resolution")
+    input_names = [item["name"] for item in value["inputs"]]
+    required = [item["name"] for item in operation["inputs"] if item["required"]]
+    allowed = [item["name"] for item in operation["inputs"]]
+    if (
+        not set(required) <= set(input_names)
+        or not set(input_names) <= set(allowed)
+        or len(input_names) != len(set(input_names))
+    ):
+        _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Request input closure differs", "resolution")
+    declarations = {item["name"]: item for item in operation["inputs"]}
+    for item in value["inputs"]:
+        declaration = declarations[item["name"]]
+        descriptor = item["descriptor"]
+        if (
+            descriptor["kind"] != declaration["kind"]
+            or descriptor["alignment"] != declaration["alignment"]
+        ):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                f"Input {item['name']!r} type or alignment differs from the manifest",
+                "resolution",
+            )
+    output_names = [item["name"] for item in value["outputs"]]
+    expected_outputs = [item["name"] for item in operation["outputs"]]
+    if output_names != expected_outputs or len(output_names) != len(set(output_names)):
+        _fail("PYBENCH_CAPABILITY_MISMATCH", "Request output closure differs", "staging")
+    cap = value["execution_capability"]
+    readers = [
+        {
+            "input_name": item["name"],
+            "reader": item["descriptor"]["reader"],
+            "descriptor_identity": item["descriptor"]["descriptor_identity"],
+        }
+        for item in value["inputs"]
+    ]
+    writers = [
+        {
+            "output_name": item["name"],
+            "writer": item["descriptor"]["writer"],
+            "grant_identity": item["descriptor"]["grant_identity"],
+        }
+        for item in value["outputs"]
+    ]
+    bindings = (
+        cap["session_id"] == value["transition"]["session_id"],
+        cap["run_id"] == value["transition"]["run_id"],
+        cap["checkpoint_generation"] == value["transition"]["checkpoint_generation"],
+        cap["transition_identity"] == value["transition"]["transition_identity"],
+        cap["source_state_identity"] == value["transition"]["source_state_identity"],
+        cap["pack_identity"] == identity["pack_identity"],
+        cap["distribution_identity"] == discovery.distribution_identity,
+        cap["manifest_source_identity"] == discovery.manifest_source_identity,
+        cap["operation_definition_identity"] == identity["operation_definition_identities"][name],
+        cap["entry_point_identity"] == discovery.entry_point_identity,
+        cap["reader_grants"] == readers,
+        cap["writer_grants"] == writers,
+        cap["selected_requirement_set_identity"]
+        == value["dependency_resolution"]["selected_requirement_set_identity"],
+        cap["preflight_report_identity"]
+        == value["dependency_resolution"]["preflight_report_identity"],
+    )
+    if not all(bindings) or cap["mode"] != "private_staging_write" or cap["single_use"] is not True:
+        _fail("PYBENCH_CAPABILITY_MISMATCH", "Capability bindings differ from request", "staging")
+    errors = sorted(
+        Draft202012Validator(operation["params_schema"]).iter_errors(value["params"]),
+        key=lambda error: (list(error.absolute_path), error.message),
+    )
+    if errors:
+        _fail("OPERATION_PACK_PARAM_SCHEMA_INVALID", errors[0].message, "resolution")
+    return value
+
+
+def validate_receipt_v3(receipt: Mapping[str, Any], request: Mapping[str, Any]) -> dict[str, Any]:
+    value = copy.deepcopy(dict(receipt))
+    if value.get("process_protocol_version") != PROCESS_PROTOCOL_V3:
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "V3 receipt rejects non-v3 process transport",
+            "receipt",
+        )
+    _validate_schema(value, _RECEIPT_ASSET, "PYBENCH_RECEIPT_MISMATCH", "receipt")
+    _no_absolute_paths(value)
+    _assert_self_identity(value, "receipt_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")
+    expected = (
+        value["transition_id"] == request["transition"]["transition_id"],
+        value["session_id"] == request["transition"]["session_id"],
+        value["run_id"] == request["transition"]["run_id"],
+        value["transition_identity"] == request["transition"]["transition_identity"],
+        value["request_identity"] == request["request_identity"],
+        value["capability_identity"] == request["execution_capability"]["capability_identity"],
+    )
+    if not all(expected):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Receipt binding differs from request", "receipt")
+    if value["status"] == "ok":
+        observed = value["outputs"] + value["registry_requests"]
+        grants = request["outputs"]
+        observed_keys = [
+            (
+                item["name"],
+                item["allocated_id"],
+                item["descriptor"]["writer"],
+                item["descriptor"]["grant_identity"]["sha256"],
+            )
+            for item in observed
+        ]
+        grant_keys = [
+            (
+                item["name"],
+                item["allocated_id"],
+                item["descriptor"]["writer"],
+                item["descriptor"]["grant_identity"]["sha256"],
+            )
+            for item in grants
+        ]
+        if sorted(observed_keys) != sorted(grant_keys) or len(observed_keys) != len(
+            set(observed_keys)
+        ):
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Receipt is not a bijection with grants", "receipt")
+        for item in observed:
+            _assert_self_identity(
+                item["descriptor"],
+                "observed_descriptor_identity",
+                "PYBENCH_RECEIPT_MISMATCH",
+                "receipt",
+            )
+        _assert_self_identity(
+            value["mutation_manifest"],
+            "mutation_identity",
+            "PYBENCH_RECEIPT_MISMATCH",
+            "receipt",
+        )
+    return value
+
+
+def _selected(selector: Mapping[str, Any] | None, params: Mapping[str, Any]) -> bool:
+    if selector is None:
+        return True
+    return canonical_json(params.get(selector["parameter"])) == canonical_json(selector["equals"])
+
+
+def _distribution_evidence(
+    name: str, specifier: str, approved: str | None = None
+) -> dict[str, Any]:
+    try:
+        distribution = metadata.distribution(name)
+    except metadata.PackageNotFoundError:
+        _fail("OPERATION_PACK_DEPENDENCY_MISSING", f"Distribution {name!r} is absent", "preflight")
+    try:
+        compatible = Version(distribution.version) in SpecifierSet(specifier)
+    except (InvalidVersion, InvalidSpecifier):
+        compatible = False
+    if not compatible:
+        _fail(
+            "OPERATION_PACK_DEPENDENCY_INCOMPATIBLE",
+            f"Distribution {name!r} has incompatible version",
+            "preflight",
+        )
+    identity = distribution_identity_v2(distribution)
+    if approved and identity["sha256"] != approved:
+        _fail(
+            "OPERATION_PACK_DEPENDENCY_INCOMPATIBLE",
+            f"Distribution {name!r} content identity differs",
+            "preflight",
+        )
+    return {
+        "name": distribution.metadata.get("Name", name),
+        "normalized_name": canonicalize_name(name),
+        "version": distribution.version,
+        "artifact_identity": identity,
+    }
+
+
+def _dynamic_value(payload: Mapping[str, Any], field: str) -> str:
+    value: Any = payload.get("meta", {})
+    for part in field.split("."):
+        value = value.get(part) if isinstance(value, Mapping) else None
+    return value if isinstance(value, str) else ""
+
+
+def preflight_v3(
+    operation: Mapping[str, Any],
+    input_payloads: Mapping[str, Mapping[str, Any]],
+    params: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> dict[str, Any]:
+    declared = operation.get("dependencies", [])
+    selected: list[Mapping[str, Any]] = []
+    dispositions: dict[str, Any] = {}
+    dynamic: list[dict[str, Any]] = []
+    for dependency in declared:
+        requirement_id = dependency["requirement_id"]
+        selected_now = dependency["disposition"] == "required" or _selected(
+            dependency.get("selected_when"), params
+        )
+        if not selected_now:
+            dispositions[requirement_id] = {
+                "requirement_id": requirement_id,
+                "status": "not_selected",
+            }
+            continue
+        selected.append(dependency)
+        kind = dependency["kind"]
+        if kind == "python_distribution":
+            evidence = _distribution_evidence(
+                dependency["name"],
+                dependency["version"]["specifier"],
+                dependency.get("approved_content_sha256"),
+            )
+            if importlib.util.find_spec(dependency["import_probe"]) is None:
+                _fail(
+                    "OPERATION_PACK_DEPENDENCY_MISSING",
+                    f"Import probe {dependency['import_probe']!r} is unavailable",
+                    "preflight",
+                )
+            dispositions[requirement_id] = {
+                "requirement_id": requirement_id,
+                "status": "available",
+                **evidence,
+            }
+        elif kind == "dynamic_input_metadata_package":
+            payload = input_payloads.get(dependency["input_name"], {})
+            provider = _dynamic_value(payload, dependency["metadata_field"])
+            if (
+                not provider
+                or dependency["ecosystem"] != "Python"
+                or not all(
+                    part and part.replace("-", "").replace("_", "").isalnum()
+                    for part in provider.split(".")
+                )
+            ):
+                _fail(
+                    "OPERATION_PACK_DYNAMIC_PROVIDER_INVALID",
+                    "Dynamic provider metadata is absent or malformed",
+                    "preflight",
+                )
+            evidence = _distribution_evidence(provider, ">=0")
+            if importlib.util.find_spec(provider.replace("-", "_")) is None:
+                _fail(
+                    "OPERATION_PACK_DEPENDENCY_MISSING",
+                    f"Dynamic provider {provider!r} import is unavailable",
+                    "preflight",
+                )
+            input_record = next(
+                item for item in request["inputs"] if item["name"] == dependency["input_name"]
+            )
+            resolution = {
+                "requirement_id": requirement_id,
+                "selector_identity": _identity(
+                    "scworkbench.operation_pack.dynamic_dependency_selector.v2", dependency
+                ),
+                "input_name": dependency["input_name"],
+                "input_identity": input_record["descriptor"]["content_identity"],
+                "metadata_field": dependency["metadata_field"],
+                "ecosystem": "Python",
+                "provider_name": provider,
+                "package_name_scheme": "python_distribution_name_v1",
+                "probe": "python_import_spec_v1",
+                "disposition": "required",
+                "resolved_package": {
+                    "name": evidence["name"],
+                    "version": evidence["version"],
+                    "artifact_identity": evidence["artifact_identity"],
+                    "probe_evidence_identity": _identity(
+                        "scworkbench.python_import_spec.v1", {"import_name": provider}
+                    ),
+                },
+                "status": "available",
+            }
+            resolution["resolution_identity"] = _identity(
+                "scworkbench.operation_pack.dynamic_dependency_resolution.v2",
+                resolution,
+                "resolution excluding resolution_identity",
+            )
+            dynamic.append(resolution)
+            dispositions[requirement_id] = resolution
+        elif kind == "device_runtime":
+            available = dependency["name"] == "cpu"
+            if not available:
+                _fail(
+                    "OPERATION_PACK_PREFLIGHT_FAILED",
+                    f"Device {dependency['name']!r} is unavailable",
+                    "preflight",
+                )
+            dispositions[requirement_id] = {
+                "requirement_id": requirement_id,
+                "status": "available",
+                "name": dependency["name"],
+            }
+        elif kind == "system_library":
+            probe = dependency["probe"]
+            available = (
+                bool(shutil.which(probe["target"]))
+                if probe["kind"]
+                in {
+                    "executable_version",
+                    "pkg_config_version",
+                }
+                else False
+            )
+            if not available:
+                _fail(
+                    "OPERATION_PACK_PREFLIGHT_FAILED",
+                    f"System dependency {dependency['name']!r} is unavailable",
+                    "preflight",
+                )
+            dispositions[requirement_id] = {
+                "requirement_id": requirement_id,
+                "status": "available",
+                "probe": probe,
+            }
+        else:
+            _fail(
+                "OPERATION_PACK_PREFLIGHT_FAILED",
+                f"Dependency kind {kind!r} is unavailable to Python",
+                "preflight",
+            )
+    declared_identity = _identity("scworkbench.operation_pack.dependencies.v2", declared)
+    selected_identity = _identity("scworkbench.operation_pack.dependencies.v2", selected)
+    report_value = {
+        "declared": declared,
+        "selected": selected,
+        "dispositions": dispositions,
+        "dynamic": dynamic,
+        "network_policy": "deny",
+    }
+    report_identity = _identity("scworkbench.operation_pack.preflight.v2", report_value)
+    declared_request = request["dependency_resolution"]
+    if (
+        declared_request["declared_requirement_set_identity"] != declared_identity
+        or declared_request["selected_requirement_set_identity"] != selected_identity
+        or declared_request["dynamic_resolutions"] != dynamic
+        or declared_request["preflight_report_identity"] != report_identity
+        or declared_request["network_policy"] != "deny"
+    ):
+        _fail(
+            "OPERATION_PACK_DYNAMIC_PROVIDER_CHANGED"
+            if dynamic
+            else "OPERATION_PACK_PREFLIGHT_FAILED",
+            "Core-resolved dependency evidence differs from Python preflight",
+            "dispatch" if dynamic else "preflight",
+        )
+    return {
+        "declared_identity": declared_identity,
+        "selected_identity": selected_identity,
+        "preflight_identity": report_identity,
+        "dynamic": dynamic,
+        "dispositions": dispositions,
+    }
+
+
+def _safe_root(root: Path) -> Path:
+    root = root.resolve(strict=True)
+    if root.is_symlink() or not root.is_dir():
+        _fail("PYBENCH_CAPABILITY_MISMATCH", "Private stage root is invalid", "staging")
+    return root
+
+
+def _safe_relative(root: Path, relative: str, *, must_exist: bool = False) -> Path:
+    candidate = Path(relative)
+    if candidate.is_absolute() or ".." in candidate.parts or not candidate.parts:
+        _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "Path is outside private stage", "execution")
+    current = root
+    for part in candidate.parts:
+        current = current / part
+        if current.is_symlink():
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "Symlink in private staged path", "execution")
+    if must_exist and not current.is_file():
+        _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Projected input payload is absent", "resolution")
+    return current
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    result: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "Private stage contains a symlink", "audit")
+        if path.is_file():
+            result[path.relative_to(root).as_posix()] = path.read_bytes()
+    return result
+
+
+def _tree(root: Path) -> set[str]:
+    result: set[str] = set()
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "Private stage contains a symlink", "audit")
+        result.add(path.relative_to(root).as_posix())
+    return result
+
+
+def _restore(root: Path, before: Mapping[str, bytes]) -> None:
+    for path in sorted(root.iterdir()):
+        shutil.rmtree(path) if path.is_dir() and not path.is_symlink() else path.unlink(
+            missing_ok=True
+        )
+    for relative, payload in before.items():
+        path = _safe_relative(root, relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+
+
+def _dimensions(value: Mapping[str, Any]) -> list[int]:
+    dimensions = value.get("dimensions")
+    if (
+        isinstance(dimensions, list)
+        and dimensions
+        and all(
+            isinstance(item, (int, float))
+            and not isinstance(item, bool)
+            and float(item).is_integer()
+            and item >= 1
+            for item in dimensions
+        )
+    ):
+        return [int(item) for item in dimensions]
+    _fail("PYBENCH_OUTPUT_INVALID", "Primitive dimensions are absent or invalid", "audit")
+
+
+def _ordered(value: Mapping[str, Any], key: str) -> list[str]:
+    result = value.get(key, [])
+    if not isinstance(result, list) or any(
+        not isinstance(item, str) or not item for item in result
+    ):
+        _fail("PYBENCH_OUTPUT_INVALID", f"Primitive {key} is invalid", "audit")
+    return result
+
+
+@dataclass
+class _Write:
+    value: dict[str, Any]
+    path: Path
+    semantic_metadata: dict[str, Any]
+    writer: str
+
+
+class V3Readers(Mapping[str, Callable[[], dict[str, Any]]]):
+    def __init__(self, values: Mapping[str, dict[str, Any]]):
+        self._values = dict(values)
+
+    def __getitem__(self, key: str) -> Callable[[], dict[str, Any]]:
+        if key not in self._values:
+            raise KeyError(key)
+        return lambda: copy.deepcopy(self._values[key])
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+
+class V3Writers:
+    def __init__(self, request: Mapping[str, Any], stage_root: Path):
+        self._grants = {item["name"]: item for item in request["outputs"]}
+        self._stage_root = stage_root
+        self._writes: dict[str, _Write] = {}
+        self._consumed = False
+
+    @property
+    def writes(self) -> Mapping[str, _Write]:
+        return dict(self._writes)
+
+    def consume(self) -> None:
+        self._consumed = True
+
+    def _write(
+        self,
+        writer: str,
+        name: str,
+        value: Mapping[str, Any],
+        semantic_metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if self._consumed:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "Capability is already consumed", "execution")
+        grant = self._grants.get(name)
+        if (
+            grant is None
+            or grant["descriptor"]["writer"] != writer
+            or writer not in _WRITER_METHODS
+        ):
+            _fail("PYBENCH_CAPABILITY_MISMATCH", f"Writer is not granted for {name!r}", "execution")
+        if name in self._writes:
+            _fail("PYBENCH_RECEIPT_MISMATCH", f"Output {name!r} was written twice", "receipt")
+        payload = copy.deepcopy(dict(value))
+        expected_kind = grant["descriptor"]["kind"]
+        if payload.get("kind") != expected_kind:
+            _fail("PYBENCH_OUTPUT_INVALID", f"Output {name!r} has the wrong kind", "execution")
+        relative_root = grant["descriptor"].get("relative_root", f"registry_requests/{name}")
+        output_root = _safe_relative(self._stage_root, relative_root)
+        if output_root.exists():
+            _fail(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION", "Granted output root already exists", "execution"
+            )
+        output_root.mkdir(parents=True)
+        path = output_root / "payload.json"
+        path.write_text(canonical_json(payload), encoding="utf-8")
+        self._writes[name] = _Write(payload, path, dict(semantic_metadata or {}), writer)
+        return {
+            "name": name,
+            "allocated_id": grant["allocated_id"],
+            "grant_identity": grant["descriptor"]["grant_identity"],
+        }
+
+    def write_matrix(self, name, value, semantic_metadata=None):
+        return self._write("write_matrix", name, value, semantic_metadata)
+
+    def write_space(self, name, value, semantic_metadata=None):
+        return self._write("write_space", name, value, semantic_metadata)
+
+    def write_space_2d(self, name, value, semantic_metadata=None):
+        return self._write("write_space_2d", name, value, semantic_metadata)
+
+    def write_model_ref(self, name, value, semantic_metadata=None):
+        return self._write("write_model_ref", name, value, semantic_metadata)
+
+    def write_terminal_primitive(self, name, value, semantic_metadata=None):
+        return self._write("write_terminal_primitive", name, value, semantic_metadata)
+
+    def write_path_2d_family(self, name, value, semantic_metadata=None):
+        return self._write("write_path_2d_family", name, value, semantic_metadata)
+
+    def write_space_path_family(self, name, value, semantic_metadata=None):
+        return self._write("write_space_path_family", name, value, semantic_metadata)
+
+    def request_cell_set_admission(self, name, value, semantic_metadata=None):
+        return self._write("request_cell_set_admission", name, value, semantic_metadata)
+
+
+def _read_inputs(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, Any]]:
+    values: dict[str, dict[str, Any]] = {}
+    for item in request["inputs"]:
+        name, descriptor = item["name"], item["descriptor"]
+        path = _safe_relative(root, f"inputs/{name}/payload.json", must_exist=True)
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                f"Input {name!r} is unreadable: {exc}",
+                "resolution",
+            )
+        if not isinstance(value, dict) or value.get("kind") != descriptor["kind"]:
+            _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", f"Input {name!r} type differs", "resolution")
+        if (
+            _identity(descriptor["content_identity"]["scheme"], value)
+            != descriptor["content_identity"]
+        ):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH", f"Input {name!r} content differs", "resolution"
+            )
+        if _dimensions(value) != descriptor["dimensions"]:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH", f"Input {name!r} dimensions differ", "resolution"
+            )
+        if value.get("storage_profile") != descriptor["storage_profile"]:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                f"Input {name!r} storage profile differs",
+                "resolution",
+            )
+        for key, identity_key, scheme in (
+            ("cell_id", "cell_order_identity", "scworkbench.cell_order.v1"),
+            ("feature_id", "feature_order_identity", "scworkbench.feature_order.v1"),
+        ):
+            if (
+                identity_key in descriptor
+                and _identity(scheme, _ordered(value, key)) != descriptor[identity_key]
+            ):
+                _fail(
+                    "PYBENCH_INPUT_IDENTITY_MISMATCH", f"Input {name!r} {key} differs", "resolution"
+                )
+        if (
+            "semantic_metadata_identity" in descriptor
+            and _identity("scworkbench.operation_pack.semantic_metadata.v2", value.get("meta", {}))
+            != descriptor["semantic_metadata_identity"]
+        ):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                f"Input {name!r} semantic metadata differs",
+                "resolution",
+            )
+        if (
+            descriptor["kind"] == "path_2d_family"
+            and _identity(
+                "scworkbench.row_order.v1", [value.get("key", []), value.get("point", [])]
+            )
+            != descriptor["row_order_identity"]
+        ):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH", f"Input {name!r} row order differs", "resolution"
+            )
+        if descriptor["kind"] == "space_path_family":
+            row_identity = _identity(
+                "scworkbench.row_order.v1",
+                [value.get(key, []) for key in ("space_id", "path_id", "point", "dim")],
+            )
+            linked_identity = _identity(
+                "scworkbench.space.content.v1", sorted(set(value.get("space_id", [])))
+            )
+            if (
+                row_identity != descriptor["row_order_identity"]
+                or linked_identity != descriptor["linked_space_identity"]
+            ):
+                _fail(
+                    "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                    f"Input {name!r} row order or linked space differs",
+                    "resolution",
+                )
+        if descriptor["kind"] == "model_ref":
+            tree = value.get("payload_tree")
+            contained = isinstance(tree, dict) and not any(
+                Path(child).is_absolute() or ".." in Path(child).parts for child in tree
+            )
+            if (
+                not contained
+                or _identity("scworkbench.model_linkage.v1", value)
+                != descriptor["model_linkage_identity"]
+                or _identity("scworkbench.operation_pack.contained_payload.v2", value)
+                != descriptor["contained_payload_identity"]
+            ):
+                _fail(
+                    "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                    f"Input {name!r} model linkage or containment differs",
+                    "resolution",
+                )
+        values[name] = value
+    return values
+
+
+def _observed_descriptor(grant: Mapping[str, Any], write: _Write) -> dict[str, Any]:
+    expected = grant["descriptor"]
+    value = write.value
+    kind = expected["kind"]
+    dimensions = _dimensions(value)
+    if dimensions != expected["expected_dimensions"]:
+        _fail("PYBENCH_OUTPUT_INVALID", f"Output {grant['name']!r} dimensions differ", "audit")
+    observed: dict[str, Any] = {
+        "category": expected["category"],
+        "kind": kind,
+        "storage_profile": expected["storage_profile"],
+        "writer": expected["writer"],
+        "grant_identity": expected["grant_identity"],
+        "dimensions": dimensions,
+        "alignment": expected["expected_alignment"],
+        "ancestry_identity": expected["expected_ancestry_identity"],
+    }
+    if kind == "cell_set_admission":
+        cells = _ordered(value, "cells")
+        if len(cells) != len(set(cells)):
+            _fail("PYBENCH_OUTPUT_INVALID", "Cell-set membership is not unique", "audit")
+        observed.update(
+            cell_order_identity=_identity(
+                "scworkbench.cell_order.v1", cells, "ordered admitted cell identifiers"
+            ),
+            membership_identity=_identity(
+                "scworkbench.cell_set.membership.v1", cells, "ordered exact membership"
+            ),
+            semantic_validation={
+                "constraints_identity": _identity(
+                    "scworkbench.operation_pack.semantic_constraints.v2",
+                    expected["semantic_constraints"],
+                    "cell-set admission constraints",
+                ),
+                "status": "passed",
+            },
+        )
+        observed["ancestry_identity"] = _identity(
+            "scworkbench.provenance.ancestry.v1",
+            expected["expected_ancestry_identity"],
+            "registry request ancestry",
+        )
+        observed["observed_descriptor_identity"] = _identity(
+            "scworkbench.operation_pack.observed_registry_request.v2",
+            observed,
+            "descriptor excluding observed_descriptor_identity",
+        )
+        return observed
+    observed.update(
+        model_linkage=expected["expected_model_linkage"],
+        content_identity=_identity(f"scworkbench.{kind}.content.v1", value),
+        payload_manifest_identity=_identity(
+            "scworkbench.operation_pack.payload_manifest.v2",
+            {
+                "path": write.path.relative_to(write.path.parents[2]).as_posix(),
+                "size": write.path.stat().st_size,
+                "sha256": hashlib.sha256(write.path.read_bytes()).hexdigest(),
+            },
+        ),
+        semantic_metadata_identity=_identity(
+            "scworkbench.operation_pack.semantic_metadata.v2", write.semantic_metadata
+        ),
+        semantic_validation={
+            "constraints_identity": _identity(
+                "scworkbench.operation_pack.semantic_constraints.v2",
+                expected["semantic_constraints"],
+            ),
+            "status": "passed",
+        },
+    )
+    if kind in _CELL_KINDS:
+        observed["cell_order_identity"] = _identity(
+            "scworkbench.cell_order.v1", _ordered(value, "cell_id")
+        )
+        if observed["cell_order_identity"] != expected["expected_cell_order_identity"]:
+            _fail("PYBENCH_OUTPUT_INVALID", "Output cell order differs", "audit")
+    if kind in {"matrix", "feature_table"}:
+        observed["feature_order_identity"] = _identity(
+            "scworkbench.feature_order.v1", _ordered(value, "feature_id")
+        )
+        if observed["feature_order_identity"] != expected["expected_feature_order_identity"]:
+            _fail("PYBENCH_OUTPUT_INVALID", "Output feature order differs", "audit")
+    if kind == "path_2d_family":
+        observed["row_order_identity"] = _identity(
+            "scworkbench.row_order.v1", [value.get("key", []), value.get("point", [])]
+        )
+        if observed["row_order_identity"] != expected["expected_row_order_identity"]:
+            _fail("PYBENCH_OUTPUT_INVALID", "Output row order differs", "audit")
+    if kind == "space_path_family":
+        observed["row_order_identity"] = _identity(
+            "scworkbench.row_order.v1",
+            [value.get(key, []) for key in ("space_id", "path_id", "point", "dim")],
+        )
+        observed["linked_space_identity"] = expected["expected_linked_space_identity"]
+        if observed["row_order_identity"] != expected["expected_row_order_identity"]:
+            _fail("PYBENCH_OUTPUT_INVALID", "Output row order differs", "audit")
+        actual_link = _identity(
+            "scworkbench.space.content.v1", sorted(set(value.get("space_id", [])))
+        )
+        if actual_link != expected["expected_linked_space_identity"]:
+            _fail("PYBENCH_OUTPUT_INVALID", "Output linked space differs", "audit")
+    if kind == "model_ref":
+        payload_tree = value.get("payload_tree")
+        if not isinstance(payload_tree, dict) or any(
+            Path(key).is_absolute() or ".." in Path(key).parts for key in payload_tree
+        ):
+            _fail("PYBENCH_OUTPUT_INVALID", "Model payload is not contained", "audit")
+        observed["model_linkage_identity"] = _identity("scworkbench.model_linkage.v1", value)
+        observed["contained_payload"] = {
+            "contained": True,
+            "no_symlinks": True,
+            "payload_tree_identity": _identity(
+                "scworkbench.operation_pack.contained_payload.v2", value
+            ),
+        }
+    observed["observed_descriptor_identity"] = _identity(
+        "scworkbench.operation_pack.observed_output.v2",
+        observed,
+        "descriptor excluding observed_descriptor_identity",
+    )
+    return observed
+
+
+def _python_runtime_sidecar(
+    discovery: PackDiscoveryV2, request: Mapping[str, Any]
+) -> dict[str, Any]:
+    seed = request["params"].get("seed")
+    value = {
+        "schema": "pybench.operation_pack.python_runtime.v3",
+        "backend": "Python",
+        "distribution_identity": discovery.distribution_identity,
+        "interpreter": {
+            "implementation": platform.python_implementation(),
+            "version": platform.python_version(),
+            "abi": sysconfig.get_config_var("SOABI") or "unknown",
+            "platform": sysconfig.get_platform(),
+            "executable_sha256": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+        },
+        "seed": {
+            "status": "declared" if "seed" in request["params"] else "not_declared",
+            "value": seed,
+        },
+        "device": {"type": "cpu", "descriptor": platform.machine() or "CPU"},
+    }
+    value["runtime_identity"] = _identity(
+        "pybench.operation_pack.python_runtime.v3",
+        value,
+        "python runtime sidecar excluding runtime_identity",
+    )
+    return value
+
+
+def _shared_runtime(
+    discovery: PackDiscoveryV2,
+    operation: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+) -> dict[str, Any]:
+    value = {
+        "schema": "scworkbench.operation_pack.runtime.v2",
+        "backend": "Python",
+        "pack_identity": discovery.identity["pack_identity"],
+        "manifest_source_identity": discovery.manifest_source_identity,
+        "distribution_identity": discovery.distribution_identity,
+        "operation_definition_identity": discovery.identity["operation_definition_identities"][
+            operation["qualified_name"]
+        ],
+        "entry_point": {
+            "value": discovery.manifest["entry_point"],
+            "identity": discovery.entry_point_identity,
+        },
+        "declared_requirement_set_identity": preflight["declared_identity"],
+        "selected_requirement_set_identity": preflight["selected_identity"],
+        "dynamic_resolutions": preflight["dynamic"],
+        "preflight_report_identity": preflight["preflight_identity"],
+        "path_policy": "no_absolute_paths",
+    }
+    value["runtime_identity"] = _identity(
+        "scworkbench.operation_pack.runtime.v2",
+        value,
+        "runtime attestation excluding runtime_identity",
+    )
+    return value
+
+
+def execute_operation_pack_v3(
+    request: Mapping[str, Any],
+    discovery: PackDiscoveryV2,
+    stage_root: str | os.PathLike[str],
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    request = validate_request_v3(request, discovery)
+    root = _safe_root(Path(stage_root))
+    before = _snapshot(root)
+    tree_before = _tree(root)
+    operation_name = request["operation_authentication"]["name"]
+    operation = next(
+        item
+        for item in discovery.manifest["operations"]
+        if item["qualified_name"] == operation_name
+    )
+    active = active_operation_packs_v2().get(discovery.manifest["namespace"])
+    if active is None or canonical_json(active[0].identity) != canonical_json(discovery.identity):
+        _fail("OPERATION_PACK_REQUIRED", "Exact operation pack is not active", "resolution")
+    capability_id = request["execution_capability"]["capability_identity"]["sha256"]
+    if capability_id in _CONSUMED_CAPABILITIES:
+        _fail("PYBENCH_CAPABILITY_MISMATCH", "Capability is already consumed", "staging")
+    _CONSUMED_CAPABILITIES.add(capability_id)
+    writers: V3Writers | None = None
+    try:
+        if fault_hook:
+            fault_hook("before_input_read")
+        inputs = _read_inputs(request, root)
+        preflight = preflight_v3(operation, inputs, request["params"], request)
+        if fault_hook:
+            fault_hook("before_dispatch")
+        writers = V3Writers(request, root)
+        active[1].handlers[operation_name](
+            V3Readers(inputs),
+            writers,
+            copy.deepcopy(request["params"]),
+            {
+                "transition_id": request["transition"]["transition_id"],
+                "capability_id": request["execution_capability"]["capability_id"],
+            },
+        )
+        if fault_hook:
+            fault_hook("after_handler")
+        writes = writers.writes
+        expected_names = [item["name"] for item in request["outputs"]]
+        if list(writes) != expected_names or len(writes) != len(expected_names):
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Returned output closure differs", "receipt")
+        writers.consume()
+        outputs: list[dict[str, Any]] = []
+        registry_requests: list[dict[str, Any]] = []
+        entries: list[dict[str, str]] = []
+        for grant in request["outputs"]:
+            write = writes[grant["name"]]
+            try:
+                staged_value = json.loads(write.path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                _fail("PYBENCH_OUTPUT_INVALID", f"Staged output is unreadable: {exc}", "audit")
+            if canonical_json(staged_value) != canonical_json(write.value):
+                _fail(
+                    "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                    "Staged payload changed after its sanctioned writer returned",
+                    "audit",
+                )
+            record = {
+                "name": grant["name"],
+                "allocated_id": grant["allocated_id"],
+                "descriptor": _observed_descriptor(grant, write),
+            }
+            target = (
+                registry_requests
+                if grant["descriptor"]["category"] == "core_registry_request"
+                else outputs
+            )
+            target.append(record)
+            entries.append(
+                {
+                    "path": write.path.relative_to(root).as_posix(),
+                    "sha256": hashlib.sha256(write.path.read_bytes()).hexdigest(),
+                }
+            )
+        after = _snapshot(root)
+        tree_after = _tree(root)
+        changed = sorted(
+            key for key in set(before) | set(after) if before.get(key) != after.get(key)
+        )
+        if sorted(item["path"] for item in entries) != changed:
+            _fail(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                "Independent stage audit found undeclared mutation",
+                "audit",
+            )
+        expected_created: set[str] = set()
+        for entry in entries:
+            current = Path(entry["path"])
+            expected_created.add(current.as_posix())
+            for parent in current.parents:
+                if parent == Path("."):
+                    break
+                expected_created.add(parent.as_posix())
+        if tree_after - tree_before != expected_created - tree_before:
+            _fail(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                "Independent stage audit found undeclared staged paths",
+                "audit",
+            )
+        mutation = {
+            "entries_identity": _identity(
+                "scworkbench.operation_pack.mutation_entries.v2", entries
+            ),
+            "entry_count": len(entries),
+            "unexpected_entries": 0,
+        }
+        mutation["mutation_identity"] = _identity(
+            "scworkbench.operation_pack.mutation_manifest.v2",
+            mutation,
+            "mutation manifest excluding mutation_identity",
+        )
+        runtime = _shared_runtime(discovery, operation, preflight)
+        receipt = {
+            "schema": RECEIPT_SCHEMA,
+            "message_type": "receipt",
+            "process_protocol_version": PROCESS_PROTOCOL_V3,
+            "pack_abi_version": "2",
+            "canonical_json_scheme": "scworkbench.operation_pack.canonical_json.v1",
+            "status": "ok",
+            "transition_id": request["transition"]["transition_id"],
+            "session_id": request["transition"]["session_id"],
+            "run_id": request["transition"]["run_id"],
+            "transition_identity": request["transition"]["transition_identity"],
+            "request_identity": request["request_identity"],
+            "capability_identity": request["execution_capability"]["capability_identity"],
+            "outputs": outputs,
+            "registry_requests": registry_requests,
+            "mutation_manifest": mutation,
+            "runtime_attestation": runtime,
+        }
+        receipt["receipt_identity"] = _identity(
+            RECEIPT_SCHEMA, receipt, "receipt excluding receipt_identity"
+        )
+        validate_receipt_v3(receipt, request)
+        sidecar = _python_runtime_sidecar(discovery, request)
+        return receipt, sidecar
+    except BaseException:
+        if writers is not None:
+            writers.consume()
+        _restore(root, before)
+        raise
+
+
+def error_receipt_v3(
+    request: Mapping[str, Any], error: BaseException, runtime: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    if isinstance(error, OperationPackError):
+        code = (
+            error.code
+            if error.code
+            in {
+                "OPERATION_PACK_REQUIRED",
+                "OPERATION_PACK_INCOMPATIBLE",
+                "OPERATION_PACK_DEPENDENCY_MISSING",
+                "OPERATION_PACK_DEPENDENCY_INCOMPATIBLE",
+                "OPERATION_PACK_DYNAMIC_PROVIDER_INVALID",
+                "OPERATION_PACK_DYNAMIC_PROVIDER_CHANGED",
+                "OPERATION_PACK_PREFLIGHT_FAILED",
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "PYBENCH_STALE_STAGING_IDENTITY",
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "PYBENCH_OUTPUT_INVALID",
+                "PYBENCH_RECEIPT_MISMATCH",
+                "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                "PYBENCH_SOURCE_WRITE_ATTEMPT",
+                "PYBENCH_PROCESS_FAILED",
+            }
+            else "PYBENCH_PROCESS_FAILED"
+        )
+        phase = error.details.get("phase", "execution")
+    else:
+        code, phase = "PYBENCH_PROCESS_FAILED", "execution"
+    receipt = {
+        "schema": RECEIPT_SCHEMA,
+        "message_type": "receipt",
+        "process_protocol_version": PROCESS_PROTOCOL_V3,
+        "pack_abi_version": "2",
+        "canonical_json_scheme": "scworkbench.operation_pack.canonical_json.v1",
+        "status": "error",
+        "transition_id": request["transition"]["transition_id"],
+        "session_id": request["transition"]["session_id"],
+        "run_id": request["transition"]["run_id"],
+        "transition_identity": request["transition"]["transition_identity"],
+        "request_identity": request["request_identity"],
+        "capability_identity": request["execution_capability"]["capability_identity"],
+        "phase": phase,
+        "error_code": code,
+        "message": "Python operation failed; inspect the core-owned diagnostic record",
+        "retryable": False,
+        "runtime_attestation_status": "available" if runtime is not None else "not_established",
+    }
+    if runtime is not None:
+        receipt["runtime_attestation"] = dict(runtime)
+    receipt["receipt_identity"] = _identity(
+        RECEIPT_SCHEMA, receipt, "receipt excluding receipt_identity"
+    )
+    return receipt

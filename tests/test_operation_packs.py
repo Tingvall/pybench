@@ -149,7 +149,7 @@ def test_canonical_protocol_assets_and_corpus_are_exact():
             "6c3da09b7840be621aae02e2bc17ac38435124992864da50e4c06819829e5d0c"
         ),
         "fixtures/operation-pack-v1/canonical-identities.json": (
-            "d5ee6fcc1e4c906d204d0e901b136ed9ee0cb1a7d9d8ebe1b4507a18d4310a68"
+            "5d7dc0f143e8dfee15f4c8b75e741770d818ea3a20dbeb991db2a9277239a1d9"
         ),
     }
     for relative, digest in expected.items():

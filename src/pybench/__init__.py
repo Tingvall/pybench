@@ -13,6 +13,14 @@ from .operation_packs import (
     OperationPackHandlers,
     operation_pack_handlers,
 )
+from .operation_packs_v2 import (
+    ENTRY_POINT_GROUP_V2,
+    activate_operation_pack_v2,
+    discover_operation_pack_v2,
+    operation_pack_handlers_v2,
+    validate_manifest_v2,
+)
+from .protocol_v3 import execute_operation_pack_v3, validate_receipt_v3, validate_request_v3
 from .spaces_write import add_space
 
 __all__ = [
@@ -28,4 +36,12 @@ __all__ = [
     "OperationPackError",
     "OperationPackHandlers",
     "operation_pack_handlers",
+    "ENTRY_POINT_GROUP_V2",
+    "activate_operation_pack_v2",
+    "discover_operation_pack_v2",
+    "operation_pack_handlers_v2",
+    "validate_manifest_v2",
+    "execute_operation_pack_v3",
+    "validate_receipt_v3",
+    "validate_request_v3",
 ]

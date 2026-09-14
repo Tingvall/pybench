@@ -279,6 +279,30 @@ without the pack; replay and continuation retain scworkbench's
 `OPERATION_PACK_REQUIRED` behavior until the exact compatible pack is installed
 and explicitly activated.
 
+Operation-pack ABI v2 is a separate, synthetic-reference-only developer
+contract. Python v2 packs declare one exact entry point in
+`scworkbench.operation_packs.v2`; installation and discovery remain inert, and
+activation is explicit and process-local. ABI v2 executes only through
+`pybench-op-v3`:
+
+```bash
+pybench-operation-pack-v3 \
+  --manifest /installed/pack/operation-pack.json \
+  --request request.json \
+  --stage-root /private/core-created-stage \
+  --receipt receipt.json \
+  --python-runtime python-runtime.json
+```
+
+The three shared v2 manifest/request/receipt schemas under `protocol/` are
+byte-identical mirrors of the scworkbench authority. The shared receipt carries
+language-neutral runtime evidence. The separate closed
+`pybench.operation_pack.python_runtime.v3` sidecar records the installed Python
+distribution, interpreter, backend, seed, and device without changing the
+shared schema. Python writes only granted private staged outputs and never
+publishes bundle state. See `docs/operation_pack_abi_v2.md` for the developer
+API and capability matrix. No official scientific v2 pack is provided.
+
 ## scVI Fit Summary
 
 `scvi_train` writes a one-row `scvi_fit_summary` `obs_table` alongside its
