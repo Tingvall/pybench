@@ -113,6 +113,19 @@ separate document validated by
 - declared or undeclared seed status;
 - CPU device descriptor.
 
+For a chunk-declared operation, the sidecar also contains one closed
+`chunk_observation`. It binds the request, execution capability, operation
+definition, input descriptor, declared axis and parameter names, requested
+chunk size, and the exact ordered matrix-reader batches and batch sizes. A
+scoped observation identity covers those fields, and the enclosing runtime
+identity covers the complete observation. Nonchunked operations omit the field.
+
+`validate_python_runtime_sidecar_v3(sidecar, request, discovery, inputs)`
+validates the closed schema and both identities, then independently reconstructs
+the expected chunk schedule from the authenticated request and input projection.
+A chunked success without evidence, evidence attached to a nonchunked
+operation, or a sidecar substituted from another request is rejected.
+
 Neither request, receipt, discovery record, nor sidecar contains an absolute
 host path. Required and selected dependencies are probed without installation
 or network access. Dynamic Python providers come only from authenticated input

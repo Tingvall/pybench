@@ -368,7 +368,13 @@ def _output_descriptor(
     return descriptor
 
 
-def make_request(discovery, stage: Path, operation_name: str, inputs: dict[str, dict]):
+def make_request(
+    discovery,
+    stage: Path,
+    operation_name: str,
+    inputs: dict[str, dict],
+    params_override: dict | None = None,
+):
     token = uuid.uuid4().hex
     operation = next(
         item
@@ -490,6 +496,8 @@ def make_request(discovery, stage: Path, operation_name: str, inputs: dict[str, 
             chunking["size_parameter"]: max(len(features), 1),
             chunking["adjust_parameter"]: "BH",
         }
+    if params_override is not None:
+        params.update(params_override)
     request = {
         "schema": "scworkbench.operation_pack.transition_request.v2",
         "message_type": "request",

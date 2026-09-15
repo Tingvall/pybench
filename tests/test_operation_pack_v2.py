@@ -30,6 +30,7 @@ from pybench.protocol_v3 import (
     error_receipt_v3,
     execute_operation_pack_v3,
     preflight_v3,
+    validate_python_runtime_sidecar_v3,
     validate_receipt_v3,
     validate_request_v3,
 )
@@ -47,6 +48,7 @@ SHARED = (
 STATISTICS_MANIFEST = Path(
     "/home/dirk/Projects/operation_packs/scwbStatistics/inst/scworkbench/operation-pack.json"
 )
+PYTHON_RUNTIME_SCHEMA_SHA256 = "59fbaf6456d010bf777323e113ea0e36f94c5b41e75657148ae8cd0aeb9b0b7d"
 STATISTICS_DEFINITIONS = {
     "scwbstatistics::de_wilcox": "dca55697427cede0ef77a2d29399b5db6ddd163111c6b886d158ec356a5583d6",
     "scwbstatistics::markers_topn": "c2c82d51918368a6a1da8a7fda2c95720265a89e8161745e5e1c95b93e881d9b",
@@ -101,6 +103,37 @@ def _stage_snapshot(stage):
     }
 
 
+def _five_feature_inputs():
+    inputs = fixture_inputs()
+    inputs["matrix"].update(
+        dimensions=[5, 2],
+        cell_id=["c1", "c2"],
+        feature_id=["g1", "g2", "g3", "g4", "g5"],
+        values=[[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]],
+    )
+    return inputs
+
+
+def _resign_sidecar(sidecar, *, observation=True):
+    if observation and "chunk_observation" in sidecar:
+        observed = sidecar["chunk_observation"]
+        observed["observation_identity"] = {
+            "scheme": "pybench.operation_pack.chunk_observation.v1",
+            "scope": "chunk observation excluding observation_identity",
+            "sha256": canonical_sha256(
+                {key: value for key, value in observed.items() if key != "observation_identity"}
+            ),
+        }
+    sidecar["runtime_identity"] = {
+        "scheme": "pybench.operation_pack.python_runtime.v3",
+        "scope": "python runtime sidecar excluding runtime_identity",
+        "sha256": canonical_sha256(
+            {key: value for key, value in sidecar.items() if key != "runtime_identity"}
+        ),
+    }
+    return sidecar
+
+
 def test_shared_protocol_bytes_and_frozen_canonical_identities_match_forge():
     ledger = json.loads((REPO / "protocol/fixtures/operation-pack-v2/identities.json").read_text())
     for name in SHARED:
@@ -138,6 +171,11 @@ def test_shared_protocol_bytes_and_frozen_canonical_identities_match_forge():
             canonical_sha256({name: child for name, child in example.items() if name != key})
             for example in schema["examples"]
         ] == expected
+
+
+def test_python_runtime_sidecar_schema_has_amended_identity():
+    payload = (REPO / "protocol/pybench-op-v3-python-runtime.schema.json").read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == PYTHON_RUNTIME_SCHEMA_SHA256
 
 
 def test_statistics_manifest_semantics_and_canonical_identities_match_forge():
@@ -518,6 +556,7 @@ def test_atomic_multi_operation_activation_and_exact_preimage(installed):
     registration = activate_operation_pack_v2(discovery)
     assert set(registration.handlers) == {
         "scwbpyv2reference::all_contracts",
+        "scwbpyv2reference::chunk_probe",
         "scwbpyv2reference::dynamic_provider",
     }
     assert set(active_operation_packs_v2()) == {"scwbpyv2reference"}
@@ -621,6 +660,7 @@ def test_typed_matrix_reader_enforces_exact_chunk_schedule():
     }
     operation = {
         "chunking": {
+            "axis": "features",
             "input": "matrix",
             "sequence_parameter": "features",
             "size_parameter": "chunk_size",
@@ -631,7 +671,19 @@ def test_typed_matrix_reader_enforces_exact_chunk_schedule():
     assert readers["matrix"](features=["g1", "g2"])["dimensions"] == [2, 2]
     readers["matrix"](features=["g3", "g4"])
     readers["matrix"](features=["g5"])
-    _audit_chunk_calls(operation, params, readers, {"matrix": matrix})
+    audit_request = {
+        "request_identity": {"sha256": "request"},
+        "execution_capability": {"capability_identity": {"sha256": "capability"}},
+        "operation_authentication": {"operation_definition_identity": {"sha256": "definition"}},
+        "inputs": [
+            {
+                "name": "matrix",
+                "descriptor": {"descriptor_identity": {"sha256": "descriptor"}},
+            }
+        ],
+    }
+    observation = _audit_chunk_calls(operation, params, readers, {"matrix": matrix}, audit_request)
+    assert observation["observed_batch_sizes"] == [2, 2, 1]
     assert [call["features"] for call in readers.calls] == [
         ["g1", "g2"],
         ["g3", "g4"],
@@ -642,6 +694,294 @@ def test_typed_matrix_reader_enforces_exact_chunk_schedule():
         "execution",
         V3Readers({"matrix": matrix})["matrix"],
         features=["not_granted"],
+    )
+
+
+@pytest.mark.parametrize(
+    "chunk_size,expected",
+    [(2, [["g1", "g2"], ["g3", "g4"], ["g5"]]), (5, [["g1", "g2", "g3", "g4", "g5"]])],
+)
+def test_chunk_observation_sidecar_records_actual_reader_calls(
+    installed, tmp_path, chunk_size, expected
+):
+    _manifest, discovery = installed
+    activate_operation_pack_v2(discovery)
+    stage = tmp_path / f"chunk-{chunk_size}"
+    stage.mkdir()
+    inputs = _five_feature_inputs()
+    request = make_request(
+        discovery,
+        stage,
+        "scwbpyv2reference::chunk_probe",
+        inputs,
+        {"chunk_size": chunk_size},
+    )
+    receipt, sidecar = execute_operation_pack_v3(request, discovery, stage)
+    observed = sidecar["chunk_observation"]
+    assert observed["observed_batches"] == expected
+    assert observed["observed_batch_sizes"] == [len(batch) for batch in expected]
+    assert observed["observed_call_count"] == len(expected)
+    assert observed["requested_chunk_size"] == chunk_size
+    assert observed["request_identity"] == request["request_identity"]
+    assert observed["capability_identity"] == request["execution_capability"]["capability_identity"]
+    validate_python_runtime_sidecar_v3(sidecar, request, discovery, {"matrix": inputs["matrix"]})
+    assert (
+        canonical_sha256(
+            {key: value for key, value in observed.items() if key != "observation_identity"}
+        )
+        == observed["observation_identity"]["sha256"]
+    )
+    assert (
+        canonical_sha256(
+            {key: value for key, value in sidecar.items() if key != "runtime_identity"}
+        )
+        == sidecar["runtime_identity"]["sha256"]
+    )
+    assert "chunk_observation" not in receipt
+    validate_receipt_v3(receipt, request)
+    payload = json.loads((stage / "outputs/feature_table/payload.json").read_text())
+    assert payload["feature_id"] == inputs["matrix"]["feature_id"]
+
+
+@pytest.mark.parametrize(
+    "batches",
+    [
+        [["g3", "g4"], ["g1", "g2"], ["g5"]],
+        [["g1", "g2"], ["g1", "g2"], ["g5"]],
+        [["g1", "g2"], ["g3", "g4"]],
+        [[], ["g1", "g2"], ["g3", "g4"], ["g5"]],
+        [["g1", "g2", "g3"], ["g4", "g5"]],
+        [["g1", "g2"], ["g3", "g4"], ["g5"], ["g5"]],
+    ],
+    ids=["reordered", "repeated", "missing", "empty", "oversized", "extra"],
+)
+def test_invalid_chunk_calls_fail_without_receipt_or_stage_residue(
+    installed, tmp_path, monkeypatch, batches
+):
+    _manifest, discovery = installed
+    registration = activate_operation_pack_v2(discovery)
+
+    def invalid_chunk_probe(readers, writers, params, context):
+        del params, context
+        for batch in batches:
+            readers["matrix"](features=batch)
+        features = ["g1", "g2", "g3", "g4", "g5"]
+        writers.write_terminal_primitive(
+            "feature_table",
+            {
+                "kind": "feature_table",
+                "dimensions": [5, 1],
+                "feature_id": features,
+                "rows": [{"feature_id": feature} for feature in features],
+            },
+        )
+
+    monkeypatch.setitem(
+        registration.handlers, "scwbpyv2reference::chunk_probe", invalid_chunk_probe
+    )
+    stage = tmp_path / "invalid-chunk"
+    stage.mkdir()
+    inputs = _five_feature_inputs()
+    request = make_request(
+        discovery,
+        stage,
+        "scwbpyv2reference::chunk_probe",
+        inputs,
+        {"chunk_size": 2},
+    )
+    before = _stage_snapshot(stage)
+    _expect(
+        "PYBENCH_CAPABILITY_MISMATCH",
+        "execution",
+        execute_operation_pack_v3,
+        request,
+        discovery,
+        stage,
+    )
+    assert _stage_snapshot(stage) == before
+
+
+@pytest.fixture
+def chunk_execution(installed, tmp_path):
+    _manifest, discovery = installed
+    activate_operation_pack_v2(discovery)
+    stage = tmp_path / "chunk-execution"
+    stage.mkdir()
+    inputs = _five_feature_inputs()
+    request = make_request(
+        discovery,
+        stage,
+        "scwbpyv2reference::chunk_probe",
+        inputs,
+        {"chunk_size": 2},
+    )
+    receipt, sidecar = execute_operation_pack_v3(request, discovery, stage)
+    return discovery, request, inputs, receipt, sidecar
+
+
+def _set_observation_value(sidecar, field, value):
+    sidecar["chunk_observation"][field] = value
+
+
+@pytest.mark.parametrize(
+    "mutation,resign_observation",
+    [
+        (lambda s: s["distribution_identity"].update(sha256="0" * 64), True),
+        (lambda s: s["chunk_observation"]["request_identity"].update(sha256="0" * 64), True),
+        (
+            lambda s: s["chunk_observation"]["capability_identity"].update(sha256="0" * 64),
+            True,
+        ),
+        (
+            lambda s: s["chunk_observation"]["operation_definition_identity"].update(
+                sha256="0" * 64
+            ),
+            True,
+        ),
+        (
+            lambda s: s["chunk_observation"]["input_descriptor_identity"].update(sha256="0" * 64),
+            True,
+        ),
+        (lambda s: _set_observation_value(s, "input_name", "other"), True),
+        (lambda s: _set_observation_value(s, "axis", "cells"), True),
+        (lambda s: _set_observation_value(s, "sequence_parameter", "other"), True),
+        (lambda s: _set_observation_value(s, "size_parameter", "other"), True),
+        (lambda s: _set_observation_value(s, "requested_chunk_size", 3), True),
+        (lambda s: _set_observation_value(s, "observed_call_count", 4), True),
+        (
+            lambda s: _set_observation_value(
+                s, "observed_batches", [["g3", "g4"], ["g1", "g2"], ["g5"]]
+            ),
+            True,
+        ),
+        (lambda s: _set_observation_value(s, "observed_batch_sizes", [2, 1, 2]), True),
+        (
+            lambda s: s["chunk_observation"]["observation_identity"].update(sha256="0" * 64),
+            False,
+        ),
+    ],
+    ids=[
+        "distribution",
+        "request",
+        "capability",
+        "operation-definition",
+        "input-descriptor",
+        "input-name",
+        "axis",
+        "sequence-parameter",
+        "size-parameter",
+        "requested-size",
+        "call-count",
+        "batches",
+        "batch-sizes",
+        "observation-identity",
+    ],
+)
+def test_chunk_observation_tampering_is_rejected(chunk_execution, mutation, resign_observation):
+    discovery, request, inputs, _receipt, sidecar = chunk_execution
+    tampered = deep_copy(sidecar)
+    mutation(tampered)
+    _resign_sidecar(tampered, observation=resign_observation)
+    _expect(
+        "PYBENCH_RUNTIME_ATTESTATION_MISMATCH",
+        "runtime_attestation",
+        validate_python_runtime_sidecar_v3,
+        tampered,
+        request,
+        discovery,
+        {"matrix": inputs["matrix"]},
+    )
+
+
+def test_chunk_sidecar_cannot_cross_requests(chunk_execution, tmp_path):
+    discovery, _request, inputs, _receipt, sidecar = chunk_execution
+    other_stage = tmp_path / "other-request"
+    other_stage.mkdir()
+    other_request = make_request(
+        discovery,
+        other_stage,
+        "scwbpyv2reference::chunk_probe",
+        inputs,
+        {"chunk_size": 2},
+    )
+    _expect(
+        "PYBENCH_RUNTIME_ATTESTATION_MISMATCH",
+        "runtime_attestation",
+        validate_python_runtime_sidecar_v3,
+        sidecar,
+        other_request,
+        discovery,
+        {"matrix": inputs["matrix"]},
+    )
+
+
+def test_chunk_sidecar_rejects_substituted_input_projection(chunk_execution):
+    discovery, request, inputs, _receipt, sidecar = chunk_execution
+    substituted = deep_copy(inputs["matrix"])
+    substituted["values"][0][0] = -999
+    _expect(
+        "PYBENCH_RUNTIME_ATTESTATION_MISMATCH",
+        "runtime_attestation",
+        validate_python_runtime_sidecar_v3,
+        sidecar,
+        request,
+        discovery,
+        {"matrix": substituted},
+    )
+
+
+def test_chunk_observation_presence_is_bound_to_manifest(installed, tmp_path):
+    _manifest, discovery = installed
+    activate_operation_pack_v2(discovery)
+    chunk_stage = tmp_path / "chunk-present"
+    chunk_stage.mkdir()
+    chunk_inputs = _five_feature_inputs()
+    chunk_request = make_request(
+        discovery,
+        chunk_stage,
+        "scwbpyv2reference::chunk_probe",
+        chunk_inputs,
+        {"chunk_size": 2},
+    )
+    _receipt, chunk_sidecar = execute_operation_pack_v3(chunk_request, discovery, chunk_stage)
+    missing = deep_copy(chunk_sidecar)
+    missing.pop("chunk_observation")
+    _resign_sidecar(missing)
+    _expect(
+        "PYBENCH_RUNTIME_ATTESTATION_MISMATCH",
+        "runtime_attestation",
+        validate_python_runtime_sidecar_v3,
+        missing,
+        chunk_request,
+        discovery,
+        {"matrix": chunk_inputs["matrix"]},
+    )
+
+    plain_stage = tmp_path / "plain"
+    plain_stage.mkdir()
+    plain_inputs = fixture_inputs()
+    plain_request = make_request(
+        discovery,
+        plain_stage,
+        "scwbpyv2reference::dynamic_provider",
+        plain_inputs,
+    )
+    _receipt, plain_sidecar = execute_operation_pack_v3(plain_request, discovery, plain_stage)
+    assert "chunk_observation" not in plain_sidecar
+    validate_python_runtime_sidecar_v3(
+        plain_sidecar, plain_request, discovery, {"matrix": plain_inputs["matrix"]}
+    )
+    smuggled = deep_copy(plain_sidecar)
+    smuggled["chunk_observation"] = deep_copy(chunk_sidecar["chunk_observation"])
+    _resign_sidecar(smuggled)
+    _expect(
+        "PYBENCH_RUNTIME_ATTESTATION_MISMATCH",
+        "runtime_attestation",
+        validate_python_runtime_sidecar_v3,
+        smuggled,
+        plain_request,
+        discovery,
+        {"matrix": plain_inputs["matrix"]},
     )
 
 
@@ -1115,6 +1455,41 @@ def test_v3_cli_installed_process_success_and_duplicate_key_rejection(installed,
     )
     assert result.returncode == 1
     assert not bad_receipt.exists()
+
+
+def test_v3_cli_emits_validated_chunk_observation(installed, tmp_path):
+    manifest, discovery = installed
+    stage = tmp_path / "cli-chunk"
+    stage.mkdir()
+    inputs = _five_feature_inputs()
+    request = make_request(
+        discovery,
+        stage,
+        "scwbpyv2reference::chunk_probe",
+        inputs,
+        {"chunk_size": 2},
+    )
+    request_path = tmp_path / "chunk-request.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    receipt_path = tmp_path / "chunk-receipt.json"
+    runtime_path = tmp_path / "chunk-runtime.json"
+    result = subprocess.run(
+        _cli_command(manifest, request_path, stage, receipt_path, runtime_path),
+        env=_cli_environment(manifest),
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = json.loads(receipt_path.read_text())
+    sidecar = json.loads(runtime_path.read_text())
+    validate_receipt_v3(receipt, request)
+    validate_python_runtime_sidecar_v3(sidecar, request, discovery, {"matrix": inputs["matrix"]})
+    assert sidecar["chunk_observation"]["observed_batches"] == [
+        ["g1", "g2"],
+        ["g3", "g4"],
+        ["g5"],
+    ]
 
 
 @pytest.mark.parametrize("mode", ["timeout", "exit"])

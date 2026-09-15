@@ -124,6 +124,37 @@
       ],
       "promotion_closure": {"provider": ["provider"]},
       "replay_equivalence": {"provider": "exact_canonical_value"}
+    },
+    {
+      "name": "chunk_probe",
+      "qualified_name": "scwbpyv2reference::chunk_probe",
+      "title": "Chunk observation probe",
+      "description": "Synthetic conformance operation for authenticated matrix chunk observations.",
+      "runner": ".chunk_probe",
+      "inputs": [
+        {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "features": {"type": ["array", "null"], "default": null, "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "chunk_size": {"type": "integer", "default": 2, "minimum": 1, "maximum": 4096},
+        "p_adjust_method": {"type": "string", "default": "BH", "minLength": 1}
+      }, "additionalProperties": false},
+      "parameter_bindings": [
+        {"parameter": "features", "policy": "feature_ids_or_all_v1", "input": "matrix"}
+      ],
+      "dimension_policies": [
+        {"output": "feature_table", "policy": "data_dependent_table_v1"}
+      ],
+      "chunking": {"axis": "features", "input": "matrix", "sequence_parameter": "features", "size_parameter": "chunk_size", "output": "feature_table", "merge": "row_bind_then_global_p_adjust_v1", "adjust_parameter": "p_adjust_method"},
+      "retained_parameters": [
+        {"name": "feature_rows", "source": "output_row_count", "output": "feature_table"}
+      ],
+      "outputs": [
+        {"name": "feature_table", "category": "terminal_artifact", "kind": "feature_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "feature_table_id", "required": true, "promotion_group": "feature_table", "table_type": "chunk_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"feature_table": ["feature_table"]},
+      "replay_equivalence": {"feature_table": "exact_canonical_value"}
     }
   ]
 }

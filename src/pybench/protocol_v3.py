@@ -81,13 +81,18 @@ def _assert_self_identity(value: Mapping[str, Any], field: str, code: str, phase
         _fail(code, f"Self identity mismatch at {field}", phase, identity_field=field)
 
 
-def _no_absolute_paths(value: Any) -> None:
+def _no_absolute_paths(
+    value: Any,
+    *,
+    code: str = "PYBENCH_CAPABILITY_MISMATCH",
+    phase: str = "staging",
+) -> None:
     if isinstance(value, Mapping):
         for child in value.values():
-            _no_absolute_paths(child)
+            _no_absolute_paths(child, code=code, phase=phase)
     elif isinstance(value, list):
         for child in value:
-            _no_absolute_paths(child)
+            _no_absolute_paths(child, code=code, phase=phase)
     elif isinstance(value, str):
         path = Path(value)
         if (
@@ -95,11 +100,7 @@ def _no_absolute_paths(value: Any) -> None:
             or path.is_absolute()
             or (len(value) > 2 and value[1:3] == ":\\")
         ):
-            _fail(
-                "PYBENCH_CAPABILITY_MISMATCH",
-                "V3 request and receipt values may not expose absolute host paths",
-                "staging",
-            )
+            _fail(code, "V3 protocol values may not expose absolute host paths", phase)
 
 
 def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) -> dict[str, Any]:
@@ -774,10 +775,11 @@ def _audit_chunk_calls(
     params: Mapping[str, Any],
     readers: V3Readers,
     inputs: Mapping[str, Mapping[str, Any]],
-) -> None:
+    request: Mapping[str, Any],
+) -> dict[str, Any] | None:
     chunk = operation.get("chunking")
     if chunk is None:
-        return
+        return None
     sequence = params.get(chunk["sequence_parameter"])
     if sequence is None:
         sequence = inputs[chunk["input"]].get("feature_id", [])
@@ -800,6 +802,29 @@ def _audit_chunk_calls(
             expected_batches=expected,
             observed_batches=observed,
         )
+    input_record = next(item for item in request["inputs"] if item["name"] == chunk["input"])
+    observation = {
+        "request_identity": request["request_identity"],
+        "capability_identity": request["execution_capability"]["capability_identity"],
+        "operation_definition_identity": request["operation_authentication"][
+            "operation_definition_identity"
+        ],
+        "input_name": chunk["input"],
+        "input_descriptor_identity": input_record["descriptor"]["descriptor_identity"],
+        "axis": chunk["axis"],
+        "sequence_parameter": chunk["sequence_parameter"],
+        "size_parameter": chunk["size_parameter"],
+        "requested_chunk_size": size,
+        "observed_call_count": len(observed),
+        "observed_batches": observed,
+        "observed_batch_sizes": [len(batch) for batch in observed],
+    }
+    observation["observation_identity"] = _identity(
+        "pybench.operation_pack.chunk_observation.v1",
+        observation,
+        "chunk observation excluding observation_identity",
+    )
+    return observation
 
 
 def _read_inputs(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, Any]]:
@@ -1031,7 +1056,9 @@ def _observed_descriptor(grant: Mapping[str, Any], write: _Write) -> dict[str, A
 
 
 def _python_runtime_sidecar(
-    discovery: PackDiscoveryV2, request: Mapping[str, Any]
+    discovery: PackDiscoveryV2,
+    request: Mapping[str, Any],
+    chunk_observation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     seed = request["params"].get("seed")
     value = {
@@ -1051,11 +1078,91 @@ def _python_runtime_sidecar(
         },
         "device": {"type": "cpu", "descriptor": platform.machine() or "CPU"},
     }
+    if chunk_observation is not None:
+        value["chunk_observation"] = copy.deepcopy(dict(chunk_observation))
     value["runtime_identity"] = _identity(
         "pybench.operation_pack.python_runtime.v3",
         value,
         "python runtime sidecar excluding runtime_identity",
     )
+    return value
+
+
+def validate_python_runtime_sidecar_v3(
+    sidecar: Mapping[str, Any],
+    request: Mapping[str, Any],
+    discovery: PackDiscoveryV2,
+    inputs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    request = validate_request_v3(request, discovery)
+    value = copy.deepcopy(dict(sidecar))
+    code = "PYBENCH_RUNTIME_ATTESTATION_MISMATCH"
+    phase = "runtime_attestation"
+    _validate_schema(value, "pybench-op-v3-python-runtime.schema.json", code, phase)
+    _no_absolute_paths(value, code=code, phase=phase)
+    _assert_self_identity(value, "runtime_identity", code, phase)
+    if value["distribution_identity"] != discovery.distribution_identity:
+        _fail(code, "Runtime sidecar distribution differs from installed discovery", phase)
+    operation_name = request["operation_authentication"]["name"]
+    operation = next(
+        (
+            item
+            for item in discovery.manifest["operations"]
+            if item["qualified_name"] == operation_name
+        ),
+        None,
+    )
+    if operation is None:
+        _fail(code, "Runtime sidecar names an unavailable operation", phase)
+    chunk = operation.get("chunking")
+    observed = value.get("chunk_observation")
+    if chunk is None:
+        if observed is not None:
+            _fail(code, "Nonchunked operation carries a chunk observation", phase)
+        return value
+    if observed is None:
+        _fail(code, "Chunked operation is missing its chunk observation", phase)
+    _assert_self_identity(observed, "observation_identity", code, phase)
+    source_input = inputs.get(chunk["input"])
+    input_record = next(item for item in request["inputs"] if item["name"] == chunk["input"])
+    descriptor = input_record["descriptor"]
+    if (
+        not isinstance(source_input, Mapping)
+        or source_input.get("kind") != descriptor["kind"]
+        or _identity(descriptor["content_identity"]["scheme"], source_input)
+        != descriptor["content_identity"]
+    ):
+        _fail(code, "Chunk observation input differs from its authenticated descriptor", phase)
+    sequence = request["params"].get(chunk["sequence_parameter"])
+    if sequence is None:
+        sequence = source_input.get("feature_id", [])
+    size = request["params"].get(chunk["size_parameter"])
+    if not isinstance(sequence, list) or not isinstance(size, int) or isinstance(size, bool):
+        _fail(code, "Chunk observation cannot be resolved from authenticated inputs", phase)
+    expected_batches = [sequence[index : index + size] for index in range(0, len(sequence), size)]
+    expected = {
+        "request_identity": request["request_identity"],
+        "capability_identity": request["execution_capability"]["capability_identity"],
+        "operation_definition_identity": request["operation_authentication"][
+            "operation_definition_identity"
+        ],
+        "input_name": chunk["input"],
+        "input_descriptor_identity": input_record["descriptor"]["descriptor_identity"],
+        "axis": chunk["axis"],
+        "sequence_parameter": chunk["sequence_parameter"],
+        "size_parameter": chunk["size_parameter"],
+        "requested_chunk_size": size,
+        "observed_call_count": len(expected_batches),
+        "observed_batches": expected_batches,
+        "observed_batch_sizes": [len(batch) for batch in expected_batches],
+    }
+    expected["observation_identity"] = _identity(
+        "pybench.operation_pack.chunk_observation.v1",
+        expected,
+        "chunk observation excluding observation_identity",
+    )
+    if canonical_json(observed) != canonical_json(expected):
+        _fail(code, "Chunk observation differs from authenticated execution inputs", phase)
     return value
 
 
@@ -1134,7 +1241,9 @@ def execute_operation_pack_v3(
                 "capability_id": request["execution_capability"]["capability_id"],
             },
         )
-        _audit_chunk_calls(operation, request["params"], readers, inputs)
+        chunk_observation = _audit_chunk_calls(
+            operation, request["params"], readers, inputs, request
+        )
         if fault_hook:
             fault_hook("after_handler")
         writes = writers.writes
@@ -1234,7 +1343,8 @@ def execute_operation_pack_v3(
             RECEIPT_SCHEMA, receipt, "receipt excluding receipt_identity"
         )
         validate_receipt_v3(receipt, request)
-        sidecar = _python_runtime_sidecar(discovery, request)
+        sidecar = _python_runtime_sidecar(discovery, request, chunk_observation)
+        validate_python_runtime_sidecar_v3(sidecar, request, discovery, inputs)
         return receipt, sidecar
     except BaseException:
         if writers is not None:

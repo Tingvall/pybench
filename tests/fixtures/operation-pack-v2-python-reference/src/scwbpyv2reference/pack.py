@@ -132,10 +132,29 @@ def _dynamic_provider(readers, writers, params, context):
     )
 
 
+def _chunk_probe(readers, writers, params, context):
+    features = params["features"]
+    chunk_size = params["chunk_size"]
+    observed = []
+    for start in range(0, len(features), chunk_size):
+        batch = features[start : start + chunk_size]
+        observed.extend(readers["matrix"](features=batch)["feature_id"])
+    writers.write_terminal_primitive(
+        "feature_table",
+        {
+            "kind": "feature_table",
+            "dimensions": [len(observed), 1],
+            "feature_id": observed,
+            "rows": [{"feature_id": feature} for feature in observed],
+        },
+    )
+
+
 def register():
     return operation_pack_handlers_v2(
         {
             "scwbpyv2reference::all_contracts": _all_contracts,
             "scwbpyv2reference::dynamic_provider": _dynamic_provider,
+            "scwbpyv2reference::chunk_probe": _chunk_probe,
         }
     )
