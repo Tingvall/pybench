@@ -31,7 +31,25 @@
         {"name": "path_2d_family", "kind": "path_2d_family", "required": true, "alignment": "canonical_row_ordered"},
         {"name": "space_path_family", "kind": "space_path_family", "required": true, "alignment": "associated_space"}
       ],
-      "params_schema": {"type": "object", "properties": {}, "additionalProperties": false},
+      "params_schema": {"type": "object", "properties": {
+        "features": {"type": ["array", "null"], "default": null, "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "chunk_size": {"type": "integer", "default": 64, "minimum": 1, "maximum": 4096},
+        "p_adjust_method": {"type": "string", "default": "BH", "minLength": 1}
+      }, "additionalProperties": false},
+      "parameter_bindings": [
+        {"parameter": "features", "policy": "feature_ids_or_all_v1", "input": "matrix"}
+      ],
+      "dimension_policies": [
+        {"output": "feature_table", "policy": "data_dependent_table_v1"}
+      ],
+      "chunking": {"axis": "features", "input": "matrix", "sequence_parameter": "features", "size_parameter": "chunk_size", "output": "feature_table", "merge": "row_bind_then_global_p_adjust_v1", "adjust_parameter": "p_adjust_method"},
+      "retained_parameters": [
+        {"name": "feature_rows", "source": "output_row_count", "output": "feature_table"},
+        {"name": "input_features", "source": "input_feature_count", "input": "matrix"},
+        {"name": "requested_features", "source": "parameter_count", "parameter": "features"},
+        {"name": "features_supplied", "source": "parameter_supplied", "parameter": "features"},
+        {"name": "adjustment", "source": "parameter_value", "parameter": "p_adjust_method"}
+      ],
       "outputs": [
         {"name": "matrix_ordinary", "category": "materialization", "kind": "matrix", "storage_profile": "matrix_ordinary_v1", "allocated_id_key": "matrix_ordinary_id", "required": true, "promotion_group": "g_matrix_ordinary", "materialized_by_terminals": ["cell_vector"]},
         {"name": "matrix_backed", "category": "materialization", "kind": "matrix", "storage_profile": "matrix_backed_chunked_v1", "allocated_id_key": "matrix_backed_id", "required": true, "promotion_group": "g_matrix_backed", "materialized_by_terminals": ["cell_vector_family"]},
@@ -84,6 +102,12 @@
       "qualified_name": "scwbpyv2reference::dynamic_provider",
       "title": "Dynamic provider",
       "description": "Synthetic dynamic input-metadata dependency fixture.",
+      "public_interface": {
+        "intent": ["dependency", "conformance"],
+        "inputs": [{"name": "matrix", "label": "Matrix", "help": "Authenticated matrix input."}],
+        "parameters": [],
+        "outputs": [{"name": "provider", "description": "Resolved provider evidence."}]
+      },
       "runner": ".dynamic_provider",
       "inputs": [
         {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
@@ -94,6 +118,9 @@
       ],
       "dependencies": [
         {"requirement_id": "genome_provider", "kind": "dynamic_input_metadata_package", "input_name": "matrix", "metadata_field": "genome_provider", "ecosystem": "Python", "package_name_scheme": "python_distribution_name_v1", "probe": "python_import_spec_v1", "disposition": "required", "version_policy": "record_resolved_installed_version_v1"}
+      ],
+      "retained_parameters": [
+        {"name": "provider", "source": "output_meta", "output": "provider", "field": "provider"}
       ],
       "promotion_closure": {"provider": ["provider"]},
       "replay_equivalence": {"provider": "exact_canonical_value"}

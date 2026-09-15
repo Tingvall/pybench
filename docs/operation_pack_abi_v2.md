@@ -32,6 +32,24 @@ def handler(readers, writers, params, context): ...
 No v1 entry point can register through the v2 path, and no v2 request is
 silently downgraded to `pybench-op-v2`.
 
+## Manifest-owned operation declarations
+
+ABI v2 operations may declare a language-neutral `public_interface`,
+`parameter_bindings`, `dimension_policies`, `chunking`, and
+`retained_parameters`. PyBench validates these fields during semantic
+admission, before pack code is imported or handlers are registered. The
+declarations are part of the canonical manifest and operation-definition
+identities; changing one therefore changes the authenticated definition.
+
+Public parameter types must agree with `params_schema`. Parameter bindings may
+bind array-of-string selectors only to declared matrix inputs. The
+`data_dependent_table_v1` dimension policy is closed to terminal
+`feature_table` and `obs_table` outputs using `terminal_primitive_v1` storage.
+Chunk declarations must reference a bound feature sequence, positive integer
+chunk size, string adjustment method, matrix input, and dynamically sized
+feature-table output. Retained-parameter projections must reference declared
+inputs, parameters, outputs, and fields as required by their source type.
+
 ## V3 transport
 
 `pybench-op-v3` accepts the shared transition-request v2 document plus the
@@ -48,6 +66,13 @@ read_matrix, read_space, read_space_2d, read_model_ref,
 read_terminal_primitive, read_path_2d_family, read_space_path_family
 ```
 
+`read_matrix(features=..., cells=...)` returns only the requested authenticated
+rows and columns in caller-supplied order. For an operation with a chunk
+declaration, PyBench requires the observed feature selections to equal the
+declared sequence split into deterministic contiguous batches. A missing,
+extra, repeated, reordered, empty, or oversized batch fails execution and
+restores the private stage before a receipt is produced.
+
 The writer object exposes only the granted methods:
 
 ```text
@@ -61,6 +86,10 @@ accepted by the shared schemas. It independently verifies dimensions,
 cell/feature/row order, semantic metadata, linked-space and model containment
 evidence where those values are derivable from the projected payload. Ancestry
 and allocation remain authenticated core-issued descriptor fields.
+
+For a declared data-dependent table, core grants `[0, 0]` as a request-side
+sentinel and PyBench records the staged payload's actual nonnegative dimensions
+in the receipt. Concrete dimensions remain mandatory for every other output.
 
 Writers create only canonical `payload.json` files below their granted relative
 roots. Before returning, PyBench re-reads those bytes, checks output semantics,

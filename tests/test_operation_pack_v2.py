@@ -25,6 +25,8 @@ from pybench.operation_packs_v2 import (
 )
 from pybench.protocol import validate_request
 from pybench.protocol_v3 import (
+    V3Readers,
+    _audit_chunk_calls,
     error_receipt_v3,
     execute_operation_pack_v3,
     preflight_v3,
@@ -35,13 +37,24 @@ from v3_helpers import deep_copy, fixture_inputs, install_reference_fixture, mak
 
 REPO = Path(__file__).parents[1]
 FORGE = Path(
-    "/home/dirk/Projects/.scworkbench-worktrees/operation-pack-abi-v2-phase2a-core-r-forge-20260914"
+    "/home/dirk/Projects/.scworkbench-worktrees/core-to-packs-phase3a-statistics-forge-20260914"
 )
 SHARED = (
     "operation-pack-v2.schema.json",
     "operation-pack-transition-request-v2.schema.json",
     "operation-pack-transition-receipt-v2.schema.json",
 )
+STATISTICS_MANIFEST = Path(
+    "/home/dirk/Projects/operation_packs/scwbStatistics/inst/scworkbench/operation-pack.json"
+)
+STATISTICS_DEFINITIONS = {
+    "scwbstatistics::de_wilcox": "dca55697427cede0ef77a2d29399b5db6ddd163111c6b886d158ec356a5583d6",
+    "scwbstatistics::markers_topn": "c2c82d51918368a6a1da8a7fda2c95720265a89e8161745e5e1c95b93e881d9b",
+    "scwbstatistics::cell_vector_assoc": "8c29eda950bffd0d9bad3a5f0d12bd2562fad5e9c51d8bec6a740a5902a37978",
+    "scwbstatistics::cell_vector_association": "3325465e1afcb766abb03810d35c166920db98bcf94a2f593b54e8d25b9f44df",
+    "scwbstatistics::cell_vector_compare": "0d6e62442271c553ac803d89296040878c2c3bd143b1eb7b91a4a0711289f6a7",
+    "scwbstatistics::feature_trend_spearman": "e6c6ebc993c3e119c407bf88f3b76ab43bbf280a27de9ef65d9136f0f43112d4",
+}
 
 
 @pytest.fixture
@@ -125,6 +138,80 @@ def test_shared_protocol_bytes_and_frozen_canonical_identities_match_forge():
             canonical_sha256({name: child for name, child in example.items() if name != key})
             for example in schema["examples"]
         ] == expected
+
+
+def test_statistics_manifest_semantics_and_canonical_identities_match_forge():
+    assert hashlib.sha256(STATISTICS_MANIFEST.read_bytes()).hexdigest() == (
+        "14b4610595e255f199c58748e387981b294825a145a3ffffa2e0c5e309c175ad"
+    )
+    manifest = parse_manifest_v2_bytes(STATISTICS_MANIFEST.read_bytes())
+    validate_manifest_v2(manifest, expected_backend=None)
+    identities = manifest_identities_v2(manifest)
+    assert identities["manifest_sha256"] == (
+        "96f4fbe8f12d1842e7d57da142fb4942dd5b023cce02b7f1f5f9bbc90e26d0cb"
+    )
+    assert identities["operation_definition_sha256"] == STATISTICS_DEFINITIONS
+
+
+def _reference_manifest():
+    return json.loads(
+        (REPO / "tests/fixtures/operation-pack-v2-python-reference/operation-pack.json").read_text()
+    )
+
+
+def _public_type_conflict(operation):
+    operation["public_interface"] = {
+        "intent": ["conformance"],
+        "inputs": [],
+        "parameters": [{"name": "features", "type": "string", "help": "Feature sequence."}],
+        "outputs": [
+            {"name": output["name"], "description": "Conformance output."}
+            for output in operation["outputs"]
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda op: op["parameter_bindings"].append(
+            {"parameter": "features", "policy": "cell_ids_or_set_v1", "input": "matrix"}
+        ),
+        lambda op: op["parameter_bindings"][0].update(input="space"),
+        lambda op: op["parameter_bindings"][0].update(parameter="chunk_size"),
+        lambda op: op["dimension_policies"][0].update(output="matrix_ordinary"),
+        lambda op: op["chunking"].update(input="missing"),
+        lambda op: op["chunking"].update(sequence_parameter="p_adjust_method"),
+        lambda op: op["chunking"].update(size_parameter="features"),
+        lambda op: op["chunking"].update(output="obs_table"),
+        lambda op: op["chunking"].update(adjust_parameter="features"),
+        _public_type_conflict,
+        lambda op: op["retained_parameters"][0].update(output="missing"),
+        lambda op: op["retained_parameters"][1].update(input="missing"),
+        lambda op: op["retained_parameters"][2].update(parameter="missing"),
+        lambda op: op["retained_parameters"].append(
+            {"name": "feature_rows", "source": "output_meta", "output": "feature_table"}
+        ),
+    ],
+)
+def test_manifest_owned_declarations_reject_semantic_mismatch(mutation):
+    manifest = _reference_manifest()
+    mutation(manifest["operations"][0])
+    _expect(
+        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+        "semantic_admission",
+        validate_manifest_v2,
+        manifest,
+        expected_backend=None,
+    )
+
+
+def test_manifest_owned_declarations_are_namespace_neutral():
+    manifest = _reference_manifest()
+    manifest["namespace"] = "anotherpack"
+    for operation in manifest["operations"]:
+        operation["qualified_name"] = f"anotherpack::{operation['name']}"
+    validate_manifest_v2(manifest, expected_backend=None)
 
 
 def test_manifest_outer_schema_exhaustive_tuple_and_required_field_contract():
@@ -498,6 +585,10 @@ def test_synthetic_pack_all_readers_writers_profiles_and_receipt(installed, tmp_
     assert len(receipt["registry_requests"]) == 1
     assert len(receipt["mutation_manifest"]) == 4
     assert receipt["mutation_manifest"]["entry_count"] == 15
+    feature_grant = next(item for item in request["outputs"] if item["name"] == "feature_table")
+    feature_output = next(item for item in receipt["outputs"] if item["name"] == "feature_table")
+    assert feature_grant["descriptor"]["expected_dimensions"] == [0, 0]
+    assert feature_output["descriptor"]["dimensions"] == [1, 1]
     assert {item["descriptor"]["storage_profile"] for item in request["outputs"]} == {
         "matrix_ordinary_v1",
         "matrix_backed_chunked_v1",
@@ -518,6 +609,70 @@ def test_synthetic_pack_all_readers_writers_profiles_and_receipt(installed, tmp_
         {key: value for key, value in sidecar.items() if key != "runtime_identity"}
     )
     assert not any(key in receipt for key in ("published", "publication", "promoted"))
+
+
+def test_typed_matrix_reader_enforces_exact_chunk_schedule():
+    matrix = {
+        "kind": "matrix",
+        "feature_id": ["g1", "g2", "g3", "g4", "g5"],
+        "cell_id": ["c1", "c2"],
+        "dimensions": [5, 2],
+        "values": [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]],
+    }
+    operation = {
+        "chunking": {
+            "input": "matrix",
+            "sequence_parameter": "features",
+            "size_parameter": "chunk_size",
+        }
+    }
+    params = {"features": matrix["feature_id"], "chunk_size": 2}
+    readers = V3Readers({"matrix": matrix})
+    assert readers["matrix"](features=["g1", "g2"])["dimensions"] == [2, 2]
+    readers["matrix"](features=["g3", "g4"])
+    readers["matrix"](features=["g5"])
+    _audit_chunk_calls(operation, params, readers, {"matrix": matrix})
+    assert [call["features"] for call in readers.calls] == [
+        ["g1", "g2"],
+        ["g3", "g4"],
+        ["g5"],
+    ]
+    _expect(
+        "PYBENCH_INPUT_IDENTITY_MISMATCH",
+        "execution",
+        V3Readers({"matrix": matrix})["matrix"],
+        features=["not_granted"],
+    )
+
+
+def test_chunk_schedule_mismatch_rolls_back_before_receipt(installed, tmp_path, monkeypatch):
+    _manifest, discovery = installed
+    registration = activate_operation_pack_v2(discovery)
+    original = registration.handlers["scwbpyv2reference::all_contracts"]
+
+    def duplicate_read(readers, writers, params, context):
+        original(readers, writers, params, context)
+        readers["matrix"](features=params["features"])
+
+    monkeypatch.setitem(registration.handlers, "scwbpyv2reference::all_contracts", duplicate_read)
+    stage = tmp_path / "chunk-mismatch"
+    stage.mkdir()
+    request = make_request(
+        discovery,
+        stage,
+        "scwbpyv2reference::all_contracts",
+        fixture_inputs(),
+    )
+    before = _stage_snapshot(stage)
+    _expect(
+        "PYBENCH_CAPABILITY_MISMATCH",
+        "execution",
+        execute_operation_pack_v3,
+        request,
+        discovery,
+        stage,
+    )
+    assert _stage_snapshot(stage) == before
 
 
 def test_dynamic_dependency_resolution_and_changed_provider_fail_before_dispatch(

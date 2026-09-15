@@ -184,6 +184,34 @@ def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) 
     expected_outputs = [item["name"] for item in operation["outputs"]]
     if output_names != expected_outputs or len(output_names) != len(set(output_names)):
         _fail("PYBENCH_CAPABILITY_MISMATCH", "Request output closure differs", "staging")
+    outputs_by_name = {item["name"]: item for item in operation["outputs"]}
+    dynamic_outputs = {item["output"] for item in operation.get("dimension_policies", [])}
+    for item in value["outputs"]:
+        declaration = outputs_by_name[item["name"]]
+        descriptor = item["descriptor"]
+        declared_tuple = (
+            declaration["category"],
+            declaration["kind"],
+            declaration["storage_profile"],
+        )
+        granted_tuple = (
+            descriptor["category"],
+            descriptor["kind"],
+            descriptor["storage_profile"],
+        )
+        if declared_tuple != granted_tuple:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                f"Output {item['name']!r} type tuple differs from the manifest",
+                "staging",
+            )
+        dynamic = item["name"] in dynamic_outputs
+        if dynamic != (descriptor["expected_dimensions"] == [0, 0]):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                f"Output {item['name']!r} dimension policy differs from the manifest",
+                "staging",
+            )
     cap = value["execution_capability"]
     readers = [
         {
@@ -568,7 +596,7 @@ def _dimensions(value: Mapping[str, Any]) -> list[int]:
             isinstance(item, (int, float))
             and not isinstance(item, bool)
             and float(item).is_integer()
-            and item >= 1
+            and item >= 0
             for item in dimensions
         )
     ):
@@ -593,14 +621,69 @@ class _Write:
     writer: str
 
 
-class V3Readers(Mapping[str, Callable[[], dict[str, Any]]]):
+class V3Readers(Mapping[str, Callable[..., dict[str, Any]]]):
     def __init__(self, values: Mapping[str, dict[str, Any]]):
         self._values = dict(values)
+        self._calls: list[dict[str, Any]] = []
 
-    def __getitem__(self, key: str) -> Callable[[], dict[str, Any]]:
+    @property
+    def calls(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._calls)
+
+    def __getitem__(self, key: str) -> Callable[..., dict[str, Any]]:
         if key not in self._values:
             raise KeyError(key)
-        return lambda: copy.deepcopy(self._values[key])
+        value = self._values[key]
+        if value["kind"] != "matrix":
+
+            def read_primitive(*args, **kwargs):
+                if args or kwargs:
+                    _fail(
+                        "PYBENCH_CAPABILITY_MISMATCH",
+                        "Only read_matrix accepts a typed selection",
+                        "execution",
+                    )
+                return copy.deepcopy(value)
+
+            return read_primitive
+
+        def read_matrix(*, features=None, cells=None):
+            allowed_features = list(value.get("feature_id", []))
+            allowed_cells = list(value.get("cell_id", []))
+            selected_features = allowed_features if features is None else list(features)
+            selected_cells = allowed_cells if cells is None else list(cells)
+            if (
+                any(not isinstance(item, str) for item in selected_features + selected_cells)
+                or not set(selected_features) <= set(allowed_features)
+                or not set(selected_cells) <= set(allowed_cells)
+            ):
+                _fail(
+                    "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                    "Matrix reader selection exceeds the authenticated input descriptor",
+                    "execution",
+                )
+            feature_index = [allowed_features.index(item) for item in selected_features]
+            cell_index = [allowed_cells.index(item) for item in selected_cells]
+            result = copy.deepcopy(value)
+            source_values = value.get("values")
+            if not isinstance(source_values, list):
+                _fail(
+                    "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                    "Projected Python matrix has no readable values",
+                    "execution",
+                )
+            result["values"] = [
+                [source_values[row][column] for column in cell_index] for row in feature_index
+            ]
+            result["feature_id"] = selected_features
+            result["cell_id"] = selected_cells
+            result["dimensions"] = [len(selected_features), len(selected_cells)]
+            self._calls.append(
+                {"input": key, "features": selected_features, "cells": selected_cells}
+            )
+            return result
+
+        return read_matrix
 
     def __iter__(self):
         return iter(self._values)
@@ -684,6 +767,39 @@ class V3Writers:
 
     def request_cell_set_admission(self, name, value, semantic_metadata=None):
         return self._write("request_cell_set_admission", name, value, semantic_metadata)
+
+
+def _audit_chunk_calls(
+    operation: Mapping[str, Any],
+    params: Mapping[str, Any],
+    readers: V3Readers,
+    inputs: Mapping[str, Mapping[str, Any]],
+) -> None:
+    chunk = operation.get("chunking")
+    if chunk is None:
+        return
+    sequence = params.get(chunk["sequence_parameter"])
+    if sequence is None:
+        sequence = inputs[chunk["input"]].get("feature_id", [])
+    if not isinstance(sequence, list) or any(not isinstance(item, str) for item in sequence):
+        _fail(
+            "PYBENCH_CAPABILITY_MISMATCH",
+            "Chunk sequence is not an ordered feature list",
+            "execution",
+        )
+    size = params.get(chunk["size_parameter"])
+    if not isinstance(size, int) or isinstance(size, bool) or size < 1:
+        _fail("PYBENCH_CAPABILITY_MISMATCH", "Chunk size is invalid", "execution")
+    expected = [sequence[index : index + size] for index in range(0, len(sequence), size)]
+    observed = [call["features"] for call in readers.calls if call["input"] == chunk["input"]]
+    if observed != expected or any(not batch or len(batch) > size for batch in observed):
+        _fail(
+            "PYBENCH_CAPABILITY_MISMATCH",
+            "Observed matrix-reader calls do not implement the authenticated chunk declaration",
+            "execution",
+            expected_batches=expected,
+            observed_batches=observed,
+        )
 
 
 def _read_inputs(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, Any]]:
@@ -792,7 +908,11 @@ def _observed_descriptor(grant: Mapping[str, Any], write: _Write) -> dict[str, A
     value = write.value
     kind = expected["kind"]
     dimensions = _dimensions(value)
-    if dimensions != expected["expected_dimensions"]:
+    dynamic_table = kind in {"feature_table", "obs_table"} and expected["expected_dimensions"] == [
+        0,
+        0,
+    ]
+    if not dynamic_table and dimensions != expected["expected_dimensions"]:
         _fail("PYBENCH_OUTPUT_INVALID", f"Output {grant['name']!r} dimensions differ", "audit")
     observed: dict[str, Any] = {
         "category": expected["category"],
@@ -1004,8 +1124,9 @@ def execute_operation_pack_v3(
         if fault_hook:
             fault_hook("before_dispatch")
         writers = V3Writers(request, root)
+        readers = V3Readers(inputs)
         active[1].handlers[operation_name](
-            V3Readers(inputs),
+            readers,
             writers,
             copy.deepcopy(request["params"]),
             {
@@ -1013,6 +1134,7 @@ def execute_operation_pack_v3(
                 "capability_id": request["execution_capability"]["capability_id"],
             },
         )
+        _audit_chunk_calls(operation, request["params"], readers, inputs)
         if fault_hook:
             fault_hook("after_handler")
         writes = writers.writes

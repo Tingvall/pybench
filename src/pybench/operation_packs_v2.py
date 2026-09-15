@@ -245,6 +245,34 @@ def _duplicates(values: list[str]) -> bool:
     return len(values) != len(set(values))
 
 
+def _declaration_error(operation: str, message: str) -> None:
+    _fail(
+        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+        f"Operation {operation!r} {message}",
+        "semantic_admission",
+        operation=operation,
+    )
+
+
+def _catalog_param_type(schema: Mapping[str, Any] | None) -> str:
+    if not schema:
+        return "list"
+    declared = schema.get("type", "list")
+    types = [declared] if isinstance(declared, str) else declared
+    if "integer" in types:
+        return "int"
+    if "number" in types:
+        return "dbl"
+    if "boolean" in types:
+        return "bool"
+    if "string" in types:
+        return "choice" if "enum" in schema else "string"
+    if "array" in types and isinstance(schema.get("items"), Mapping):
+        if schema["items"].get("type") == "string":
+            return "string_vec"
+    return "list"
+
+
 def _semantic_admission(manifest: Mapping[str, Any]) -> None:
     namespace = manifest["namespace"]
     operations = manifest["operations"]
@@ -294,6 +322,132 @@ def _semantic_admission(manifest: Mapping[str, Any]) -> None:
                     "Dynamic dependency names an undeclared input",
                     "semantic_admission",
                     operation=opname,
+                )
+        properties = operation["params_schema"].get("properties", {})
+        public = operation.get("public_interface")
+        if public is not None:
+            public_inputs = [item["name"] for item in public["inputs"]]
+            public_params = [item["name"] for item in public["parameters"]]
+            public_outputs = [item["name"] for item in public["outputs"]]
+            if (
+                _duplicates(public_inputs)
+                or not set(public_inputs) <= set(input_names)
+                or _duplicates(public_params)
+                or not set(public_params) <= set(properties)
+                or _duplicates(public_outputs)
+                or set(public_outputs) != set(output_names)
+            ):
+                _declaration_error(
+                    opname,
+                    "public interface is not an exact bijection with its inputs, parameters, and outputs",
+                )
+            for item in public["parameters"]:
+                expected = _catalog_param_type(properties[item["name"]])
+                declared = item["type"]
+                compatible = (
+                    declared == expected
+                    or (expected == "string_vec" and declared in {"cell_ids_or_set", "string_vec"})
+                    or (expected == "string" and declared == "cell_set")
+                )
+                if not compatible:
+                    _declaration_error(
+                        opname,
+                        f"public parameter {item['name']!r} type conflicts with params_schema",
+                    )
+        bindings = operation.get("parameter_bindings", [])
+        binding_names = [item["parameter"] for item in bindings]
+        if _duplicates(binding_names):
+            _declaration_error(opname, "repeats a parameter binding")
+        inputs_by_name = {item["name"]: item for item in operation["inputs"]}
+        for binding in bindings:
+            parameter = binding["parameter"]
+            source_input = inputs_by_name.get(binding["input"])
+            parameter_schema = properties.get(parameter)
+            if source_input is None or parameter_schema is None or source_input["kind"] != "matrix":
+                _declaration_error(
+                    opname,
+                    "has a parameter binding with a missing or incompatible input/parameter reference",
+                )
+            schema_types = parameter_schema.get("type", [])
+            schema_types = [schema_types] if isinstance(schema_types, str) else schema_types
+            items = parameter_schema.get("items")
+            if (
+                "array" not in schema_types
+                or not isinstance(items, Mapping)
+                or items.get("type") != "string"
+            ):
+                _declaration_error(
+                    opname,
+                    f"binding policy {binding['policy']!r} requires an array-of-string parameter",
+                )
+        policies = operation.get("dimension_policies", [])
+        policy_outputs = [item["output"] for item in policies]
+        if _duplicates(policy_outputs):
+            _declaration_error(opname, "repeats a dimension policy output")
+        outputs_by_name = {item["name"]: item for item in operation["outputs"]}
+        for policy in policies:
+            output = outputs_by_name.get(policy["output"])
+            if output is None or not (
+                output["category"] == "terminal_artifact"
+                and output["kind"] in {"feature_table", "obs_table"}
+                and output["storage_profile"] == "terminal_primitive_v1"
+            ):
+                _declaration_error(
+                    opname, "declares data-dependent dimensions for an incompatible output"
+                )
+        chunk = operation.get("chunking")
+        if chunk is not None:
+            source_input = inputs_by_name.get(chunk["input"])
+            output = outputs_by_name.get(chunk["output"])
+            sequence_schema = properties.get(chunk["sequence_parameter"])
+            size_schema = properties.get(chunk["size_parameter"])
+            adjust_schema = properties.get(chunk["adjust_parameter"])
+            valid = (
+                source_input is not None
+                and output is not None
+                and source_input["kind"] == "matrix"
+                and output["kind"] == "feature_table"
+                and chunk["output"] in policy_outputs
+                and _catalog_param_type(sequence_schema) == "string_vec"
+                and _catalog_param_type(size_schema) == "int"
+                and _catalog_param_type(adjust_schema) == "string"
+                and isinstance(size_schema.get("minimum") if size_schema else None, (int, float))
+                and not isinstance(size_schema.get("minimum") if size_schema else None, bool)
+                and size_schema["minimum"] >= 1
+                and isinstance(size_schema.get("default") if size_schema else None, (int, float))
+                and not isinstance(size_schema.get("default") if size_schema else None, bool)
+                and size_schema["default"] >= 1
+                and chunk["sequence_parameter"] in binding_names
+            )
+            if not valid:
+                _declaration_error(
+                    opname,
+                    "has a chunk declaration with a missing, incompatible, or undeclared reference",
+                )
+        retained = operation.get("retained_parameters", [])
+        retained_names = [item["name"] for item in retained]
+        if _duplicates(retained_names):
+            _declaration_error(opname, "repeats a retained parameter name")
+        for item in retained:
+            source = item["source"]
+            needs_output = source in {"output_meta", "output_first_row", "output_row_count"}
+            needs_input = source == "input_feature_count"
+            needs_parameter = source in {
+                "parameter_supplied",
+                "parameter_count",
+                "parameter_value",
+            }
+            needs_field = source in {"output_meta", "output_first_row"}
+            valid = (
+                (not needs_output or item.get("output") in output_names)
+                and (not needs_input or item.get("input") in input_names)
+                and (not needs_parameter or item.get("parameter") in properties)
+                and (not needs_field or bool(item.get("field")))
+            )
+            if not valid:
+                _declaration_error(
+                    opname,
+                    f"retained parameter {item['name']!r} has an invalid source reference",
                 )
         groups = {item["name"]: item["promotion_group"] for item in operation["outputs"]}
         categories = {item["name"]: item["category"] for item in operation["outputs"]}

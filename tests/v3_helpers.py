@@ -286,7 +286,12 @@ def _expected_dimensions(kind: str) -> list[int]:
 
 
 def _output_descriptor(
-    output: dict, input_names: list[str], cells: list[str], features: list[str]
+    output: dict,
+    input_names: list[str],
+    cells: list[str],
+    features: list[str],
+    *,
+    dynamic_dimensions: bool = False,
 ) -> dict:
     kind = output["kind"]
     alignment = (
@@ -317,7 +322,7 @@ def _output_descriptor(
         "kind": kind,
         "storage_profile": output["storage_profile"],
         "writer": _writer(output),
-        "expected_dimensions": _expected_dimensions(kind),
+        "expected_dimensions": [0, 0] if dynamic_dimensions else _expected_dimensions(kind),
         "expected_alignment": alignment,
         "expected_ancestry_identity": _identity(
             "scworkbench.provenance.ancestry.v1",
@@ -392,11 +397,18 @@ def make_request(discovery, stage: Path, operation_name: str, inputs: dict[str, 
     first = next(iter(selected_inputs.values()))
     cells = first.get("cell_id", ["cell_1"])
     features = first.get("feature_id", ["feature_1"])
+    dynamic_outputs = {item["output"] for item in operation.get("dimension_policies", [])}
     output_records = [
         {
             "name": output["name"],
             "allocated_id": f"allocated_{output['name']}",
-            "descriptor": _output_descriptor(output, list(selected_inputs), cells, features),
+            "descriptor": _output_descriptor(
+                output,
+                list(selected_inputs),
+                cells,
+                features,
+                dynamic_dimensions=output["name"] in dynamic_outputs,
+            ),
         }
         for output in operation["outputs"]
     ]
@@ -471,6 +483,13 @@ def make_request(discovery, stage: Path, operation_name: str, inputs: dict[str, 
         },
     )
     identity = discovery.identity
+    params = {}
+    if chunking := operation.get("chunking"):
+        params = {
+            chunking["sequence_parameter"]: features,
+            chunking["size_parameter"]: max(len(features), 1),
+            chunking["adjust_parameter"]: "BH",
+        }
     request = {
         "schema": "scworkbench.operation_pack.transition_request.v2",
         "message_type": "request",
@@ -510,7 +529,7 @@ def make_request(discovery, stage: Path, operation_name: str, inputs: dict[str, 
             "network_policy": "deny",
         },
         "inputs": input_records,
-        "params": {},
+        "params": params,
         "outputs": output_records,
     }
     capability = {
