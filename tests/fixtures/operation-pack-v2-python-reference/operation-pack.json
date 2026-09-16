@@ -155,6 +155,26 @@
       "dependencies": [],
       "promotion_closure": {"feature_table": ["feature_table"]},
       "replay_equivalence": {"feature_table": "exact_canonical_value"}
+    },
+    {
+      "name": "family_probe",
+      "qualified_name": "scwbpyv2reference::family_probe",
+      "title": "Cell-set-family admission probe",
+      "description": "Synthetic conformance operation for core-owned family admission.",
+      "runner": ".family_probe",
+      "inputs": [
+        {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "family": {"type": "object"}
+      }, "required": ["family"], "additionalProperties": false},
+      "outputs": [
+        {"name": "family", "category": "core_registry_request", "kind": "cell_set_family_admission", "storage_profile": "cell_set_family_admission_v1", "allocated_id_key": "family_id", "required": true, "promotion_group": "family"},
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "family", "table_type": "family_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"summary": ["family", "summary"]},
+      "replay_equivalence": {"family": "exact_family_membership_and_order", "summary": "exact_canonical_value"}
     }
   ]
 }

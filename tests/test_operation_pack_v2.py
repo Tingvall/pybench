@@ -38,7 +38,7 @@ from v3_helpers import deep_copy, fixture_inputs, install_reference_fixture, mak
 
 REPO = Path(__file__).parents[1]
 FORGE = Path(
-    "/home/dirk/Projects/.scworkbench-worktrees/core-to-packs-phase3a-statistics-forge-20260914"
+    "/home/dirk/Projects/.scworkbench-worktrees/core-to-packs-phase3b-geneprograms-forge-20260916"
 )
 SHARED = (
     "operation-pack-v2.schema.json",
@@ -306,7 +306,7 @@ def test_manifest_outer_schema_exhaustive_tuple_and_required_field_contract():
                 valid = output_validator.is_valid(candidate)
                 assert valid == ((category, kind, profile) in output_tuples)
                 invalid_outputs += not valid
-    assert (invalid_inputs, invalid_outputs) == (66, 345)
+    assert (invalid_inputs, invalid_outputs) == (66, 413)
 
     input_removals = 0
     for branch in inputs:
@@ -341,7 +341,7 @@ def test_manifest_outer_schema_exhaustive_tuple_and_required_field_contract():
                 {key: child for key, child in candidate.items() if key != field}
             )
             output_removals += 1
-    assert (input_removals, output_removals) == (44, 105)
+    assert (input_removals, output_removals) == (44, 112)
 
 
 def test_all_fixed_shared_schema_negative_fixtures_are_rejected():
@@ -557,6 +557,7 @@ def test_atomic_multi_operation_activation_and_exact_preimage(installed):
     assert set(registration.handlers) == {
         "scwbpyv2reference::all_contracts",
         "scwbpyv2reference::chunk_probe",
+        "scwbpyv2reference::family_probe",
         "scwbpyv2reference::dynamic_provider",
     }
     assert set(active_operation_packs_v2()) == {"scwbpyv2reference"}

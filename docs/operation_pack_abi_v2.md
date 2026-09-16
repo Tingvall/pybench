@@ -78,8 +78,20 @@ The writer object exposes only the granted methods:
 ```text
 write_matrix, write_space, write_space_2d, write_model_ref,
 write_terminal_primitive, write_path_2d_family, write_space_path_family,
-request_cell_set_admission
+request_cell_set_admission,
+request_cell_set_family_admission
 ```
+
+`request_cell_set_family_admission` writes one normalized, authenticated
+`cell_set_family_admission` payload under the granted private
+`registry_requests/<output-name>/payload.json` root. It accepts zero or more
+named sets, canonicalizes names and member order against the authenticated
+cell order, and records per-set membership plus family and source identities.
+The family grant uses `[0, 0]` as a dimension sentinel; the receipt reports
+actual set and member counts. `validate_receipt_v3(..., stage_root=...)`
+independently compares its descriptor with the staged payload. PyBench does not
+admit sets into the committed registry: scworkbench applies or rejects the
+request only during promotion.
 
 The implementation supports every input kind, output tuple, and storage profile
 accepted by the shared schemas. It independently verifies dimensions,

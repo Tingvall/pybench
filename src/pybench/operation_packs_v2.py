@@ -485,6 +485,8 @@ def _semantic_admission(manifest: Mapping[str, Any]) -> None:
                 allowed = {"exact_canonical_value"}
             elif category == "core_registry_request" and kind == "cell_set_admission":
                 allowed = {"exact_membership_and_order"}
+            elif category == "core_registry_request" and kind == "cell_set_family_admission":
+                allowed = {"exact_family_membership_and_order"}
             else:
                 allowed = set()
             valid_replay &= replay.get(output["name"]) in allowed

@@ -223,7 +223,11 @@ def _input_descriptor(name: str, value: dict, declaration: dict) -> dict:
 
 def _writer(output: dict) -> str:
     if output["category"] == "core_registry_request":
-        return "request_cell_set_admission"
+        return (
+            "request_cell_set_family_admission"
+            if output["kind"] == "cell_set_family_admission"
+            else "request_cell_set_admission"
+        )
     return {
         "matrix": "write_matrix",
         "space": "write_space",
@@ -265,6 +269,15 @@ def _semantic(output: dict) -> dict:
             "members_in_universe": True,
             "order": "core_cell_order",
         },
+        "cell_set_family_admission": {
+            "set_names_unique": True,
+            "members_unique": True,
+            "members_in_universe": True,
+            "set_order": "canonical_name_order",
+            "member_order": "core_cell_order",
+            "family_mode": ["add", "replace"],
+            "source_provenance": "unambiguous",
+        },
     }[kind]
 
 
@@ -282,6 +295,7 @@ def _expected_dimensions(kind: str) -> list[int]:
         "path_2d_family": [1, 4],
         "space_path_family": [1, 5],
         "cell_set_admission": [1],
+        "cell_set_family_admission": [0, 0],
     }[kind]
 
 
@@ -317,6 +331,8 @@ def _output_descriptor(
         if kind == "space_path_family"
         else "none"
     )
+    if kind == "cell_set_family_admission":
+        alignment = "family_name_then_core_cell_order"
     descriptor = {
         "category": output["category"],
         "kind": kind,
@@ -341,6 +357,7 @@ def _output_descriptor(
         "cell_vector_family",
         "relation_family",
         "cell_set_admission",
+        "cell_set_family_admission",
     }:
         descriptor["expected_cell_order_identity"] = _identity("scworkbench.cell_order.v1", cells)
     if kind in {"matrix", "feature_table"}:

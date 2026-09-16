@@ -150,11 +150,20 @@ def _chunk_probe(readers, writers, params, context):
     )
 
 
+def _family_probe(readers, writers, params, context):
+    readers["matrix"]()
+    writers.request_cell_set_family_admission("family", params["family"])
+    writers.write_terminal_primitive(
+        "summary", {"kind": "obs_table", "dimensions": [1, 1], "rows": [{"value": 1}]}
+    )
+
+
 def register():
     return operation_pack_handlers_v2(
         {
             "scwbpyv2reference::all_contracts": _all_contracts,
             "scwbpyv2reference::dynamic_provider": _dynamic_provider,
             "scwbpyv2reference::chunk_probe": _chunk_probe,
+            "scwbpyv2reference::family_probe": _family_probe,
         }
     )

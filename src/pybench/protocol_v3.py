@@ -20,6 +20,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from .cell_set_family import normalize_cell_set_family
 from .operation_packs import OperationPackError, canonical_json, canonical_sha256, protocol_asset
 from .operation_packs_v2 import (
     PROCESS_PROTOCOL_V3,
@@ -42,6 +43,7 @@ _WRITER_METHODS = {
     "write_path_2d_family",
     "write_space_path_family",
     "request_cell_set_admission",
+    "request_cell_set_family_admission",
 }
 _CELL_KINDS = {
     "matrix",
@@ -206,7 +208,9 @@ def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) 
                 f"Output {item['name']!r} type tuple differs from the manifest",
                 "staging",
             )
-        dynamic = item["name"] in dynamic_outputs
+        dynamic = (
+            item["name"] in dynamic_outputs or descriptor["kind"] == "cell_set_family_admission"
+        )
         if dynamic != (descriptor["expected_dimensions"] == [0, 0]):
             _fail(
                 "PYBENCH_CAPABILITY_MISMATCH",
@@ -259,7 +263,11 @@ def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) 
     return value
 
 
-def validate_receipt_v3(receipt: Mapping[str, Any], request: Mapping[str, Any]) -> dict[str, Any]:
+def validate_receipt_v3(
+    receipt: Mapping[str, Any],
+    request: Mapping[str, Any],
+    stage_root: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
     value = copy.deepcopy(dict(receipt))
     if value.get("process_protocol_version") != PROCESS_PROTOCOL_V3:
         _fail(
@@ -312,6 +320,36 @@ def validate_receipt_v3(receipt: Mapping[str, Any], request: Mapping[str, Any]) 
                 "PYBENCH_RECEIPT_MISMATCH",
                 "receipt",
             )
+            if item["descriptor"]["kind"] == "cell_set_family_admission" and stage_root is not None:
+                root = _safe_root(Path(stage_root))
+                relative = f"registry_requests/{item['name']}/payload.json"
+                path = _safe_relative(root, relative, must_exist=True)
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    first_input = request["inputs"][0]["name"]
+                    projected = json.loads(
+                        _safe_relative(
+                            root, f"inputs/{first_input}/payload.json", must_exist=True
+                        ).read_text(encoding="utf-8")
+                    )
+                    grant = next(grant for grant in grants if grant["name"] == item["name"])
+                    expected = _observed_descriptor(
+                        grant,
+                        _Write(payload, path, {}, item["descriptor"]["writer"]),
+                        projected.get("cell_id", []),
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError, StopIteration) as exc:
+                    _fail(
+                        "PYBENCH_RECEIPT_MISMATCH",
+                        f"Family evidence is unreadable: {exc}",
+                        "receipt",
+                    )
+                if canonical_json(item["descriptor"]) != canonical_json(expected):
+                    _fail(
+                        "PYBENCH_RECEIPT_MISMATCH",
+                        "Family receipt differs from staged payload",
+                        "receipt",
+                    )
         _assert_self_identity(
             value["mutation_manifest"],
             "mutation_identity",
@@ -589,6 +627,9 @@ def _restore(root: Path, before: Mapping[str, bytes]) -> None:
 
 
 def _dimensions(value: Mapping[str, Any]) -> list[int]:
+    if value.get("kind") == "cell_set_family_admission":
+        sets = value.get("sets", [])
+        return [len(sets), sum(len(item["cells"]) for item in sets)]
     dimensions = value.get("dimensions")
     if (
         isinstance(dimensions, list)
@@ -694,9 +735,10 @@ class V3Readers(Mapping[str, Callable[..., dict[str, Any]]]):
 
 
 class V3Writers:
-    def __init__(self, request: Mapping[str, Any], stage_root: Path):
+    def __init__(self, request: Mapping[str, Any], stage_root: Path, cell_order: list[str]):
         self._grants = {item["name"]: item for item in request["outputs"]}
         self._stage_root = stage_root
+        self._cell_order = cell_order
         self._writes: dict[str, _Write] = {}
         self._consumed = False
 
@@ -729,6 +771,8 @@ class V3Writers:
         expected_kind = grant["descriptor"]["kind"]
         if payload.get("kind") != expected_kind:
             _fail("PYBENCH_OUTPUT_INVALID", f"Output {name!r} has the wrong kind", "execution")
+        if expected_kind == "cell_set_family_admission":
+            payload, _ = normalize_cell_set_family(payload, self._cell_order)
         relative_root = grant["descriptor"].get("relative_root", f"registry_requests/{name}")
         output_root = _safe_relative(self._stage_root, relative_root)
         if output_root.exists():
@@ -768,6 +812,9 @@ class V3Writers:
 
     def request_cell_set_admission(self, name, value, semantic_metadata=None):
         return self._write("request_cell_set_admission", name, value, semantic_metadata)
+
+    def request_cell_set_family_admission(self, name, value, semantic_metadata=None):
+        return self._write("request_cell_set_family_admission", name, value, semantic_metadata)
 
 
 def _audit_chunk_calls(
@@ -928,12 +975,18 @@ def _read_inputs(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, 
     return values
 
 
-def _observed_descriptor(grant: Mapping[str, Any], write: _Write) -> dict[str, Any]:
+def _observed_descriptor(
+    grant: Mapping[str, Any], write: _Write, cell_order: list[str]
+) -> dict[str, Any]:
     expected = grant["descriptor"]
     value = write.value
     kind = expected["kind"]
     dimensions = _dimensions(value)
-    dynamic_table = kind in {"feature_table", "obs_table"} and expected["expected_dimensions"] == [
+    dynamic_table = kind in {
+        "feature_table",
+        "obs_table",
+        "cell_set_family_admission",
+    } and expected["expected_dimensions"] == [
         0,
         0,
     ]
@@ -949,6 +1002,43 @@ def _observed_descriptor(grant: Mapping[str, Any], write: _Write) -> dict[str, A
         "alignment": expected["expected_alignment"],
         "ancestry_identity": expected["expected_ancestry_identity"],
     }
+    if kind == "cell_set_family_admission":
+        normalized, identities = normalize_cell_set_family(value, cell_order)
+        if (
+            normalized != value
+            or _identity("scworkbench.cell_order.v1", cell_order)
+            != expected["expected_cell_order_identity"]
+        ):
+            _fail(
+                "PYBENCH_OUTPUT_INVALID",
+                "Family payload or cell order differs from its grant",
+                "audit",
+            )
+        observed.update(
+            cell_order_identity=expected["expected_cell_order_identity"],
+            family_identity=identities["family_identity"],
+            member_identities=identities["member_identities"],
+            source_identity=identities["source_identity"],
+            semantic_validation={
+                "constraints_identity": _identity(
+                    "scworkbench.operation_pack.semantic_constraints.v2",
+                    expected["semantic_constraints"],
+                    "cell-set-family admission constraints",
+                ),
+                "status": "passed",
+            },
+        )
+        observed["ancestry_identity"] = _identity(
+            "scworkbench.provenance.ancestry.v1",
+            expected["expected_ancestry_identity"],
+            "registry request ancestry",
+        )
+        observed["observed_descriptor_identity"] = _identity(
+            "scworkbench.operation_pack.observed_registry_request.v2",
+            observed,
+            "descriptor excluding observed_descriptor_identity",
+        )
+        return observed
     if kind == "cell_set_admission":
         cells = _ordered(value, "cells")
         if len(cells) != len(set(cells)):
@@ -1230,7 +1320,8 @@ def execute_operation_pack_v3(
         preflight = preflight_v3(operation, inputs, request["params"], request)
         if fault_hook:
             fault_hook("before_dispatch")
-        writers = V3Writers(request, root)
+        cell_order = list(next(iter(inputs.values())).get("cell_id", [])) if inputs else []
+        writers = V3Writers(request, root, cell_order)
         readers = V3Readers(inputs)
         active[1].handlers[operation_name](
             readers,
@@ -1269,7 +1360,7 @@ def execute_operation_pack_v3(
             record = {
                 "name": grant["name"],
                 "allocated_id": grant["allocated_id"],
-                "descriptor": _observed_descriptor(grant, write),
+                "descriptor": _observed_descriptor(grant, write, cell_order),
             }
             target = (
                 registry_requests
@@ -1342,7 +1433,7 @@ def execute_operation_pack_v3(
         receipt["receipt_identity"] = _identity(
             RECEIPT_SCHEMA, receipt, "receipt excluding receipt_identity"
         )
-        validate_receipt_v3(receipt, request)
+        validate_receipt_v3(receipt, request, root)
         sidecar = _python_runtime_sidecar(discovery, request, chunk_observation)
         validate_python_runtime_sidecar_v3(sidecar, request, discovery, inputs)
         return receipt, sidecar
