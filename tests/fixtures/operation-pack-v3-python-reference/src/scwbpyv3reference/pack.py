@@ -218,6 +218,22 @@ def _cell_chunk_probe(readers, writers, params, context):
     )
 
 
+def _zero_axis_probe(readers, writers, params, context):
+    capability = context["typed_slice_reads"]["matrix_chunks"]
+    if capability["features"]:
+        raise ValueError("zero-axis fixture requires an empty selected feature axis")
+    writers.write_terminal_primitive(
+        "summary",
+        {
+            "kind": "obs_table",
+            "dimensions": [1, 1],
+            "rows": [{"typed_slice_calls": 0}],
+            "storage_profile": "terminal_primitive_v1",
+            "meta": {},
+        },
+    )
+
+
 def _cardinality_family_probe(readers, writers, params, context):
     signals = readers["signals"]()
     cell_order = list(dict.fromkeys(signals["cell_id"]))
@@ -284,6 +300,7 @@ def register():
             "scwbpyv3reference::dynamic_provider": _dynamic_provider,
             "scwbpyv3reference::chunk_probe": _chunk_probe,
             "scwbpyv3reference::cell_chunk_probe": _cell_chunk_probe,
+            "scwbpyv3reference::zero_axis_probe": _zero_axis_probe,
             "scwbpyv3reference::cardinality_family_probe": _cardinality_family_probe,
             "scwbpyv3reference::cardinality_reduction_probe": _cardinality_reduction_probe,
             "scwbpyv3reference::ancestry_probe": _ancestry_probe,

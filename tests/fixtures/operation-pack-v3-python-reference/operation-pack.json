@@ -238,6 +238,39 @@
       "replay_equivalence": {"scores": "exact_canonical_value", "summary": "exact_canonical_value"}
     },
     {
+      "name": "zero_axis_probe",
+      "qualified_name": "scwbpyv3reference::zero_axis_probe",
+      "title": "Zero-axis typed-slice probe",
+      "description": "Synthetic ABI-v3 operation proving an allowed empty selected axis performs no reader calls.",
+      "runner": ".zero_axis_probe",
+      "inputs": [
+        {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "slice_features": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "chunk_size": {"type": "integer", "default": 2, "minimum": 1}
+      }, "required": ["slice_features", "chunk_size"], "additionalProperties": false},
+      "typed_slice_reads": [
+        {
+          "name": "matrix_chunks", "input": "matrix", "reader": "read_typed_slices",
+          "kind": "matrix", "supported_axes": ["cells"], "chunk_axis": "cells",
+          "chunk_size_parameter": "chunk_size",
+          "call_discipline": "ordered_partition_exactly_once",
+          "empty_selection_policy": "allow_zero_axis", "duplicate_policy": "reject",
+          "selection": {
+            "cells": {"policy": "effective_input_axis_v1"},
+            "features": {"policy": "parameter_ordered_subset_v1", "parameter": "slice_features", "unknown": "error", "duplicates": "reject", "order": "parameter_order"}
+          }
+        }
+      ],
+      "outputs": [
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "summary", "table_type": "zero_axis_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"summary": ["summary"]},
+      "replay_equivalence": {"summary": "exact_canonical_value"}
+    },
+    {
       "name": "cardinality_family_probe",
       "qualified_name": "scwbpyv3reference::cardinality_family_probe",
       "title": "Bounded Cartesian family probe",

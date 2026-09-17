@@ -1440,6 +1440,7 @@ def _read_provenance(
             "scworkbench.operation_pack.payload_manifest.v2",
             {
                 "path": f"provenance_reads/{name}/payload.json",
+                "size": path.stat().st_size,
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             },
         )

@@ -23,6 +23,7 @@ from pybench.operation_packs_v3 import (
 )
 from pybench.protocol_v4 import (
     V4Readers,
+    _read_provenance,
     _validate_cardinality_payload,
     _validate_provenance_snapshot,
     execute_operation_pack_v4,
@@ -241,7 +242,10 @@ def _add_cardinality_contracts(request, operation, inputs, params):
         )
 
 
-def _add_typed_slice_contract(request, stage):
+def _add_typed_slice_contract(
+    request, stage, *, selected_features=None, empty_selection_policy="reject"
+):
+    selected_features = ["feature_1"] if selected_features is None else list(selected_features)
     input_record = next(item for item in request["inputs"] if item["name"] == "matrix")
     descriptor = input_record["descriptor"]
     source = {
@@ -273,14 +277,14 @@ def _add_typed_slice_contract(request, stage):
         "supported_axes": ["cells"],
         "chunk_axis": "cells",
         "cells_axis": _axis(stage, "matrix_chunks", "cells", ["c2", "c1", "c3"]),
-        "features_axis": _axis(stage, "matrix_chunks", "features", ["feature_1"]),
+        "features_axis": _axis(stage, "matrix_chunks", "features", selected_features),
         "requested_chunk_size": request["params"]["chunk_size"],
         "call_discipline": "ordered_partition_exactly_once",
-        "empty_selection_policy": "reject",
+        "empty_selection_policy": empty_selection_policy,
         "duplicate_policy": "reject",
-        "max_rows": 1,
+        "max_rows": len(selected_features),
         "max_columns": min(request["params"]["chunk_size"], 3),
-        "max_elements": min(request["params"]["chunk_size"], 3),
+        "max_elements": len(selected_features) * min(request["params"]["chunk_size"], 3),
         "max_control_bytes": 1_000_000,
         "max_response_bytes": 1_000_000,
         "max_outstanding_responses": 1,
@@ -389,7 +393,7 @@ def _add_provenance_contract(request, stage):
         "snapshot_identity": snapshot["snapshot_identity"],
         "payload_manifest_identity": _identity(
             "scworkbench.operation_pack.payload_manifest.v2",
-            {"path": relative, "sha256": hashlib.sha256(payload).hexdigest()},
+            {"path": relative, "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()},
         ),
     }
     descriptor["descriptor_identity"] = _identity(
@@ -604,6 +608,45 @@ def test_typed_slice_executes_once_and_receipts_transport_neutral_usage(
     assert validate_python_runtime_sidecar_v4(sidecar, request, discovery) == sidecar
 
 
+def test_zero_axis_typed_slice_executes_without_a_broker_call(installed_v3, tmp_path, monkeypatch):
+    discovery = installed_v3
+    unload_operation_pack_v3(discovery.manifest["namespace"])
+    activate_operation_pack_v3(discovery)
+    stage = tmp_path / "zero-axis-process"
+    stage.mkdir()
+    inputs = fixture_inputs()
+    inputs["matrix"].update(
+        dimensions=[1, 3],
+        cell_id=["c2", "c1", "c3"],
+        values=[[2.0, 1.0, 3.0]],
+    )
+    request = _request_v4(
+        discovery,
+        stage,
+        "scwbpyv3reference::zero_axis_probe",
+        inputs,
+        {"slice_features": [], "chunk_size": 2},
+    )
+    _add_typed_slice_contract(
+        request,
+        stage,
+        selected_features=[],
+        empty_selection_policy="allow_zero_axis",
+    )
+    assert validate_request_v4(request, discovery) == request
+    shutil.rmtree(stage / "inputs/matrix")
+    (stage / "broker").mkdir()
+    monkeypatch.setenv("PYBENCH_OPERATION_PACK_BROKER_TOKEN", TOKEN)
+    receipt, sidecar = execute_operation_pack_v4(request, discovery, stage)
+    usage = receipt["typed_slice_usage"][0]
+    assert usage["coverage_status"] == "empty"
+    assert usage["call_count"] == 0
+    assert usage["calls"] == []
+    assert list((stage / "broker").iterdir()) == []
+    assert validate_receipt_v4(receipt, request, discovery, stage) == receipt
+    assert validate_python_runtime_sidecar_v4(sidecar, request, discovery) == sidecar
+
+
 def test_artifact_ancestry_is_single_use_identity_bound_and_mutation_safe(installed_v3, tmp_path):
     discovery = installed_v3
     unload_operation_pack_v3(discovery.manifest["namespace"])
@@ -652,6 +695,47 @@ def test_artifact_ancestry_is_single_use_identity_bound_and_mutation_safe(instal
         for item in changed_stage.rglob("*")
         if item.is_file()
     } == before
+
+
+def test_artifact_ancestry_payload_manifest_binds_path_size_and_sha256(installed_v3, tmp_path):
+    stage = tmp_path / "ancestry-payload-manifest"
+    stage.mkdir()
+    request = _request_v4(
+        installed_v3,
+        stage,
+        "scwbpyv3reference::ancestry_probe",
+        {"signals": _cell_major_family_payload()},
+    )
+    operation = next(
+        item
+        for item in installed_v3.manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::ancestry_probe"
+    )
+    path = stage / "provenance_reads/ancestry/payload.json"
+    expected = _identity(
+        "scworkbench.operation_pack.payload_manifest.v2",
+        {
+            "path": "provenance_reads/ancestry/payload.json",
+            "size": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        },
+    )
+    assert request["provenance_reads"][0]["payload_manifest_identity"] == expected
+    assert (
+        _read_provenance(request, operation, stage)["ancestry"]["artifact_id"] == "artifact_signals"
+    )
+
+    legacy = copy.deepcopy(request)
+    legacy["provenance_reads"][0]["payload_manifest_identity"] = _identity(
+        "scworkbench.operation_pack.payload_manifest.v2",
+        {
+            "path": "provenance_reads/ancestry/payload.json",
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        },
+    )
+    assert (
+        _error_code(_read_provenance, legacy, operation, stage) == "PYBENCH_INPUT_IDENTITY_MISMATCH"
+    )
 
 
 @pytest.mark.parametrize("condition", ["stale", "superseded"])
