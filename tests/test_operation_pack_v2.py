@@ -559,6 +559,7 @@ def test_atomic_multi_operation_activation_and_exact_preimage(installed):
         "scwbpyv2reference::chunk_probe",
         "scwbpyv2reference::family_probe",
         "scwbpyv2reference::registry_probe",
+        "scwbpyv2reference::registry_probe_strict",
         "scwbpyv2reference::dynamic_provider",
     }
     assert set(active_operation_packs_v2()) == {"scwbpyv2reference"}

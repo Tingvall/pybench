@@ -1,3 +1,5 @@
+import os
+
 from pybench.operation_packs_v2 import operation_pack_handlers_v2
 
 
@@ -160,7 +162,18 @@ def _family_probe(readers, writers, params, context):
 
 def _registry_probe(readers, writers, params, context):
     readers["matrix"]()
-    snapshot = readers["feature_sets"]()
+    fault = os.environ.get("SCWBPYV2_REGISTRY_PROBE_FAULT", "")
+    if fault == "missing_reader":
+        snapshot = {"sets": []}
+    elif fault == "duplicate_reader":
+        snapshot = readers["feature_sets"]()
+        readers["feature_sets"]()
+    elif fault == "undeclared_reader":
+        readers["undeclared"]()
+    else:
+        snapshot = readers["feature_sets"]()
+    if fault == "mutate_private_copy":
+        snapshot["sets"].clear()
     writers.write_terminal_primitive(
         "summary",
         {
@@ -179,5 +192,6 @@ def register():
             "scwbpyv2reference::chunk_probe": _chunk_probe,
             "scwbpyv2reference::family_probe": _family_probe,
             "scwbpyv2reference::registry_probe": _registry_probe,
+            "scwbpyv2reference::registry_probe_strict": _registry_probe,
         }
     )
