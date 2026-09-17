@@ -214,7 +214,27 @@ def _score_summary(merged_family, metadata):
 
 def _cardinality_family_probe(readers, writers, params, context):
     signals = readers["signals"]()
-    writers.write_terminal_primitive("scores", signals)
+    cell_order = list(dict.fromkeys(signals["cell_id"]))
+    key_order = list(dict.fromkeys(signals["key"]))
+    values = {
+        (key, cell): value
+        for key, cell, value in zip(
+            signals["key"], signals["cell_id"], signals["value"], strict=True
+        )
+    }
+    rows = [(key, cell) for key in key_order for cell in cell_order]
+    writers.write_terminal_primitive(
+        "scores",
+        {
+            "kind": "cell_vector_family",
+            "dimensions": [len(rows), 3],
+            "cell_id": [cell for _, cell in rows],
+            "key": [key for key, _ in rows],
+            "value": [values[(key, cell)] for key, cell in rows],
+            "storage_profile": "terminal_primitive_v1",
+            "meta": dict(signals.get("meta", {})),
+        },
+    )
 
 
 def _cardinality_reduction_probe(readers, writers, params, context):

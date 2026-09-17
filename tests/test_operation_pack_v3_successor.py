@@ -531,6 +531,18 @@ def _family_payload():
     }
 
 
+def _cell_major_family_payload():
+    return {
+        "kind": "cell_vector_family",
+        "dimensions": [6, 3],
+        "cell_id": ["c2", "c2", "c1", "c1", "c3", "c3"],
+        "key": ["sigB", "sigA", "sigB", "sigA", "sigB", "sigA"],
+        "value": [1.0, 4.0, 2.0, 5.0, 3.0, 6.0],
+        "storage_profile": "terminal_primitive_v1",
+        "meta": {},
+    }
+
+
 def test_shared_successor_assets_and_identity_corpus_are_exact():
     for name, expected in SHARED_DIGESTS.items():
         assert hashlib.sha256(protocol_asset(name).read_bytes()).hexdigest() == expected
@@ -675,7 +687,7 @@ def test_artifact_ancestry_is_single_use_identity_bound_and_mutation_safe(instal
         discovery,
         stage,
         "scwbpyv3reference::ancestry_probe",
-        {"signals": _family_payload()},
+        {"signals": _cell_major_family_payload()},
     )
     assert validate_request_v4(request, discovery) == request
     receipt, _sidecar = execute_operation_pack_v4(request, discovery, stage)
@@ -693,7 +705,7 @@ def test_artifact_ancestry_is_single_use_identity_bound_and_mutation_safe(instal
         discovery,
         changed_stage,
         "scwbpyv3reference::ancestry_probe",
-        {"signals": _family_payload()},
+        {"signals": _cell_major_family_payload()},
     )
     path = changed_stage / "provenance_reads/ancestry/payload.json"
     payload = json.loads(path.read_text())
@@ -723,7 +735,7 @@ def test_artifact_ancestry_rejects_noncurrent_lifecycle(installed_v3, tmp_path, 
         installed_v3,
         stage,
         "scwbpyv3reference::ancestry_probe",
-        {"signals": _family_payload()},
+        {"signals": _cell_major_family_payload()},
     )
     descriptor = request["provenance_reads"][0]
     payload = json.loads((stage / "provenance_reads/ancestry/payload.json").read_text())
@@ -788,7 +800,7 @@ def test_cardinality_shapes_execute_through_the_v4_process_contract(installed_v3
     discovery = installed_v3
     unload_operation_pack_v3(discovery.manifest["namespace"])
     activate_operation_pack_v3(discovery)
-    family = _family_payload()
+    family = _cell_major_family_payload()
 
     family_stage = tmp_path / "cardinality-family"
     family_stage.mkdir()
@@ -801,7 +813,7 @@ def test_cardinality_shapes_execute_through_the_v4_process_contract(installed_v3
     family_receipt, _ = execute_operation_pack_v4(family_request, discovery, family_stage)
     family_output = json.loads((family_stage / "outputs/scores/payload.json").read_text())
     family_observed = family_receipt["outputs"][0]["descriptor"]["observed_cardinality"]
-    assert family_output == family
+    assert family_output == _family_payload()
     assert family_observed["observed_row_count"] == 6
     assert family_observed["observed_cell_axis_count"] == 3
     assert family_observed["observed_key_axis_count"] == 2
