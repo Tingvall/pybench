@@ -93,6 +93,18 @@ independently compares its descriptor with the staged payload. PyBench does not
 admit sets into the committed registry: scworkbench applies or rejects the
 request only during promotion.
 
+An ABI v2 operation may also declare an `authenticated_core_registry_snapshot`
+read of kind `feature_set_registry`, bound to one declared matrix input and
+optional namespace/set selector parameters. Core stages the complete
+`scworkbench.feature_set_registry.snapshot.v1` value at
+`registry_reads/<name>/payload.json`; PyBench checks the matrix and selector
+bindings, ordered feature universe, metadata, stored membership ranks, payload
+bytes, and scoped grant identities before dispatch. The closed
+`read_feature_set_registry` reader takes no arguments, returns a private copy,
+and must be called exactly once. The receipt records one matching observation;
+the staged read is not an output mutation. PyBench has no bundle or registry
+write authority through this reader.
+
 The implementation supports every input kind, output tuple, and storage profile
 accepted by the shared schemas. It independently verifies dimensions,
 cell/feature/row order, semantic metadata, linked-space and model containment

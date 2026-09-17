@@ -21,6 +21,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from .cell_set_family import normalize_cell_set_family
+from .feature_set_registry import validate_registry_read
 from .operation_packs import OperationPackError, canonical_json, canonical_sha256, protocol_asset
 from .operation_packs_v2 import (
     PROCESS_PROTOCOL_V3,
@@ -125,6 +126,13 @@ def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) 
             "PYBENCH_INPUT_IDENTITY_MISMATCH",
             "resolution",
         )
+    for item in value.get("registry_reads", []):
+        _assert_self_identity(
+            item["descriptor"],
+            "descriptor_identity",
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "resolution",
+        )
     for item in value["outputs"]:
         _assert_self_identity(
             item["descriptor"], "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging"
@@ -183,6 +191,33 @@ def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) 
                 f"Input {item['name']!r} type or alignment differs from the manifest",
                 "resolution",
             )
+    read_declarations = {item["name"]: item for item in operation.get("registry_reads", [])}
+    read_grants = value.get("registry_reads", [])
+    if [item["name"] for item in read_grants] != sorted(read_declarations):
+        _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Registry read closure differs", "resolution")
+    input_descriptors = {item["name"]: item["descriptor"] for item in value["inputs"]}
+    for item in read_grants:
+        declaration = read_declarations[item["name"]]
+        descriptor = item["descriptor"]
+        binding = {
+            key: declaration.get(key)
+            for key in (
+                "namespace_parameter",
+                "namespaces_parameter",
+                "feature_sets_parameter",
+                "no_selector_policy",
+                "empty_match_policy",
+            )
+        }
+        if (
+            descriptor["matrix_input"] != declaration["matrix_input"]
+            or descriptor["selector_binding"] != binding
+            or descriptor["matrix_content_identity"]
+            != input_descriptors[declaration["matrix_input"]]["content_identity"]
+            or descriptor["feature_order_identity"]
+            != input_descriptors[declaration["matrix_input"]]["feature_order_identity"]
+        ):
+            _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Registry read binding differs", "resolution")
     output_names = [item["name"] for item in value["outputs"]]
     expected_outputs = [item["name"] for item in operation["outputs"]]
     if output_names != expected_outputs or len(output_names) != len(set(output_names)):
@@ -225,6 +260,13 @@ def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) 
             "descriptor_identity": item["descriptor"]["descriptor_identity"],
         }
         for item in value["inputs"]
+    ] + [
+        {
+            "registry_read_name": item["name"],
+            "reader": item["descriptor"]["reader"],
+            "descriptor_identity": item["descriptor"]["descriptor_identity"],
+        }
+        for item in read_grants
     ]
     writers = [
         {
@@ -350,6 +392,48 @@ def validate_receipt_v3(
                         "Family receipt differs from staged payload",
                         "receipt",
                     )
+        read_grants = request.get("registry_reads", [])
+        read_observed = value.get("registry_reads", [])
+        if [item["name"] for item in read_observed] != [item["name"] for item in read_grants]:
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Registry read receipt closure differs", "receipt")
+        for grant, item in zip(read_grants, read_observed, strict=True):
+            source = grant["descriptor"]
+            expected_read = {
+                key: source[key]
+                for key in (
+                    "category",
+                    "kind",
+                    "reader",
+                    "descriptor_identity",
+                    "content_identity",
+                    "source_identity",
+                    "ancestry_identity",
+                    "payload_manifest_identity",
+                )
+            }
+            expected_read["use_count"] = 1
+            expected_read["observed_descriptor_identity"] = _identity(
+                "scworkbench.operation_pack.observed_registry_read.v2",
+                expected_read,
+                "descriptor excluding observed_descriptor_identity",
+            )
+            if item["descriptor"] != expected_read:
+                _fail("PYBENCH_RECEIPT_MISMATCH", "Registry read observation differs", "receipt")
+            if stage_root is not None:
+                root = _safe_root(Path(stage_root))
+                path = _safe_relative(
+                    root, f"registry_reads/{grant['name']}/payload.json", must_exist=True
+                )
+                binding = source["selector_binding"]
+                declaration = {"matrix_input": source["matrix_input"], **binding}
+                matrix = next(
+                    input_item["descriptor"]
+                    for input_item in request["inputs"]
+                    if input_item["name"] == source["matrix_input"]
+                )
+                validate_registry_read(
+                    path.read_bytes(), grant["name"], source, declaration, request["params"], matrix
+                )
         _assert_self_identity(
             value["mutation_manifest"],
             "mutation_identity",
@@ -664,15 +748,38 @@ class _Write:
 
 
 class V3Readers(Mapping[str, Callable[..., dict[str, Any]]]):
-    def __init__(self, values: Mapping[str, dict[str, Any]]):
+    def __init__(
+        self,
+        values: Mapping[str, dict[str, Any]],
+        registry_values: Mapping[str, dict[str, Any]] | None = None,
+    ):
         self._values = dict(values)
+        self._registry_values = dict(registry_values or {})
+        self._registry_calls: list[str] = []
         self._calls: list[dict[str, Any]] = []
 
     @property
     def calls(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self._calls)
 
+    @property
+    def registry_calls(self) -> list[str]:
+        return list(self._registry_calls)
+
     def __getitem__(self, key: str) -> Callable[..., dict[str, Any]]:
+        if key in self._registry_values:
+
+            def read_registry(*args, **kwargs):
+                if args or kwargs or key in self._registry_calls:
+                    _fail(
+                        "PYBENCH_CAPABILITY_MISMATCH",
+                        "Registry reader accepts no arguments and is single use",
+                        "execution",
+                    )
+                self._registry_calls.append(key)
+                return copy.deepcopy(self._registry_values[key])
+
+            return read_registry
         if key not in self._values:
             raise KeyError(key)
         value = self._values[key]
@@ -728,10 +835,10 @@ class V3Readers(Mapping[str, Callable[..., dict[str, Any]]]):
         return read_matrix
 
     def __iter__(self):
-        return iter(self._values)
+        return iter((*self._values, *self._registry_values))
 
     def __len__(self) -> int:
-        return len(self._values)
+        return len(self._values) + len(self._registry_values)
 
 
 class V3Writers:
@@ -972,6 +1079,27 @@ def _read_inputs(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, 
                     "resolution",
                 )
         values[name] = value
+    return values
+
+
+def _read_registry_reads(
+    request: Mapping[str, Any], operation: Mapping[str, Any], root: Path
+) -> dict[str, dict[str, Any]]:
+    declarations = {item["name"]: item for item in operation.get("registry_reads", [])}
+    matrices = {item["name"]: item["descriptor"] for item in request["inputs"]}
+    values: dict[str, dict[str, Any]] = {}
+    for item in request.get("registry_reads", []):
+        name = item["name"]
+        path = _safe_relative(root, f"registry_reads/{name}/payload.json", must_exist=True)
+        declaration = declarations[name]
+        values[name] = validate_registry_read(
+            path.read_bytes(),
+            name,
+            item["descriptor"],
+            declaration,
+            request["params"],
+            matrices[declaration["matrix_input"]],
+        )
     return values
 
 
@@ -1317,12 +1445,13 @@ def execute_operation_pack_v3(
         if fault_hook:
             fault_hook("before_input_read")
         inputs = _read_inputs(request, root)
+        registry_values = _read_registry_reads(request, operation, root)
         preflight = preflight_v3(operation, inputs, request["params"], request)
         if fault_hook:
             fault_hook("before_dispatch")
         cell_order = list(next(iter(inputs.values())).get("cell_id", [])) if inputs else []
         writers = V3Writers(request, root, cell_order)
-        readers = V3Readers(inputs)
+        readers = V3Readers(inputs, registry_values)
         active[1].handlers[operation_name](
             readers,
             writers,
@@ -1332,6 +1461,13 @@ def execute_operation_pack_v3(
                 "capability_id": request["execution_capability"]["capability_id"],
             },
         )
+        expected_registry_names = [item["name"] for item in request.get("registry_reads", [])]
+        if sorted(readers.registry_calls) != sorted(expected_registry_names):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Registry readers must be consumed exactly once",
+                "execution",
+            )
         chunk_observation = _audit_chunk_calls(
             operation, request["params"], readers, inputs, request
         )
@@ -1344,6 +1480,29 @@ def execute_operation_pack_v3(
         writers.consume()
         outputs: list[dict[str, Any]] = []
         registry_requests: list[dict[str, Any]] = []
+        registry_reads: list[dict[str, Any]] = []
+        for read in request.get("registry_reads", []):
+            descriptor = read["descriptor"]
+            observed_read = {
+                key: descriptor[key]
+                for key in (
+                    "category",
+                    "kind",
+                    "reader",
+                    "descriptor_identity",
+                    "content_identity",
+                    "source_identity",
+                    "ancestry_identity",
+                    "payload_manifest_identity",
+                )
+            }
+            observed_read["use_count"] = 1
+            observed_read["observed_descriptor_identity"] = _identity(
+                "scworkbench.operation_pack.observed_registry_read.v2",
+                observed_read,
+                "descriptor excluding observed_descriptor_identity",
+            )
+            registry_reads.append({"name": read["name"], "descriptor": observed_read})
         entries: list[dict[str, str]] = []
         for grant in request["outputs"]:
             write = writes[grant["name"]]
@@ -1430,6 +1589,8 @@ def execute_operation_pack_v3(
             "mutation_manifest": mutation,
             "runtime_attestation": runtime,
         }
+        if registry_reads:
+            receipt["registry_reads"] = registry_reads
         receipt["receipt_identity"] = _identity(
             RECEIPT_SCHEMA, receipt, "receipt excluding receipt_identity"
         )

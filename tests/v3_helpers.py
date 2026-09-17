@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import hashlib
 import shutil
 import uuid
 from pathlib import Path
@@ -391,6 +392,7 @@ def make_request(
     operation_name: str,
     inputs: dict[str, dict],
     params_override: dict | None = None,
+    registry_snapshots: dict[str, dict] | None = None,
 ):
     token = uuid.uuid4().hex
     operation = next(
@@ -515,6 +517,85 @@ def make_request(
         }
     if params_override is not None:
         params.update(params_override)
+    registry_records = []
+    if registry_snapshots:
+        from pybench.feature_set_registry import normalized_selection
+        from pybench.operation_packs import canonical_json
+
+        input_map = {item["name"]: item["descriptor"] for item in input_records}
+        for declaration in sorted(operation.get("registry_reads", []), key=lambda x: x["name"]):
+            name = declaration["name"]
+            snapshot = registry_snapshots[name]
+            payload = canonical_json(snapshot).encode("utf-8")
+            path = stage / "registry_reads" / name / "payload.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            matrix_descriptor = input_map[declaration["matrix_input"]]
+            binding = {
+                key: declaration.get(key)
+                for key in (
+                    "namespace_parameter",
+                    "namespaces_parameter",
+                    "feature_sets_parameter",
+                    "no_selector_policy",
+                    "empty_match_policy",
+                )
+            }
+            selection = normalized_selection(binding, params)
+            selection_identity = _identity(
+                "scworkbench.feature_set_registry.selection.v1",
+                selection,
+                "normalized selector binding",
+            )
+            descriptor = {
+                "category": declaration["category"],
+                "kind": declaration["kind"],
+                "reader": declaration["reader"],
+                "matrix_input": declaration["matrix_input"],
+                "selector_binding": binding,
+                "matrix_id": snapshot["matrix_id"],
+                "dimensions": [
+                    len(snapshot["sets"]),
+                    sum(len(x["memberships"]) for x in snapshot["sets"]),
+                ],
+                "matrix_content_identity": matrix_descriptor["content_identity"],
+                "feature_order_identity": matrix_descriptor["feature_order_identity"],
+                "selection_identity": selection_identity,
+                "content_identity": _identity(
+                    "scworkbench.feature_set_registry.snapshot.v1",
+                    snapshot,
+                    "canonical matrix-bound registry snapshot",
+                ),
+                "source_identity": _identity(
+                    "scworkbench.feature_set_registry.source.v1",
+                    {key: snapshot[key] for key in ("matrix_id", "feature_universe", "sets")},
+                    "ordered registry source state",
+                ),
+                "ancestry_identity": _identity(
+                    "scworkbench.provenance.ancestry.v1",
+                    {
+                        "matrix_input": declaration["matrix_input"],
+                        "matrix_content_identity": matrix_descriptor["content_identity"],
+                        "selection_identity": selection_identity,
+                    },
+                    "registry snapshot ancestry",
+                ),
+                "payload_manifest_identity": _identity(
+                    "scworkbench.operation_pack.payload_manifest.v2",
+                    {
+                        "path": f"registry_reads/{name}/payload.json",
+                        "size": len(payload),
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                    },
+                    "registry read payload manifest",
+                ),
+            }
+            descriptor["descriptor_identity"] = _identity(
+                "scworkbench.operation_pack.registry_read_descriptor.v2",
+                descriptor,
+                "descriptor excluding descriptor_identity",
+            )
+            registry_records.append({"name": name, "descriptor": descriptor})
     request = {
         "schema": "scworkbench.operation_pack.transition_request.v2",
         "message_type": "request",
@@ -557,6 +638,8 @@ def make_request(
         "params": params,
         "outputs": output_records,
     }
+    if registry_records:
+        request["registry_reads"] = registry_records
     capability = {
         "capability_id": f"capability_{token}",
         "mode": "private_staging_write",
@@ -585,6 +668,14 @@ def make_request(
                 "descriptor_identity": item["descriptor"]["descriptor_identity"],
             }
             for item in input_records
+        ]
+        + [
+            {
+                "registry_read_name": item["name"],
+                "reader": item["descriptor"]["reader"],
+                "descriptor_identity": item["descriptor"]["descriptor_identity"],
+            }
+            for item in registry_records
         ],
         "writer_grants": [
             {

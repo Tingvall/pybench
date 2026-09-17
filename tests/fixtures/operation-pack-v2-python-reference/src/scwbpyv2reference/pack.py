@@ -158,6 +158,19 @@ def _family_probe(readers, writers, params, context):
     )
 
 
+def _registry_probe(readers, writers, params, context):
+    readers["matrix"]()
+    snapshot = readers["feature_sets"]()
+    writers.write_terminal_primitive(
+        "summary",
+        {
+            "kind": "obs_table",
+            "dimensions": [1, 1],
+            "rows": [{"set_count": len(snapshot["sets"])}],
+        },
+    )
+
+
 def register():
     return operation_pack_handlers_v2(
         {
@@ -165,5 +178,6 @@ def register():
             "scwbpyv2reference::dynamic_provider": _dynamic_provider,
             "scwbpyv2reference::chunk_probe": _chunk_probe,
             "scwbpyv2reference::family_probe": _family_probe,
+            "scwbpyv2reference::registry_probe": _registry_probe,
         }
     )

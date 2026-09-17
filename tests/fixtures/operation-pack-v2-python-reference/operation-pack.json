@@ -175,6 +175,30 @@
       "dependencies": [],
       "promotion_closure": {"summary": ["family", "summary"]},
       "replay_equivalence": {"family": "exact_family_membership_and_order", "summary": "exact_canonical_value"}
+    },
+    {
+      "name": "registry_probe",
+      "qualified_name": "scwbpyv2reference::registry_probe",
+      "title": "Feature-set registry read probe",
+      "description": "Synthetic conformance operation for authenticated core registry snapshots.",
+      "runner": ".registry_probe",
+      "inputs": [
+        {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
+      ],
+      "registry_reads": [
+        {"name": "feature_sets", "category": "authenticated_core_registry_snapshot", "kind": "feature_set_registry", "reader": "read_feature_set_registry", "matrix_input": "matrix", "namespace_parameter": "namespace", "namespaces_parameter": "namespaces", "feature_sets_parameter": "selected_sets", "no_selector_policy": "all_namespaces", "empty_match_policy": "allow"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "namespace": {"type": ["string", "null"]},
+        "namespaces": {"type": ["array", "null"], "items": {"type": "string"}},
+        "selected_sets": {"type": ["array", "null"], "items": {"type": "string"}}
+      }, "additionalProperties": false},
+      "outputs": [
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "summary", "table_type": "registry_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"summary": ["summary"]},
+      "replay_equivalence": {"summary": "exact_canonical_value"}
     }
   ]
 }

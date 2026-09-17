@@ -324,6 +324,41 @@ def _semantic_admission(manifest: Mapping[str, Any]) -> None:
                     operation=opname,
                 )
         properties = operation["params_schema"].get("properties", {})
+        registry_reads = operation.get("registry_reads", [])
+        registry_names = [item["name"] for item in registry_reads]
+        if _duplicates(registry_names) or set(registry_names) & set(input_names):
+            _declaration_error(opname, "repeats a registry-read name or collides with an input")
+        input_map = {item["name"]: item for item in operation["inputs"]}
+        for item in registry_reads:
+            matrix = input_map.get(item["matrix_input"])
+            if matrix is None or matrix["kind"] != "matrix":
+                _declaration_error(opname, "has a registry read without a declared matrix input")
+            selectors = [
+                item.get(key)
+                for key in ("namespace_parameter", "namespaces_parameter", "feature_sets_parameter")
+                if item.get(key) is not None
+            ]
+            if _duplicates(selectors):
+                _declaration_error(opname, "reuses a parameter for registry selector roles")
+            for key in ("namespace_parameter", "namespaces_parameter", "feature_sets_parameter"):
+                parameter = item.get(key)
+                if parameter is None:
+                    continue
+                schema = properties.get(parameter)
+                types = schema.get("type", []) if isinstance(schema, Mapping) else []
+                types = [types] if isinstance(types, str) else types
+                if key == "namespace_parameter":
+                    valid = "string" in types
+                else:
+                    valid = (
+                        "array" in types
+                        and isinstance(schema.get("items"), Mapping)
+                        and schema["items"].get("type") == "string"
+                    )
+                if not valid:
+                    _declaration_error(
+                        opname, f"registry selector {parameter!r} has an incompatible type"
+                    )
         public = operation.get("public_interface")
         if public is not None:
             public_inputs = [item["name"] for item in public["inputs"]]
