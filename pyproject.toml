@@ -23,6 +23,7 @@ dependencies = [
 [project.scripts]
 pybench-operation-pack = "pybench.operation_pack_cli:main"
 pybench-operation-pack-v3 = "pybench.operation_pack_v3_cli:main"
+pybench-operation-pack-v4 = "pybench.operation_pack_v4_cli:main"
 
 [project.urls]
 Homepage = "https://gitlab.liu.se/hende58/pybench"
