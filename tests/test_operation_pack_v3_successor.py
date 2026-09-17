@@ -529,10 +529,38 @@ def test_manifest_v3_is_explicit_and_v2_reader_remains_separate():
     assert _error_code(validate_manifest_v3, wrong) == "OPERATION_PACK_MANIFEST_SCHEMA_INVALID"
 
 
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("operation", "chunking", {"axis": "cells"}),
+        ("operation", "summary_finalizer", {"callable": "finalize"}),
+        ("typed_reader", "schedule", [{"start": 1, "count": 2}]),
+        ("typed_reader", "batches", [{"cells": ["c1", "c2"]}]),
+        ("typed_reader", "fragment_output", "scores_fragment"),
+        ("typed_reader", "merge", "row_bind_cell_vector_family_v1"),
+        ("typed_reader", "summary_finalizer", "finalize"),
+        ("typed_reader", "scientific_operation", "ucell"),
+    ],
+)
+def test_slice_n11_operation_shaped_manifest_declarations_are_rejected(target, field, value):
+    manifest = json.loads((FIXTURE / "operation-pack.json").read_text())
+    operation = next(
+        item
+        for item in manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::cell_chunk_probe"
+    )
+    subject = operation if target == "operation" else operation["typed_slice_reads"][0]
+    subject[field] = value
+    assert _error_code(validate_manifest_v3, manifest) == "OPERATION_PACK_MANIFEST_SCHEMA_INVALID"
+
+
 def test_v3_discovery_activation_and_plain_v4_execution(installed_v3, tmp_path):
     discovery = installed_v3
     registration = activate_operation_pack_v3(discovery)
-    assert not registration.finalizers
+    assert set(registration.handlers) == {
+        item["qualified_name"] for item in discovery.manifest["operations"]
+    }
+    assert not hasattr(registration, "finalizers")
     stage = tmp_path / "stage"
     stage.mkdir()
     request = _request_v4(

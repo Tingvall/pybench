@@ -301,22 +301,18 @@ def manifest_identities_v3(
 @dataclass(frozen=True)
 class OperationPackHandlersV3:
     handlers: Mapping[str, Callable[[Any, Any, Mapping[str, Any], Mapping[str, Any]], Any]]
-    finalizers: Mapping[str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]]
 
 
 def operation_pack_handlers_v3(
     handlers: Mapping[str, Callable[[Any, Any, Mapping[str, Any], Mapping[str, Any]], Any]],
-    *,
-    finalizers: Mapping[str, Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]]
-    | None = None,
 ) -> OperationPackHandlersV3:
-    if not isinstance(handlers, Mapping) or not isinstance(finalizers or {}, Mapping):
+    if not isinstance(handlers, Mapping):
         _fail(
             "OPERATION_PACK_ENTRY_POINT_INVALID",
-            "Handler and finalizer bindings must be mappings",
+            "Handler bindings must be a mapping",
             "authentication",
         )
-    return OperationPackHandlersV3(dict(handlers), dict(finalizers or {}))
+    return OperationPackHandlersV3(dict(handlers))
 
 
 @dataclass(frozen=True)
@@ -532,14 +528,10 @@ def activate_operation_pack_v3(
             "authentication",
         )
     expected = {item["qualified_name"] for item in rediscovered.manifest["operations"]}
-    expected_finalizers: set[str] = set()
-    if (
-        set(registration.handlers) != expected
-        or set(registration.finalizers) != expected_finalizers
-    ):
+    if set(registration.handlers) != expected:
         _fail(
             "OPERATION_PACK_ENTRY_POINT_INVALID",
-            "Handler or finalizer closure differs from the manifest",
+            "Handler closure differs from the manifest",
             "authentication",
         )
     for name, handler in registration.handlers.items():
@@ -552,16 +544,6 @@ def activate_operation_pack_v3(
             _fail(
                 "OPERATION_PACK_ENTRY_POINT_INVALID",
                 f"Handler {name!r} has the wrong interface",
-                "authentication",
-            )
-    for name, finalizer in registration.finalizers.items():
-        if not callable(finalizer) or list(inspect.signature(finalizer).parameters) != [
-            "merged_family",
-            "metadata",
-        ]:
-            _fail(
-                "OPERATION_PACK_ENTRY_POINT_INVALID",
-                f"Finalizer {name!r} has the wrong interface",
                 "authentication",
             )
     candidate = dict(_ACTIVE_PACKS_V3)

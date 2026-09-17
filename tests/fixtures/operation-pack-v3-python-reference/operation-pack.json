@@ -202,7 +202,7 @@
       "name": "cell_chunk_probe",
       "qualified_name": "scwbpyv3reference::cell_chunk_probe",
       "title": "Cell chunk successor probe",
-      "description": "Synthetic ABI-v3 operation for authenticated cell chunks and pure summary finalization.",
+      "description": "Synthetic ABI-v3 operation for authenticated typed slices with pack-owned merge and summary behavior.",
       "runner": ".cell_chunk_probe",
       "inputs": [
         {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
