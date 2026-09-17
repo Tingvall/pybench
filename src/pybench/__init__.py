@@ -35,6 +35,7 @@ from .protocol_v3 import (
 )
 from .protocol_v4 import (
     execute_operation_pack_v4,
+    partition_axis,
     validate_python_runtime_sidecar_v4,
     validate_receipt_v4,
     validate_request_v4,
@@ -69,6 +70,7 @@ __all__ = [
     "operation_pack_handlers_v3",
     "validate_manifest_v3",
     "execute_operation_pack_v4",
+    "partition_axis",
     "validate_python_runtime_sidecar_v4",
     "validate_receipt_v4",
     "validate_request_v4",

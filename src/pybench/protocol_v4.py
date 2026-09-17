@@ -6,10 +6,10 @@ import json
 import math
 import os
 import platform
-import shutil
-import subprocess
+import re
 import sys
 import sysconfig
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -25,7 +25,6 @@ from .operation_packs_v3 import (
 from .protocol_v3 import (
     V3Readers,
     V3Writers,
-    _dimensions,
     _no_absolute_paths,
     _observed_descriptor,
     _ordered,
@@ -46,6 +45,9 @@ RECEIPT_SCHEMA_V4 = "scworkbench.operation_pack.transition_receipt.v3"
 _REQUEST_ASSET = "operation-pack-transition-request-v3.schema.json"
 _RECEIPT_ASSET = "operation-pack-transition-receipt-v3.schema.json"
 _CONSUMED_CAPABILITIES: set[str] = set()
+_BROKER_TOKEN_ENV = "PYBENCH_OPERATION_PACK_BROKER_TOKEN"
+_BROKER_TIMEOUT_ENV = "PYBENCH_OPERATION_PACK_BROKER_TIMEOUT_SECONDS"
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _fail(code: str, message: str, phase: str, **details: Any) -> None:
@@ -73,6 +75,23 @@ def _identity_projection(value: Mapping[str, Any]) -> dict[str, str]:
     return {"scheme": value["scheme"], "sha256": value["sha256"]}
 
 
+def partition_axis(ids: Any, chunk_size: int) -> list[list[str]]:
+    values = list(ids)
+    if (
+        not isinstance(chunk_size, int)
+        or isinstance(chunk_size, bool)
+        or chunk_size < 1
+        or any(not isinstance(item, str) or not item for item in values)
+        or len(values) != len(set(values))
+    ):
+        _fail(
+            "PYBENCH_CAPABILITY_MISMATCH",
+            "Axis partitions require unique nonempty strings and a positive integer size",
+            "execution",
+        )
+    return [values[start : start + chunk_size] for start in range(0, len(values), chunk_size)]
+
+
 def _operation(discovery: PackDiscoveryV3, name: str) -> Mapping[str, Any]:
     value = next(
         (item for item in discovery.manifest["operations"] if item["qualified_name"] == name),
@@ -81,6 +100,112 @@ def _operation(discovery: PackDiscoveryV3, name: str) -> Mapping[str, Any]:
     if value is None:
         _fail("OPERATION_PACK_REQUIRED", f"Operation {name!r} is absent", "resolution")
     return value
+
+
+def _validate_typed_slice_grants(
+    request: Mapping[str, Any], operation: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    declarations = operation.get("typed_slice_reads", [])
+    grants = request.get("typed_slice_grants", [])
+    if [item["name"] for item in grants] != [item["name"] for item in declarations]:
+        _fail(
+            "PYBENCH_CAPABILITY_MISMATCH",
+            "Typed-slice grant closure differs from the manifest",
+            "staging",
+        )
+    input_records = {item["name"]: item["descriptor"] for item in request["inputs"]}
+    result: list[dict[str, Any]] = []
+    for declaration, grant in zip(declarations, grants, strict=True):
+        _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+        source = grant["source_reference"]
+        _assert_identity(
+            source,
+            "source_reference_identity",
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "resolution",
+        )
+        if source.get("projection_identity") is not None:
+            projection = {
+                "schema": "scworkbench.operation_pack.typed_slice_source_projection.v1",
+                "original_input_content_identity": source["input_content_identity"],
+                "features_axis_manifest_identity": grant["features_axis"]["axis_manifest_identity"],
+                "cells_axis_manifest_identity": grant["cells_axis"]["axis_manifest_identity"],
+                "projected_content_identity": source["projected_content_identity"],
+                "private_source_payload_identity": source["private_source_payload_identity"],
+            }
+            if source["projection_identity"] != _identity(
+                "scworkbench.operation_pack.typed_slice_source_projection.v1",
+                projection,
+                "projection excluding projection_identity",
+            ):
+                _fail(
+                    "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                    "Typed-slice private source projection identity differs",
+                    "resolution",
+                )
+        input_name = declaration["input"]
+        descriptor = input_records.get(input_name)
+        if descriptor is None:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Typed-slice input descriptor is absent",
+                "resolution",
+            )
+        requested = request["params"].get(declaration["chunk_size_parameter"])
+        declaration_fields = (
+            grant["name"] == declaration["name"],
+            grant["input_name"] == input_name,
+            grant["kind"] == declaration["kind"] == "matrix",
+            grant["reader"] == declaration["reader"] == "read_typed_slices",
+            grant["supported_axes"] == declaration["supported_axes"],
+            grant["chunk_axis"] == declaration["chunk_axis"],
+            grant["call_discipline"] == declaration["call_discipline"],
+            grant["empty_selection_policy"] == declaration["empty_selection_policy"],
+            grant["duplicate_policy"] == declaration["duplicate_policy"] == "reject",
+            grant["requested_chunk_size"] == requested,
+            grant["input_descriptor_identity"]
+            == _identity_projection(descriptor["descriptor_identity"]),
+            grant["input_content_identity"] == descriptor["content_identity"],
+            source["input_name"] == input_name,
+            source["input_descriptor_identity"] == grant["input_descriptor_identity"],
+            source["input_content_identity"] == grant["input_content_identity"],
+            source["transition_source_state_identity"]
+            == request["transition"]["source_state_identity"],
+            grant["max_outstanding_responses"] == 1,
+        )
+        if not all(declaration_fields):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice grant differs from its manifest, input, or transition",
+                "staging",
+            )
+        cells = grant["cells_axis"]["count"]
+        features = grant["features_axis"]["count"]
+        if not cells or not features:
+            if grant["empty_selection_policy"] != "allow_zero_axis":
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Typed-slice grant rejects its empty selected axis",
+                    "staging",
+                )
+        if grant["chunk_axis"] == "cells":
+            expected_rows = features
+            expected_columns = min(grant["requested_chunk_size"], cells)
+        else:
+            expected_rows = min(grant["requested_chunk_size"], features)
+            expected_columns = cells
+        if (
+            grant["max_rows"] != expected_rows
+            or grant["max_columns"] != expected_columns
+            or grant["max_elements"] != expected_rows * expected_columns
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice dimensional limits differ from the selected axes",
+                "staging",
+            )
+        result.append(copy.deepcopy(grant))
+    return result
 
 
 def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) -> dict[str, Any]:
@@ -131,21 +256,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "staging",
             )
         _assert_identity(descriptor, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
-    for schedule in value.get("chunk_schedules", []):
-        for batch in schedule["batches"]:
-            _assert_identity(
-                batch["fragment_grant"],
-                "fragment_grant_identity",
-                "PYBENCH_CAPABILITY_MISMATCH",
-                "staging",
-            )
-        _assert_identity(
-            schedule["summary_finalizer_definition"],
-            "finalizer_definition_identity",
-            "PYBENCH_CAPABILITY_MISMATCH",
-            "staging",
-        )
-        _assert_identity(schedule, "schedule_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    for grant in value.get("typed_slice_grants", []):
+        _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
     _assert_identity(
         value["execution_capability"],
         "capability_identity",
@@ -272,12 +384,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                     "staging",
                 )
 
-    expected_schedules = 1 if operation.get("chunking", {}).get("axis") == "cells" else 0
-    schedules = value.get("chunk_schedules", [])
-    if len(schedules) != expected_schedules:
-        _fail("PYBENCH_CAPABILITY_MISMATCH", "Cell chunk schedule closure differs", "staging")
-    if schedules:
-        _validate_schedule(schedules[0], operation, value)
+    typed_slice_grants = _validate_typed_slice_grants(value, operation)
 
     declared_reads = {item["name"]: item for item in operation.get("provenance_reads", [])}
     observed_names = [item["name"] for item in value.get("provenance_reads", [])]
@@ -297,6 +404,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             )
 
     capability = value["execution_capability"]
+    typed_input_names = {item["input_name"] for item in typed_slice_grants}
     expected_readers = [
         {
             "input_name": item["name"],
@@ -304,6 +412,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "descriptor_identity": item["descriptor"]["descriptor_identity"],
         }
         for item in value["inputs"]
+        if item["name"] not in typed_input_names
     ]
     expected_readers += [
         {
@@ -320,6 +429,14 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "descriptor_identity": item["descriptor_identity"],
         }
         for item in value.get("provenance_reads", [])
+    ]
+    expected_readers += [
+        {
+            "typed_slice_name": item["name"],
+            "reader": item["reader"],
+            "grant_identity": item["grant_identity"],
+        }
+        for item in typed_slice_grants
     ]
     expected_writers = [
         {
@@ -343,8 +460,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         capability["entry_point_identity"] == discovery.entry_point_identity,
         capability["reader_grants"] == expected_readers,
         capability["writer_grants"] == expected_writers,
-        capability.get("chunk_schedule_identities", [])
-        == [_identity_projection(item["schedule_identity"]) for item in schedules],
+        capability.get("typed_slice_grant_identities", [])
+        == [_identity_projection(item["grant_identity"]) for item in typed_slice_grants],
         capability.get("provenance_read_identities", [])
         == [
             _identity_projection(item["descriptor_identity"])
@@ -368,87 +485,6 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
     if errors:
         _fail("OPERATION_PACK_PARAM_SCHEMA_INVALID", errors[0].message, "resolution")
     return value
-
-
-def _validate_schedule(
-    schedule: Mapping[str, Any], operation: Mapping[str, Any], request: Mapping[str, Any]
-) -> None:
-    declaration = operation["chunking"]
-    if (
-        schedule["input_name"] != declaration["input"]
-        or schedule["axis"] != "cells"
-        or schedule["merge_policy"] != declaration["merge"]
-        or schedule["fragment_output"] != declaration["fragment_output"]
-        or schedule["summary_output"] != declaration["summary_output"]
-    ):
-        _fail("PYBENCH_CAPABILITY_MISMATCH", "Cell chunk schedule differs from manifest", "staging")
-    input_record = next(item for item in request["inputs"] if item["name"] == declaration["input"])
-    if schedule["input_descriptor_identity"] != _identity_projection(
-        input_record["descriptor"]["descriptor_identity"]
-    ):
-        _fail("PYBENCH_CAPABILITY_MISMATCH", "Chunk input descriptor differs", "staging")
-    output_records = {item["name"]: item for item in request["outputs"]}
-    cardinality = output_records[declaration["fragment_output"]]["descriptor"].get(
-        "cardinality_grant"
-    )
-    finalizer_definition = {
-        "schema": "scworkbench.operation_pack.summary_finalizer_definition.v1",
-        "interface": declaration["summary"]["interface"],
-        "callable": declaration["summary"]["callable"],
-        "isolation": declaration["summary"]["isolation"],
-        "merged_input": declaration["fragment_output"],
-        "summary_output": declaration["summary_output"],
-        "metadata_sources": declaration["summary"]["metadata_sources"],
-    }
-    finalizer_definition["finalizer_definition_identity"] = _identity(
-        "scworkbench.operation_pack.summary_finalizer_definition.v1",
-        finalizer_definition,
-        "definition excluding finalizer_definition_identity",
-    )
-    requested_size = request["params"].get(declaration["size_parameter"])
-    if (
-        cardinality is None
-        or schedule["requested_chunk_size"] != requested_size
-        or schedule["summary_finalizer_definition"] != finalizer_definition
-    ):
-        _fail("PYBENCH_CAPABILITY_MISMATCH", "Chunk schedule binding differs", "staging")
-    prior_end = 0
-    for expected_index, batch in enumerate(schedule["batches"], start=1):
-        if (
-            batch["index"] != expected_index
-            or batch["start"] != prior_end + 1
-            or batch["length"] < 1
-        ):
-            _fail(
-                "PYBENCH_CAPABILITY_MISMATCH",
-                "Chunk ranges are not contiguous 1-based ranges",
-                "staging",
-            )
-        grant = batch["fragment_grant"]
-        if (
-            grant["batch_index"] != batch["index"]
-            or grant["batch_start"] != batch["start"]
-            or grant["batch_length"] != batch["length"]
-            or grant["batch_cell_order_identity"] != batch["cell_order_identity"]
-            or grant["fragment_output"] != declaration["fragment_output"]
-            or grant["parent_cardinality_grant_identity"]
-            != cardinality["cardinality_grant_identity"]
-            or grant["input_descriptor_identity"]
-            != _identity_projection(input_record["descriptor"]["descriptor_identity"])
-            or grant["key_axis"] != cardinality["key_axis"]
-            or grant["key_axis_count"] != cardinality["key_axis_count"]
-            or grant["key_axis_order_identity"] != cardinality["key_axis_order_identity"]
-            or grant["expected_row_count"] != batch["length"] * cardinality["key_axis_count"]
-            or grant["missing_values"] != cardinality["missing_values"]
-        ):
-            _fail(
-                "PYBENCH_CAPABILITY_MISMATCH",
-                "Fragment grant differs from enclosing batch",
-                "staging",
-            )
-        prior_end += batch["length"]
-    if prior_end != schedule["axis_count"]:
-        _fail("PYBENCH_CAPABILITY_MISMATCH", "Chunk schedule does not cover its axis", "staging")
 
 
 def _distinct(values: list[str]) -> list[str]:
@@ -561,23 +597,613 @@ def _validate_cardinality_payload(
     return observed
 
 
+def _strict_json_file(path: Path, code: str, phase: str) -> dict[str, Any]:
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                _fail(code, f"JSON repeats object key {key!r}", phase)
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs)
+    except OperationPackError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        _fail(code, f"JSON payload is unreadable: {exc}", phase)
+    if not isinstance(value, dict):
+        _fail(code, "JSON payload root is not an object", phase)
+    return value
+
+
+def _axis_manifest(root: Path, descriptor: Mapping[str, Any], expected_axis: str) -> dict[str, Any]:
+    if descriptor["axis"] != expected_axis:
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "Typed-slice axis descriptor names the wrong axis",
+            "resolution",
+        )
+    path = _safe_relative(root, descriptor["relative_path"], must_exist=True)
+    if path.is_symlink() or not path.is_file():
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "Typed-slice axis manifest is not a regular contained file",
+            "resolution",
+        )
+    raw = path.read_bytes()
+    value = _strict_json_file(path, "PYBENCH_INPUT_IDENTITY_MISMATCH", "resolution")
+    expected_fields = {
+        "schema",
+        "axis",
+        "count",
+        "ids",
+        "order_identity",
+        "manifest_identity",
+    }
+    if set(value) != expected_fields or raw != canonical_json(value).encode("utf-8"):
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "Typed-slice axis manifest is not the closed canonical representation",
+            "resolution",
+        )
+    _assert_identity(
+        value,
+        "manifest_identity",
+        "PYBENCH_INPUT_IDENTITY_MISMATCH",
+        "resolution",
+    )
+    ids = value["ids"]
+    order_scheme = (
+        "scworkbench.cell_order.v1" if expected_axis == "cells" else "scworkbench.feature_order.v1"
+    )
+    payload_preimage = {
+        "path": descriptor["relative_path"],
+        "size": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    bindings = (
+        value["schema"] == "scworkbench.operation_pack.typed_slice_axis_manifest.v1",
+        value["axis"] == expected_axis,
+        isinstance(ids, list),
+        all(isinstance(item, str) and item for item in ids),
+        len(ids) == len(set(ids)),
+        value["count"] == len(ids) == descriptor["count"],
+        value["order_identity"] == _identity(order_scheme, ids),
+        value["order_identity"] == descriptor["order_identity"],
+        value["manifest_identity"] == descriptor["axis_manifest_identity"],
+        descriptor["payload_manifest_identity"]
+        == _identity(
+            "scworkbench.operation_pack.payload_manifest.v2",
+            payload_preimage,
+            "registry read payload manifest",
+        ),
+    )
+    if not all(bindings):
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "Typed-slice axis manifest differs from its request binding",
+            "resolution",
+        )
+    return value
+
+
+def _wait_for(predicate: Callable[[], bool], timeout: float, message: str) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            _fail("PYBENCH_PROCESS_FAILED", message, "execution")
+        time.sleep(0.01)
+
+
+def _regular_response_files(response: Path) -> dict[str, Path]:
+    if response.is_symlink() or not response.is_dir():
+        _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Broker response is not a directory", "execution")
+    expected = {"matrix.mtx", "features.json", "cells.json", "manifest.json"}
+    try:
+        children = {item.name: item for item in response.iterdir()}
+    except OSError as exc:
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH", f"Broker response is unreadable: {exc}", "execution"
+        )
+    if set(children) != expected or any(
+        path.is_symlink() or not path.is_file() for path in children.values()
+    ):
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "Broker response contains an unexpected or non-regular file",
+            "execution",
+        )
+    return children
+
+
+def _parse_matrix_market(path: Path) -> tuple[list[list[float]], list[dict[str, Any]]]:
+    try:
+        lines = path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeError) as exc:
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            f"Matrix Market payload is unreadable: {exc}",
+            "execution",
+        )
+    if not lines or lines[0] != "%%MatrixMarket matrix coordinate real general":
+        _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Matrix Market header differs", "execution")
+    body = [line for line in lines[1:] if line and not line.startswith("%")]
+    if not body:
+        _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Matrix Market dimensions are absent", "execution")
+    try:
+        nrow, ncolumn, nonzero = (int(item) for item in body[0].split())
+    except (TypeError, ValueError) as exc:
+        _fail(
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            f"Matrix Market dimensions are invalid: {exc}",
+            "execution",
+        )
+    if nrow < 0 or ncolumn < 0 or nonzero < 0 or len(body) != nonzero + 1:
+        _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Matrix Market cardinality differs", "execution")
+    values = [[0.0 for _ in range(ncolumn)] for _ in range(nrow)]
+    entries: list[dict[str, Any]] = []
+    prior = (0, 0)
+    for line in body[1:]:
+        fields = line.split()
+        if len(fields) != 3:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH", "Matrix Market entry is malformed", "execution"
+            )
+        try:
+            row, column, value = int(fields[0]), int(fields[1]), float(fields[2])
+        except ValueError as exc:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                f"Matrix Market entry is invalid: {exc}",
+                "execution",
+            )
+        key = (column, row)
+        if (
+            row < 1
+            or row > nrow
+            or column < 1
+            or column > ncolumn
+            or key <= prior
+            or not math.isfinite(value)
+            or value == 0
+        ):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Matrix Market coordinates, order, or values are invalid",
+                "execution",
+            )
+        prior = key
+        values[row - 1][column - 1] = value
+        entries.append({"row": row, "column": column, "value": value})
+    return values, entries
+
+
+class TypedSliceBrokerClient:
+    def __init__(
+        self,
+        request: Mapping[str, Any],
+        grant: Mapping[str, Any],
+        stage_root: Path,
+        *,
+        authorization_token: str | None = None,
+        timeout: float | None = None,
+    ):
+        self._request = request
+        self._grant = copy.deepcopy(dict(grant))
+        self._root = _safe_root(stage_root)
+        self._broker = _safe_relative(self._root, "broker")
+        self._token = authorization_token or os.environ.get(_BROKER_TOKEN_ENV, "")
+        if not _HEX64.fullmatch(self._token):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice broker authorization token is absent or malformed",
+                "staging",
+            )
+        raw_timeout = os.environ.get(_BROKER_TIMEOUT_ENV, "300")
+        try:
+            self._timeout = float(raw_timeout) if timeout is None else float(timeout)
+        except ValueError:
+            self._timeout = 0
+        if not math.isfinite(self._timeout) or self._timeout <= 0:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "Typed-slice broker timeout is invalid", "staging")
+        if self._broker.is_symlink() or not self._broker.is_dir():
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice broker endpoint is absent or invalid",
+                "staging",
+            )
+        self._cells = _axis_manifest(self._root, grant["cells_axis"], "cells")["ids"]
+        self._features = _axis_manifest(self._root, grant["features_axis"], "features")["ids"]
+        self._calls: list[dict[str, Any]] = []
+        self._chunk_values: list[str] = []
+
+    @property
+    def selected_cells(self) -> list[str]:
+        return list(self._cells)
+
+    @property
+    def selected_features(self) -> list[str]:
+        return list(self._features)
+
+    @property
+    def calls(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._calls)
+
+    def _selection(self, features: Any, cells: Any) -> tuple[list[str], list[str]]:
+        if features is None or cells is None:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice reader requires explicit feature and cell axes",
+                "execution",
+            )
+        selected_features = list(features)
+        selected_cells = list(cells)
+
+        def valid(selected: list[Any], allowed: list[str]) -> bool:
+            return (
+                bool(selected)
+                and all(isinstance(item, str) and item for item in selected)
+                and len(selected) == len(set(selected))
+                and all(item in allowed for item in selected)
+                and selected == [item for item in allowed if item in set(selected)]
+            )
+
+        if not valid(selected_features, self._features) or not valid(selected_cells, self._cells):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Typed-slice selection is empty, duplicate, unknown, or out of order",
+                "execution",
+            )
+        chunk_axis = self._grant["chunk_axis"]
+        chunk = selected_cells if chunk_axis == "cells" else selected_features
+        nonchunk = selected_features if chunk_axis == "cells" else selected_cells
+        allowed_chunk = self._cells if chunk_axis == "cells" else self._features
+        allowed_nonchunk = self._features if chunk_axis == "cells" else self._cells
+        if len(chunk) > self._grant["requested_chunk_size"]:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice chunk exceeds its requested size",
+                "execution",
+            )
+        if self._grant["call_discipline"] == "ordered_partition_exactly_once":
+            start = len(self._chunk_values)
+            if nonchunk != allowed_nonchunk or chunk != allowed_chunk[start : start + len(chunk)]:
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Typed-slice call violates ordered exactly-once partitioning",
+                    "execution",
+                )
+        else:
+            nonchunk_axis = "features" if chunk_axis == "cells" else "cells"
+            if nonchunk_axis not in self._grant["supported_axes"] and nonchunk != allowed_nonchunk:
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Typed-slice non-chunk axis exceeds its supported selection",
+                    "execution",
+                )
+        if (
+            len(selected_features) > self._grant["max_rows"]
+            or len(selected_cells) > self._grant["max_columns"]
+            or len(selected_features) * len(selected_cells) > self._grant["max_elements"]
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH", "Typed-slice request exceeds its limits", "execution"
+            )
+        return selected_features, selected_cells
+
+    def __call__(self, *, features=None, cells=None) -> dict[str, Any]:
+        selected_features, selected_cells = self._selection(features, cells)
+        ordinal = len(self._calls) + 1
+        control = {
+            "schema": "scworkbench.operation_pack.typed_slice_control_request.v1",
+            "request_identity": copy.deepcopy(self._request["request_identity"]),
+            "grant_identity": copy.deepcopy(self._grant["grant_identity"]),
+            "ordinal": ordinal,
+            "features": selected_features,
+            "cells": selected_cells,
+            "authorization_token": self._token,
+        }
+        control["control_identity"] = _identity(
+            "scworkbench.operation_pack.typed_slice_control_request.v1",
+            control,
+            "control request excluding control_identity",
+        )
+        encoded = canonical_json(control).encode("utf-8")
+        if len(encoded) > self._grant["max_control_bytes"]:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice control exceeds its byte limit",
+                "execution",
+            )
+        pending = self._broker / "request.json.pending"
+        target = self._broker / "request.json"
+        if pending.exists() or target.exists() or (self._broker / "response").exists():
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "Typed-slice broker is not ready", "execution")
+        try:
+            pending.write_bytes(encoded)
+            os.replace(pending, target)
+            response = self._broker / "response"
+            _wait_for(response.exists, self._timeout, "Timed out waiting for typed-slice response")
+            payload, result, response_identity = self._consume_response(
+                response, ordinal, selected_features, selected_cells
+            )
+            acknowledgement = {
+                "schema": "scworkbench.operation_pack.typed_slice_acknowledgement.v1",
+                "request_identity": copy.deepcopy(self._request["request_identity"]),
+                "grant_identity": copy.deepcopy(self._grant["grant_identity"]),
+                "ordinal": ordinal,
+                "response_identity": copy.deepcopy(response_identity),
+                "status": "consumed",
+                "authorization_token": self._token,
+            }
+            acknowledgement["acknowledgement_identity"] = _identity(
+                "scworkbench.operation_pack.typed_slice_acknowledgement.v1",
+                acknowledgement,
+                "acknowledgement excluding acknowledgement_identity",
+            )
+            ack_pending = self._broker / "acknowledgement.json.pending"
+            ack = self._broker / "acknowledgement.json"
+            ack_pending.write_text(canonical_json(acknowledgement), encoding="utf-8")
+            os.replace(ack_pending, ack)
+            _wait_for(
+                lambda: not response.exists() and not ack.exists() and not target.exists(),
+                self._timeout,
+                "Timed out waiting for typed-slice acknowledgement",
+            )
+        finally:
+            pending.unlink(missing_ok=True)
+        call = copy.deepcopy(result)
+        call["schema"] = "scworkbench.operation_pack.observed_typed_slice_call.v1"
+        call.pop("source_reference_identity")
+        call["call_identity"] = _identity(
+            "scworkbench.operation_pack.observed_typed_slice_call.v1",
+            call,
+            "call excluding call_identity",
+        )
+        self._calls.append(call)
+        self._chunk_values.extend(
+            selected_cells if self._grant["chunk_axis"] == "cells" else selected_features
+        )
+        return payload
+
+    def _consume_response(
+        self,
+        response: Path,
+        ordinal: int,
+        selected_features: list[str],
+        selected_cells: list[str],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+        files = _regular_response_files(response)
+        total_bytes = sum(path.stat().st_size for path in files.values())
+        if total_bytes > self._grant["max_response_bytes"]:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-slice response exceeds its byte limit",
+                "execution",
+            )
+        manifest = _strict_json_file(
+            files["manifest.json"], "PYBENCH_INPUT_IDENTITY_MISMATCH", "execution"
+        )
+        _assert_identity(
+            manifest,
+            "response_identity",
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "execution",
+        )
+        response_fields = {
+            "schema",
+            "request_identity",
+            "grant_identity",
+            "source_reference_identity",
+            "ordinal",
+            "dimensions",
+            "nonzero_count",
+            "feature_axis_manifest_identity",
+            "cell_axis_manifest_identity",
+            "files",
+            "semantic_content_identity",
+            "slice_result_identity",
+            "response_identity",
+        }
+        expected_response_identity = _identity(
+            "scworkbench.operation_pack.typed_slice_response.v1",
+            {key: value for key, value in manifest.items() if key != "response_identity"},
+            "response excluding response_identity",
+        )
+        expected_entries = []
+        for role, name in (
+            ("matrix_market", "matrix.mtx"),
+            ("features_axis", "features.json"),
+            ("cells_axis", "cells.json"),
+        ):
+            raw = files[name].read_bytes()
+            expected_entries.append(
+                {
+                    "role": role,
+                    "path": name,
+                    "size": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                }
+            )
+        if manifest.get("files") != expected_entries:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Typed-slice response file manifest differs",
+                "execution",
+            )
+        feature_axis = self._response_axis(files["features.json"], "features", selected_features)
+        cell_axis = self._response_axis(files["cells.json"], "cells", selected_cells)
+        values, entries = _parse_matrix_market(files["matrix.mtx"])
+        dimensions = [len(selected_features), len(selected_cells)]
+        semantic_value = {
+            "schema": "scworkbench.operation_pack.matrix_slice.content.v1",
+            "kind": "matrix",
+            "dimensions": dimensions,
+            "feature_id": selected_features,
+            "cell_id": selected_cells,
+            "entries": entries,
+        }
+        semantic_identity = _identity(
+            "scworkbench.operation_pack.matrix_slice.content.v1", semantic_value
+        )
+        result = {
+            "schema": "scworkbench.operation_pack.typed_slice_result.v1",
+            "source_reference_identity": _identity_projection(
+                self._grant["source_reference"]["source_reference_identity"]
+            ),
+            "grant_identity": _identity_projection(self._grant["grant_identity"]),
+            "ordinal": ordinal,
+            "feature_count": len(selected_features),
+            "feature_order_identity": feature_axis["order_identity"],
+            "cell_count": len(selected_cells),
+            "cell_order_identity": cell_axis["order_identity"],
+            "dimensions": dimensions,
+            "semantic_content_identity": semantic_identity,
+        }
+        result["slice_result_identity"] = _identity(
+            "scworkbench.operation_pack.typed_slice_result.v1",
+            result,
+            "slice result excluding slice_result_identity",
+        )
+        bindings = (
+            set(manifest) == response_fields,
+            manifest.get("schema") == "scworkbench.operation_pack.typed_slice_response.v1",
+            manifest.get("response_identity") == expected_response_identity,
+            manifest.get("request_identity") == self._request["request_identity"],
+            manifest.get("grant_identity") == self._grant["grant_identity"],
+            manifest.get("source_reference_identity")
+            == self._grant["source_reference"]["source_reference_identity"],
+            manifest.get("ordinal") == ordinal,
+            manifest.get("dimensions") == dimensions,
+            manifest.get("nonzero_count") == len(entries),
+            manifest.get("feature_axis_manifest_identity") == feature_axis["manifest_identity"],
+            manifest.get("cell_axis_manifest_identity") == cell_axis["manifest_identity"],
+            manifest.get("semantic_content_identity") == semantic_identity,
+            manifest.get("slice_result_identity") == result["slice_result_identity"],
+        )
+        if not all(bindings):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Typed-slice response binding differs",
+                "execution",
+            )
+        if [len(values), len(values[0]) if values else len(selected_cells)] != dimensions:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Typed-slice matrix dimensions differ",
+                "execution",
+            )
+        payload = {
+            "kind": "matrix",
+            "dimensions": dimensions,
+            "feature_id": selected_features,
+            "cell_id": selected_cells,
+            "values": values,
+            "storage_profile": "matrix_ordinary_v1",
+            "meta": {},
+        }
+        return payload, result, copy.deepcopy(manifest["response_identity"])
+
+    def _response_axis(self, path: Path, axis: str, expected: list[str]) -> dict[str, Any]:
+        value = _strict_json_file(path, "PYBENCH_INPUT_IDENTITY_MISMATCH", "execution")
+        if path.read_bytes() != canonical_json(value).encode("utf-8"):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Response axis is not canonical JSON",
+                "execution",
+            )
+        _assert_identity(value, "manifest_identity", "PYBENCH_INPUT_IDENTITY_MISMATCH", "execution")
+        scheme = "scworkbench.cell_order.v1" if axis == "cells" else "scworkbench.feature_order.v1"
+        if (
+            set(value) != {"schema", "axis", "count", "ids", "order_identity", "manifest_identity"}
+            or value["schema"] != "scworkbench.operation_pack.typed_slice_axis_manifest.v1"
+            or value["axis"] != axis
+            or value["ids"] != expected
+            or value["count"] != len(expected)
+            or value["order_identity"] != _identity(scheme, expected)
+            or value["manifest_identity"]
+            != _identity(
+                "scworkbench.operation_pack.typed_slice_axis_manifest.v1",
+                {key: child for key, child in value.items() if key != "manifest_identity"},
+                "axis manifest excluding manifest_identity",
+            )
+        ):
+            _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Response axis binding differs", "execution")
+        return value
+
+    def usage(self) -> dict[str, Any]:
+        allowed = self._cells if self._grant["chunk_axis"] == "cells" else self._features
+        empty_selection = not self._cells or not self._features
+        if empty_selection:
+            if self._calls or self._chunk_values:
+                _fail(
+                    "PYBENCH_RECEIPT_MISMATCH",
+                    "Empty typed-slice selection unexpectedly served a call",
+                    "receipt",
+                )
+            coverage = "empty"
+        elif self._grant["call_discipline"] == "ordered_partition_exactly_once":
+            if self._chunk_values != allowed:
+                _fail(
+                    "PYBENCH_RECEIPT_MISMATCH",
+                    "Typed-slice execution did not cover its ordered axis exactly once",
+                    "receipt",
+                )
+            coverage = "exact"
+        else:
+            coverage = "independent"
+        scheme = (
+            "scworkbench.cell_order.v1"
+            if self._grant["chunk_axis"] == "cells"
+            else "scworkbench.feature_order.v1"
+        )
+        usage = {
+            "schema": "scworkbench.operation_pack.typed_slice_usage.v1",
+            "request_identity": _identity_projection(self._request["request_identity"]),
+            "capability_identity": _identity_projection(
+                self._request["execution_capability"]["capability_identity"]
+            ),
+            "operation_definition_identity": _identity_projection(
+                self._request["operation_authentication"]["operation_definition_identity"]
+            ),
+            "grant_identity": _identity_projection(self._grant["grant_identity"]),
+            "requested_chunk_size": self._grant["requested_chunk_size"],
+            "calls": copy.deepcopy(self._calls),
+            "call_count": len(self._calls),
+            "concatenated_chunk_axis_order_identity": _identity(scheme, self._chunk_values),
+            "unique_chunk_axis_count": len(set(self._chunk_values)),
+            "duplicate_chunk_axis_count": len(self._chunk_values) - len(set(self._chunk_values)),
+            "coverage_status": coverage,
+        }
+        usage["usage_identity"] = _identity(
+            "scworkbench.operation_pack.typed_slice_usage.v1",
+            usage,
+            "usage excluding usage_identity",
+        )
+        return usage
+
+
 class V4Readers(V3Readers):
-    def __init__(self, values, registry_values=None, provenance_values=None):
+    def __init__(
+        self,
+        values,
+        registry_values=None,
+        provenance_values=None,
+        typed_slice_clients: Mapping[str, TypedSliceBrokerClient] | None = None,
+    ):
         super().__init__(values, registry_values)
         self._provenance_values = dict(provenance_values or {})
         self._provenance_calls: list[str] = []
-        self._scheduled_input: str | None = None
-        self._scheduled_cells: list[str] | None = None
-
-    def set_scheduled_cells(self, input_name: str, cells: list[str]) -> None:
-        self._scheduled_input = input_name
-        self._scheduled_cells = list(cells)
+        self._typed_slice_clients = dict(typed_slice_clients or {})
 
     @property
     def provenance_calls(self) -> list[str]:
         return list(self._provenance_calls)
 
     def __getitem__(self, key):
+        if key in self._typed_slice_clients:
+            return self._typed_slice_clients[key]
         if key in self._provenance_values:
 
             def read_ancestry(*args, **kwargs):
@@ -591,143 +1217,19 @@ class V4Readers(V3Readers):
                 return copy.deepcopy(self._provenance_values[key])
 
             return read_ancestry
-        reader = super().__getitem__(key)
-        if key != self._scheduled_input:
-            return reader
-
-        def read_scheduled_matrix(*, features=None, cells=None):
-            expected = self._scheduled_cells
-            if expected is None or (cells is not None and list(cells) != expected):
-                _fail(
-                    "PYBENCH_CAPABILITY_MISMATCH",
-                    "Matrix read differs from the active scheduled cell slice",
-                    "execution",
-                )
-            return reader(features=features, cells=expected)
-
-        return read_scheduled_matrix
+        return super().__getitem__(key)
 
     def __iter__(self):
-        return iter((*super().__iter__(), *self._provenance_values))
+        return iter((*super().__iter__(), *self._provenance_values, *self._typed_slice_clients))
 
     def __len__(self):
-        return super().__len__() + len(self._provenance_values)
+        return super().__len__() + len(self._provenance_values) + len(self._typed_slice_clients)
 
 
 class V4Writers(V3Writers):
     def __init__(self, request, stage_root, cell_order, inputs):
         super().__init__(request, stage_root, cell_order)
         self._inputs = inputs
-        self._schedule = request.get("chunk_schedules", [None])[0]
-        self._fragments: dict[int, _Write] = {}
-        self._adapter_write = False
-
-    @property
-    def fragments(self) -> Mapping[int, _Write]:
-        return dict(self._fragments)
-
-    def _write(self, writer, name, value, semantic_metadata=None):
-        if (
-            self._schedule
-            and not self._adapter_write
-            and name in {self._schedule["fragment_output"], self._schedule["summary_output"]}
-        ):
-            _fail(
-                "PYBENCH_CAPABILITY_MISMATCH", "Cell-chunk terminals are adapter-owned", "execution"
-            )
-        return super()._write(writer, name, value, semantic_metadata)
-
-    def write_chunk(self, name, index, value):
-        if self._consumed or self._schedule is None or name != self._schedule["fragment_output"]:
-            _fail("PYBENCH_CAPABILITY_MISMATCH", "Chunk writer is not granted", "execution")
-        if (
-            not isinstance(index, int)
-            or isinstance(index, bool)
-            or index < 1
-            or index > len(self._schedule["batches"])
-            or index in self._fragments
-        ):
-            _fail("PYBENCH_CAPABILITY_MISMATCH", "Chunk index is invalid or repeated", "execution")
-        batch = self._schedule["batches"][index - 1]
-        payload = copy.deepcopy(dict(value))
-        grant = batch["fragment_grant"]
-        _validate_fragment(grant, payload, self._inputs)
-        root = _safe_relative(self._stage_root, f"chunk_fragments/{name}/{index}")
-        root.mkdir(parents=True)
-        path = root / "payload.json"
-        path.write_text(canonical_json(payload), encoding="utf-8")
-        self._fragments[index] = _Write(payload, path, {}, "write_chunk")
-        return {
-            "name": name,
-            "index": index,
-            "fragment_grant_identity": grant["fragment_grant_identity"],
-        }
-
-    def stage_adapter_output(self, name, value):
-        self._adapter_write = True
-        try:
-            return super()._write("write_terminal_primitive", name, value, None)
-        finally:
-            self._adapter_write = False
-
-
-def _validate_fragment(
-    grant: Mapping[str, Any],
-    payload: Mapping[str, Any],
-    inputs: Mapping[str, Mapping[str, Any]],
-) -> dict[str, Any]:
-    del inputs  # parent schedule validation binds the fragment to the input
-    cells = _ordered(payload, "cell_id")
-    keys = list(grant["key_axis"])
-    expected_keys = [key for key in keys for _ in range(grant["batch_length"])]
-    if (
-        payload.get("kind") != "cell_vector_family"
-        or _dimensions(payload) != [grant["expected_row_count"], 3]
-        or len(cells) != grant["expected_row_count"]
-        or _ordered(payload, "key") != expected_keys
-        or _identity("scworkbench.cell_order.v1", _distinct(cells))
-        != grant["batch_cell_order_identity"]
-        or _identity(
-            "scworkbench.row_order.v1",
-            [{"key": key, "cell_id": cell} for key, cell in zip(expected_keys, cells, strict=True)],
-        )
-        != grant["row_order_identity"]
-    ):
-        _fail("PYBENCH_OUTPUT_INVALID", "Chunk fragment differs from its exact grant", "execution")
-    values = payload.get("value")
-    if not isinstance(values, list) or len(values) != len(cells):
-        _fail("PYBENCH_OUTPUT_INVALID", "Chunk values are malformed", "execution")
-    missing = sum(value is None for value in values)
-    if grant["missing_values"] == "forbidden" and missing:
-        _fail("PYBENCH_OUTPUT_INVALID", "Chunk has forbidden missing values", "execution")
-    return {"cells": _distinct(cells), "keys": keys, "missing": missing}
-
-
-def _merge_fragments(
-    schedule: Mapping[str, Any], fragments: Mapping[int, _Write]
-) -> dict[str, Any]:
-    if sorted(fragments) != list(range(1, len(schedule["batches"]) + 1)):
-        _fail("PYBENCH_RECEIPT_MISMATCH", "Chunk fragment closure differs from schedule", "receipt")
-    keys = list(schedule["batches"][0]["fragment_grant"]["key_axis"]) if schedule["batches"] else []
-    merged = {
-        "kind": "cell_vector_family",
-        "dimensions": [0, 3],
-        "cell_id": [],
-        "key": [],
-        "value": [],
-        "storage_profile": "terminal_primitive_v1",
-        "meta": {},
-    }
-    for key in keys:
-        for index in sorted(fragments):
-            value = fragments[index].value
-            for row, observed_key in enumerate(value["key"]):
-                if observed_key == key:
-                    merged["key"].append(key)
-                    merged["cell_id"].append(value["cell_id"][row])
-                    merged["value"].append(value["value"][row])
-    merged["dimensions"][0] = len(merged["value"])
-    return merged
 
 
 def _validate_provenance_snapshot(
@@ -1110,249 +1612,28 @@ def _provenance_observations(request: Mapping[str, Any]) -> list[dict[str, Any]]
     return result
 
 
-def _finalizer_metadata(
-    operation: Mapping[str, Any],
-    request: Mapping[str, Any],
-    schedule: Mapping[str, Any],
-) -> dict[str, Any]:
-    input_records = {item["name"]: item for item in request["inputs"]}
-    output_records = {item["name"]: item for item in request["outputs"]}
-    fragment_grant = output_records[schedule["fragment_output"]]["descriptor"]["cardinality_grant"]
-    values: list[dict[str, Any]] = []
-    for source in operation["chunking"]["summary"]["metadata_sources"]:
-        kind = source["source"]
-        if kind == "resolved_key_axis":
-            value = fragment_grant["key_axis_resolution"]
-        elif kind == "normalized_parameter":
-            value = request["params"][source["parameter"]]
-        elif kind == "input_reference":
-            value = input_records[source["input"]]["reference"]
-        elif kind == "input_descriptor":
-            value = input_records[source["input"]]["descriptor"]
-        else:  # manifest admission makes this unreachable
-            _fail("PYBENCH_CAPABILITY_MISMATCH", "Unknown finalizer metadata source", "execution")
-        values.append({"name": source["name"], "value": copy.deepcopy(value)})
-    metadata = {
-        "schema": "scworkbench.operation_pack.summary_finalizer_metadata.v1",
-        "finalizer_definition_identity": schedule["summary_finalizer_definition"][
-            "finalizer_definition_identity"
-        ],
-        "values": values,
-    }
-    metadata["finalizer_metadata_identity"] = _identity(
-        "scworkbench.operation_pack.summary_finalizer_metadata.v1",
-        metadata,
-        "metadata excluding finalizer_metadata_identity",
-    )
-    return metadata
-
-
-def _invoke_finalizer_isolated(
-    discovery: PackDiscoveryV3,
-    callable_name: str,
-    merged_family: Mapping[str, Any],
-    metadata: Mapping[str, Any],
-) -> dict[str, Any]:
-    manifest = Path(
-        discovery.distribution.locate_file(discovery.identity["manifest_relative_path"])
-    ).resolve(strict=True)
-    command = [
-        sys.executable,
-        "-m",
-        "pybench.summary_finalizer_worker",
-        str(manifest),
-        callable_name,
-    ]
-    completed = subprocess.run(
-        command,
-        input=canonical_json({"merged_family": dict(merged_family), "metadata": dict(metadata)}),
-        text=True,
-        capture_output=True,
-        timeout=300,
-        check=False,
-    )
-    if completed.returncode != 0:
-        _fail(
-            "PYBENCH_PROCESS_FAILED",
-            "Pure summary finalizer failed in its isolated invocation",
-            "execution",
-            finalizer_exit_code=completed.returncode,
-        )
-    try:
-        value = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        _fail(
-            "PYBENCH_OUTPUT_INVALID",
-            "Pure summary finalizer returned invalid JSON",
-            "execution",
-        )
-    if not isinstance(value, dict):
-        _fail(
-            "PYBENCH_OUTPUT_INVALID",
-            "Pure summary finalizer did not return one primitive",
-            "execution",
-        )
-    return value
-
-
-def _chunk_execution(
-    request: Mapping[str, Any],
-    operation: Mapping[str, Any],
-    discovery: PackDiscoveryV3,
-    readers: V4Readers,
-    writers: V4Writers,
-    inputs: Mapping[str, Mapping[str, Any]],
-) -> dict[str, Any] | None:
-    schedules = request.get("chunk_schedules", [])
-    if not schedules:
-        return None
-    schedule = schedules[0]
-    source = inputs[schedule["input_name"]]
-    source_cells = _ordered(source, "cell_id")
-    requested_size = schedule["requested_chunk_size"]
-    expected_effective = (
-        0
-        if not source_cells
-        else len(source_cells)
-        if requested_size is None
-        else min(requested_size, len(source_cells))
-    )
-    if (
-        schedule["axis_count"] != len(source_cells)
-        or schedule["axis_order_identity"] != _identity("scworkbench.cell_order.v1", source_cells)
-        or schedule["effective_chunk_size"] != expected_effective
-    ):
-        _fail(
-            "PYBENCH_INPUT_IDENTITY_MISMATCH",
-            "Chunk schedule cell axis differs from staged input",
-            "execution",
-        )
-    expected_calls: list[list[str]] = []
-    for batch in schedule["batches"]:
-        start = batch["start"] - 1
-        cells = source_cells[start : start + batch["length"]]
-        expected_calls.append(cells)
-        if len(cells) > expected_effective:
+def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, Any]]:
+    typed_inputs = {item["input_name"] for item in request.get("typed_slice_grants", [])}
+    for name in typed_inputs:
+        eager = _safe_relative(root, f"inputs/{name}/payload.json")
+        if eager.exists():
             _fail(
                 "PYBENCH_CAPABILITY_MISMATCH",
-                "Chunk batch exceeds effective size",
-                "execution",
+                "Broker-enabled matrix was eagerly staged across the process boundary",
+                "staging",
             )
-        grant = batch["fragment_grant"]
-        if (
-            batch["cell_order_identity"] != _identity("scworkbench.cell_order.v1", cells)
-            or grant["batch_cell_order_identity"] != batch["cell_order_identity"]
-        ):
-            _fail(
-                "PYBENCH_CAPABILITY_MISMATCH",
-                "Chunk batch identity differs from staged input slice",
-                "execution",
-            )
-    observed_calls = [
-        item["cells"] for item in readers.calls if item["input"] == schedule["input_name"]
-    ]
-    if observed_calls != expected_calls:
-        _fail(
-            "PYBENCH_CAPABILITY_MISMATCH",
-            "Matrix reads are not bijective with scheduled cell slices",
-            "execution",
-        )
-    fragments = writers.fragments
-    merged = _merge_fragments(schedule, fragments)
-    writers.stage_adapter_output(schedule["fragment_output"], merged)
-    metadata = _finalizer_metadata(operation, request, schedule)
-    summary = _invoke_finalizer_isolated(
-        discovery,
-        schedule["summary_finalizer_definition"]["callable"],
-        merged,
-        metadata,
-    )
-    writers.stage_adapter_output(schedule["summary_output"], summary)
+    projected = copy.deepcopy(dict(request))
+    projected["inputs"] = [item for item in request["inputs"] if item["name"] not in typed_inputs]
+    return _read_inputs(projected, root)
 
-    observed_chunks: list[dict[str, Any]] = []
-    for batch in schedule["batches"]:
-        index = batch["index"]
-        write = fragments[index]
-        details = _validate_fragment(batch["fragment_grant"], write.value, inputs)
-        descriptor_identity = _identity(
-            "scworkbench.operation_pack.observed_output.v3", write.value
-        )
-        content_identity = _identity("scworkbench.cell_vector_family.content.v1", write.value)
-        observed = {
-            "schema": "scworkbench.operation_pack.observed_chunk_fragment.v1",
-            "index": index,
-            "fragment_grant_identity": batch["fragment_grant"]["fragment_grant_identity"],
-            "observed_row_count": len(write.value["value"]),
-            "observed_cell_order_identity": _identity(
-                "scworkbench.cell_order.v1", details["cells"]
-            ),
-            "observed_key_order_identity": _identity("scworkbench.row_order.v1", details["keys"]),
-            "observed_row_order_identity": _identity(
-                "scworkbench.row_order.v1",
-                [
-                    {"key": key, "cell_id": cell}
-                    for key, cell in zip(write.value["key"], write.value["cell_id"], strict=True)
-                ],
-            ),
-            "missing_count": details["missing"],
-            "descriptor_identity": descriptor_identity,
-            "content_identity": content_identity,
-            "semantic_validation": "passed",
-        }
-        observed["observed_fragment_identity"] = _identity(
-            "scworkbench.operation_pack.observed_chunk_fragment.v1",
-            observed,
-            "observation excluding observed_fragment_identity",
-        )
-        observed_chunks.append(observed)
 
-    merged_identity = _identity("scworkbench.cell_vector_family.content.v1", merged)
-    summary_identity = _identity("scworkbench.obs_table.content.v1", summary)
-    invocation = {
-        "schema": "scworkbench.operation_pack.summary_finalizer_invocation.v1",
-        "finalizer_definition_identity": schedule["summary_finalizer_definition"][
-            "finalizer_definition_identity"
-        ],
-        "merged_family_content_identity": merged_identity,
-        "finalizer_metadata_identity": metadata["finalizer_metadata_identity"],
-        "summary_content_identity": summary_identity,
+def _typed_slice_clients(
+    request: Mapping[str, Any], root: Path
+) -> dict[str, TypedSliceBrokerClient]:
+    return {
+        grant["name"]: TypedSliceBrokerClient(request, grant, root)
+        for grant in request.get("typed_slice_grants", [])
     }
-    invocation["finalizer_invocation_identity"] = _identity(
-        "scworkbench.operation_pack.summary_finalizer_invocation.v1",
-        invocation,
-        "invocation excluding finalizer_invocation_identity",
-    )
-    execution = {
-        "schema": "scworkbench.operation_pack.cell_chunk_observation.v1",
-        "request_identity": request["request_identity"],
-        "capability_identity": request["execution_capability"]["capability_identity"],
-        "operation_definition_identity": request["operation_authentication"][
-            "operation_definition_identity"
-        ],
-        "schedule_identity": schedule["schedule_identity"],
-        "observed_chunks": observed_chunks,
-        "merged_family_descriptor_identity": _identity(
-            "scworkbench.operation_pack.observed_output.v3", merged
-        ),
-        "merged_family_content_identity": merged_identity,
-        "finalizer_definition_identity": schedule["summary_finalizer_definition"][
-            "finalizer_definition_identity"
-        ],
-        "finalizer_metadata_identity": metadata["finalizer_metadata_identity"],
-        "finalizer_invocation_identity": invocation["finalizer_invocation_identity"],
-        "summary_source_identity": merged_identity,
-        "summary_descriptor_identity": _identity(
-            "scworkbench.operation_pack.observed_output.v3", summary
-        ),
-        "summary_content_identity": summary_identity,
-    }
-    execution["chunk_execution_identity"] = _identity(
-        "scworkbench.operation_pack.cell_chunk_observation.v1",
-        execution,
-        "observation excluding chunk_execution_identity",
-    )
-    shutil.rmtree(writers._stage_root / "chunk_fragments", ignore_errors=True)
-    return execution
 
 
 def execute_operation_pack_v4(
@@ -1378,42 +1659,53 @@ def execute_operation_pack_v4(
     try:
         if fault_hook:
             fault_hook("before_input_read")
-        inputs = _read_inputs(request, root)
+        inputs = _read_inputs_v4(request, root)
         registry_values = _read_registry_reads(request, operation, root)
         provenance_values = _read_provenance(request, operation, root)
         preflight = preflight_v3(operation, inputs, request["params"], request)
-        cell_order = list(next(iter(inputs.values())).get("cell_id", [])) if inputs else []
-        writers = V4Writers(request, root, cell_order, inputs)
-        readers = V4Readers(inputs, registry_values, provenance_values)
+        slice_clients = _typed_slice_clients(request, root)
+        slice_inputs = {
+            grant["input_name"]: {
+                "kind": "matrix",
+                "dimensions": [
+                    grant["features_axis"]["count"],
+                    grant["cells_axis"]["count"],
+                ],
+                "feature_id": slice_clients[grant["name"]].selected_features,
+                "cell_id": slice_clients[grant["name"]].selected_cells,
+            }
+            for grant in request.get("typed_slice_grants", [])
+        }
+        audit_inputs = {**inputs, **slice_inputs}
+        cell_order = (
+            list(next(iter(audit_inputs.values())).get("cell_id", [])) if audit_inputs else []
+        )
+        writers = V4Writers(request, root, cell_order, audit_inputs)
+        readers = V4Readers(inputs, registry_values, provenance_values, slice_clients)
         if fault_hook:
             fault_hook("before_dispatch")
         context = {
             "transition_id": request["transition"]["transition_id"],
             "capability_id": request["execution_capability"]["capability_id"],
+            "typed_slice_reads": {
+                grant["name"]: {
+                    "name": grant["name"],
+                    "input_name": grant["input_name"],
+                    "chunk_axis": grant["chunk_axis"],
+                    "requested_chunk_size": grant["requested_chunk_size"],
+                    "call_discipline": grant["call_discipline"],
+                    "cells": slice_clients[grant["name"]].selected_cells,
+                    "features": slice_clients[grant["name"]].selected_features,
+                }
+                for grant in request.get("typed_slice_grants", [])
+            },
         }
-        schedules = request.get("chunk_schedules", [])
-        if schedules:
-            schedule = schedules[0]
-            source_cells = _ordered(inputs[schedule["input_name"]], "cell_id")
-            for batch in schedule["batches"]:
-                start = batch["start"] - 1
-                readers.set_scheduled_cells(
-                    schedule["input_name"],
-                    source_cells[start : start + batch["length"]],
-                )
-                active[1].handlers[operation["qualified_name"]](
-                    readers,
-                    writers,
-                    copy.deepcopy(request["params"]),
-                    {**context, "chunk_batch_index": batch["index"]},
-                )
-        else:
-            active[1].handlers[operation["qualified_name"]](
-                readers,
-                writers,
-                copy.deepcopy(request["params"]),
-                context,
-            )
+        active[1].handlers[operation["qualified_name"]](
+            readers,
+            writers,
+            copy.deepcopy(request["params"]),
+            context,
+        )
         if sorted(readers.registry_calls) != sorted(
             item["name"] for item in request.get("registry_reads", [])
         ):
@@ -1430,7 +1722,9 @@ def execute_operation_pack_v4(
                 "Provenance readers must be consumed exactly once",
                 "execution",
             )
-        chunk_execution = _chunk_execution(request, operation, discovery, readers, writers, inputs)
+        typed_slice_usage = [
+            slice_clients[grant["name"]].usage() for grant in request.get("typed_slice_grants", [])
+        ]
         if fault_hook:
             fault_hook("after_handler")
         writes = writers.writes
@@ -1441,7 +1735,6 @@ def execute_operation_pack_v4(
         outputs: list[dict[str, Any]] = []
         registry_requests: list[dict[str, Any]] = []
         entries: list[dict[str, str]] = []
-        observed_by_name: dict[str, dict[str, Any]] = {}
         for grant in request["outputs"]:
             write = writes[grant["name"]]
             try:
@@ -1454,13 +1747,12 @@ def execute_operation_pack_v4(
                     "Staged payload changed after writer return",
                     "audit",
                 )
-            descriptor = _observed_descriptor_v4(grant, write, cell_order, inputs)
+            descriptor = _observed_descriptor_v4(grant, write, cell_order, audit_inputs)
             record = {
                 "name": grant["name"],
                 "allocated_id": grant["allocated_id"],
                 "descriptor": descriptor,
             }
-            observed_by_name[grant["name"]] = descriptor
             target = (
                 registry_requests
                 if grant["descriptor"]["category"] == "core_registry_request"
@@ -1472,22 +1764,6 @@ def execute_operation_pack_v4(
                     "path": write.path.relative_to(root).as_posix(),
                     "sha256": hashlib.sha256(write.path.read_bytes()).hexdigest(),
                 }
-            )
-        if chunk_execution is not None:
-            schedule = request["chunk_schedules"][0]
-            fragment_descriptor = observed_by_name[schedule["fragment_output"]]
-            summary_descriptor = observed_by_name[schedule["summary_output"]]
-            chunk_execution["merged_family_descriptor_identity"] = fragment_descriptor[
-                "observed_descriptor_identity"
-            ]
-            chunk_execution["summary_descriptor_identity"] = summary_descriptor[
-                "observed_descriptor_identity"
-            ]
-            chunk_execution.pop("chunk_execution_identity")
-            chunk_execution["chunk_execution_identity"] = _identity(
-                "scworkbench.operation_pack.cell_chunk_observation.v1",
-                chunk_execution,
-                "observation excluding chunk_execution_identity",
             )
         after = _snapshot(root)
         tree_after = _tree(root)
@@ -1570,8 +1846,8 @@ def execute_operation_pack_v4(
                 receipt["registry_reads"].append({"name": item["name"], "descriptor": observed})
         if request.get("provenance_reads"):
             receipt["provenance_reads"] = _provenance_observations(request)
-        if chunk_execution is not None:
-            receipt["chunk_executions"] = [chunk_execution]
+        if typed_slice_usage:
+            receipt["typed_slice_usage"] = typed_slice_usage
         receipt["receipt_identity"] = _identity(
             RECEIPT_SCHEMA_V4, receipt, "receipt excluding receipt_identity"
         )
@@ -1584,6 +1860,128 @@ def execute_operation_pack_v4(
             writers.consume()
         _restore(root, before)
         raise
+
+
+def _validate_typed_slice_usage(
+    request: Mapping[str, Any], usage_values: list[Mapping[str, Any]]
+) -> None:
+    grants = request.get("typed_slice_grants", [])
+    if len(usage_values) != len(grants):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Typed-slice usage closure differs", "receipt")
+    for usage, grant in zip(usage_values, grants, strict=True):
+        _assert_identity(usage, "usage_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")
+        calls = usage["calls"]
+        if usage["call_count"] != len(calls):
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Typed-slice call count differs", "receipt")
+        for ordinal, call in enumerate(calls, start=1):
+            _assert_identity(call, "call_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")
+            result = {
+                key: copy.deepcopy(value)
+                for key, value in call.items()
+                if key not in {"schema", "call_identity"}
+            }
+            result["schema"] = "scworkbench.operation_pack.typed_slice_result.v1"
+            result["source_reference_identity"] = _identity_projection(
+                grant["source_reference"]["source_reference_identity"]
+            )
+            ordered_result = {
+                "schema": result.pop("schema"),
+                "source_reference_identity": result.pop("source_reference_identity"),
+                **result,
+            }
+            expected_slice_identity = _identity(
+                "scworkbench.operation_pack.typed_slice_result.v1",
+                {
+                    key: value
+                    for key, value in ordered_result.items()
+                    if key != "slice_result_identity"
+                },
+                "slice result excluding slice_result_identity",
+            )
+            if (
+                call["ordinal"] != ordinal
+                or call["grant_identity"] != _identity_projection(grant["grant_identity"])
+                or call["dimensions"] != [call["feature_count"], call["cell_count"]]
+                or call["feature_count"] > grant["max_rows"]
+                or call["cell_count"] > grant["max_columns"]
+                or call["feature_count"] * call["cell_count"] > grant["max_elements"]
+                or call["slice_result_identity"] != expected_slice_identity
+            ):
+                _fail(
+                    "PYBENCH_RECEIPT_MISMATCH",
+                    "Typed-slice call result or resource binding differs",
+                    "receipt",
+                )
+        chunk_axis = grant["chunk_axis"]
+        selected_count = grant[f"{chunk_axis}_axis"]["count"]
+        selected_identity = grant[f"{chunk_axis}_axis"]["order_identity"]
+        empty_selection = not grant["cells_axis"]["count"] or not grant["features_axis"]["count"]
+        bindings = (
+            usage["request_identity"] == _identity_projection(request["request_identity"]),
+            usage["capability_identity"]
+            == _identity_projection(request["execution_capability"]["capability_identity"]),
+            usage["operation_definition_identity"]
+            == _identity_projection(
+                request["operation_authentication"]["operation_definition_identity"]
+            ),
+            usage["grant_identity"] == _identity_projection(grant["grant_identity"]),
+            usage["requested_chunk_size"] == grant["requested_chunk_size"],
+            0
+            <= usage["unique_chunk_axis_count"]
+            <= sum(
+                call["cell_count"] if chunk_axis == "cells" else call["feature_count"]
+                for call in calls
+            ),
+            usage["duplicate_chunk_axis_count"]
+            == sum(
+                call["cell_count"] if chunk_axis == "cells" else call["feature_count"]
+                for call in calls
+            )
+            - usage["unique_chunk_axis_count"],
+        )
+        if not all(bindings):
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Typed-slice usage binding differs", "receipt")
+        if empty_selection:
+            empty_scheme = (
+                "scworkbench.cell_order.v1"
+                if chunk_axis == "cells"
+                else "scworkbench.feature_order.v1"
+            )
+            if (
+                usage["coverage_status"] != "empty"
+                or calls
+                or usage["unique_chunk_axis_count"] != 0
+                or usage["duplicate_chunk_axis_count"] != 0
+                or usage["concatenated_chunk_axis_order_identity"] != _identity(empty_scheme, [])
+            ):
+                _fail(
+                    "PYBENCH_RECEIPT_MISMATCH",
+                    "Empty typed-slice usage differs from its grant",
+                    "receipt",
+                )
+        elif grant["call_discipline"] == "ordered_partition_exactly_once":
+            if selected_count:
+                expected_coverage = "exact"
+                exact = (
+                    usage["unique_chunk_axis_count"] == selected_count
+                    and usage["duplicate_chunk_axis_count"] == 0
+                    and usage["concatenated_chunk_axis_order_identity"] == selected_identity
+                )
+            else:
+                expected_coverage = "empty"
+                exact = not calls and usage["unique_chunk_axis_count"] == 0
+            if usage["coverage_status"] != expected_coverage or not exact:
+                _fail(
+                    "PYBENCH_RECEIPT_MISMATCH",
+                    "Typed-slice ordered coverage differs from its grant",
+                    "receipt",
+                )
+        elif usage["coverage_status"] != "independent":
+            _fail(
+                "PYBENCH_RECEIPT_MISMATCH",
+                "Typed-slice independent coverage status differs",
+                "receipt",
+            )
 
 
 def validate_receipt_v4(
@@ -1639,83 +2037,17 @@ def validate_receipt_v4(
     expected_provenance = _provenance_observations(request)
     if value.get("provenance_reads", []) != expected_provenance:
         _fail("PYBENCH_RECEIPT_MISMATCH", "Provenance read receipt differs", "receipt")
-    schedules = request.get("chunk_schedules", [])
-    chunk_executions = value.get("chunk_executions", [])
-    if len(chunk_executions) != len(schedules):
-        _fail("PYBENCH_RECEIPT_MISMATCH", "Chunk execution closure differs", "receipt")
-    observed_by_name = {item["name"]: item["descriptor"] for item in observed}
-    for item, schedule in zip(chunk_executions, schedules, strict=True):
-        operation = _operation(discovery, request["operation_authentication"]["name"])
-        expected_bindings = (
-            item["request_identity"] == request["request_identity"],
-            item["capability_identity"] == request["execution_capability"]["capability_identity"],
-            item["operation_definition_identity"]
-            == request["operation_authentication"]["operation_definition_identity"],
-            item["schedule_identity"] == schedule["schedule_identity"],
-            item["finalizer_definition_identity"]
-            == schedule["summary_finalizer_definition"]["finalizer_definition_identity"],
-        )
-        fragments = item["observed_chunks"]
-        if not all(expected_bindings) or len(fragments) != len(schedule["batches"]):
-            _fail(
-                "PYBENCH_RECEIPT_MISMATCH",
-                "Chunk observation closure or request binding differs",
-                "receipt",
-            )
-        for fragment, batch in zip(fragments, schedule["batches"], strict=True):
-            _assert_identity(
-                fragment, "observed_fragment_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt"
-            )
-            grant = batch["fragment_grant"]
-            if (
-                fragment["index"] != batch["index"]
-                or fragment["fragment_grant_identity"] != grant["fragment_grant_identity"]
-                or fragment["observed_row_count"] != grant["expected_row_count"]
-                or fragment["observed_cell_order_identity"] != grant["batch_cell_order_identity"]
-                or fragment["observed_key_order_identity"] != grant["key_axis_order_identity"]
-                or fragment["observed_row_order_identity"] != grant["row_order_identity"]
-                or fragment["semantic_validation"] != "passed"
-            ):
-                _fail(
-                    "PYBENCH_RECEIPT_MISMATCH",
-                    "Chunk observation differs from its exact fragment grant",
-                    "receipt",
-                )
-        _assert_identity(item, "chunk_execution_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")
-        fragment_descriptor = observed_by_name[schedule["fragment_output"]]
-        summary_descriptor = observed_by_name[schedule["summary_output"]]
-        invocation = {
-            "schema": "scworkbench.operation_pack.summary_finalizer_invocation.v1",
-            "finalizer_definition_identity": item["finalizer_definition_identity"],
-            "merged_family_content_identity": item["merged_family_content_identity"],
-            "finalizer_metadata_identity": item["finalizer_metadata_identity"],
-            "summary_content_identity": item["summary_content_identity"],
-        }
-        invocation["finalizer_invocation_identity"] = _identity(
-            "scworkbench.operation_pack.summary_finalizer_invocation.v1",
-            invocation,
-            "invocation excluding finalizer_invocation_identity",
-        )
-        if (
-            item["summary_source_identity"] != item["merged_family_content_identity"]
-            or item["merged_family_descriptor_identity"]
-            != fragment_descriptor["observed_descriptor_identity"]
-            or item["merged_family_content_identity"] != fragment_descriptor["content_identity"]
-            or item["summary_descriptor_identity"]
-            != summary_descriptor["observed_descriptor_identity"]
-            or item["summary_content_identity"] != summary_descriptor["content_identity"]
-            or item["finalizer_invocation_identity"] != invocation["finalizer_invocation_identity"]
-            or operation["chunking"]["fragment_output"] != schedule["fragment_output"]
-            or operation["chunking"]["summary_output"] != schedule["summary_output"]
-        ):
-            _fail(
-                "PYBENCH_RECEIPT_MISMATCH",
-                "Merged family, finalizer, or summary evidence differs from terminal outputs",
-                "receipt",
-            )
+    _validate_typed_slice_usage(request, value.get("typed_slice_usage", []))
     if stage_root is not None:
         root = _safe_root(Path(stage_root))
-        inputs = _read_inputs(request, root)
+        inputs = _read_inputs_v4(request, root)
+        for grant in request.get("typed_slice_grants", []):
+            inputs[grant["input_name"]] = {
+                "kind": "matrix",
+                "dimensions": [grant["features_axis"]["count"], grant["cells_axis"]["count"]],
+                "feature_id": _axis_manifest(root, grant["features_axis"], "features")["ids"],
+                "cell_id": _axis_manifest(root, grant["cells_axis"], "cells")["ids"],
+            }
         cell_order = list(next(iter(inputs.values())).get("cell_id", [])) if inputs else []
         by_name = {item["name"]: item for item in observed}
         for grant in request["outputs"]:

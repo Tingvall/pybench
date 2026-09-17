@@ -4,9 +4,10 @@ import copy
 import hashlib
 import importlib.metadata as metadata
 import json
+import shutil
 import subprocess
 import sys
-from dataclasses import replace
+import threading
 from pathlib import Path
 
 import pytest
@@ -20,26 +21,24 @@ from pybench.operation_packs_v3 import (
     unload_operation_pack_v3,
     validate_manifest_v3,
 )
-from pybench.protocol_v3 import _Write
 from pybench.protocol_v4 import (
     V4Readers,
-    _merge_fragments,
     _validate_cardinality_payload,
-    _validate_fragment,
     _validate_provenance_snapshot,
     execute_operation_pack_v4,
     validate_python_runtime_sidecar_v4,
     validate_receipt_v4,
     validate_request_v4,
 )
+from test_operation_pack_v3_typed_slice import TOKEN, _axis, _serve
 from v3_helpers import fixture_inputs, make_request
 
 FIXTURE = Path(__file__).parent / "fixtures" / "operation-pack-v3-python-reference"
 SHARED_DIGESTS = {
-    "operation-pack-v3.schema.json": "a4f095902b5dcb71bc4d84b5b248997b3c9748ef7e51e91c7ab6b77483efee8b",
-    "operation-pack-transition-request-v3.schema.json": "9ff65685bcad2358b26a325beeed617cd6695ebf629b5c6412df3762ff929052",
-    "operation-pack-transition-receipt-v3.schema.json": "e6ab7b7eeac2a4b60a4da405cdd70425d417a2fc61689dca585335f3f5eec25d",
-    "fixtures/operation-pack-v3/identities.json": "31e104e2167a5c5c9b147afe280bd7b36220c3d61f1773445ded6ee9d52bbbee",
+    "operation-pack-v3.schema.json": "f263fbcf15d3a928c5a3b7cfa41ca27b4f5d3e0f31f2b8f42cc930b1d9713ff3",
+    "operation-pack-transition-request-v3.schema.json": "9935a10ca05c5c767e739d06839b5d4fcbf53de549ea95b8cd4d1e711e8089d6",
+    "operation-pack-transition-receipt-v3.schema.json": "6ba0a1875100cda766cc5c5f10caa01fc654dd9688250d3ff17389bb4c561e28",
+    "fixtures/operation-pack-v3/identities.json": "ed31bcf18062d57b6ea8d8f7a787f8932138f959e5762d195b3968438d052f32",
 }
 
 
@@ -77,19 +76,7 @@ def _request_v4(discovery, stage, operation_name, inputs, params=None):
         for item in discovery.manifest["operations"]
         if item["qualified_name"] == operation_name
     )
-    if source_operation.get("chunking", {}).get("axis") == "cells":
-        manifest = copy.deepcopy(discovery.manifest)
-        shadow = next(
-            item for item in manifest["operations"] if item["qualified_name"] == operation_name
-        )
-        shadow.pop("chunking")
-        shadow.pop("dimension_policies")
-        request = make_request(
-            replace(discovery, manifest=manifest), stage, operation_name, inputs, params
-        )
-        _add_cell_chunk_contract(request, source_operation, inputs, params or {})
-    else:
-        request = make_request(discovery, stage, operation_name, inputs, params)
+    request = make_request(discovery, stage, operation_name, inputs, params)
     request["schema"] = "scworkbench.operation_pack.transition_request.v3"
     request["process_protocol_version"] = "pybench-op-v4"
     request["pack_abi_version"] = "3"
@@ -98,7 +85,7 @@ def _request_v4(discovery, stage, operation_name, inputs, params=None):
     if any(
         policy.get("policy") == "authenticated_output_axes_v1"
         for policy in source_operation.get("dimension_policies", [])
-    ) and not source_operation.get("chunking"):
+    ):
         _add_cardinality_contracts(request, source_operation, inputs, params or {})
     for output in request["outputs"]:
         descriptor = output["descriptor"]
@@ -164,28 +151,65 @@ def _add_cardinality_contracts(request, operation, inputs, params):
         }
         if policy["shape"] == "cell_key_cartesian":
             resolver = policy["key_axis"]
-            key_input = inputs[resolver["input"]]
-            keys = list(dict.fromkeys(key_input["key"]))
-            selector_parameter = resolver.get("selector_parameter")
-            selector_value = params.get(selector_parameter) if selector_parameter else None
-            if selector_value is not None:
-                keys = list(selector_value)
-            key_descriptor = input_records[resolver["input"]]
-            resolution = {
-                "source": resolver["source"],
-                "input": resolver["input"],
-                "input_descriptor_identity": {
-                    "scheme": key_descriptor["descriptor_identity"]["scheme"],
-                    "sha256": key_descriptor["descriptor_identity"]["sha256"],
-                },
-                "selector_parameter": selector_parameter,
-                "selector_value": selector_value,
-                "no_selector_order": resolver["no_selector_order"],
-                "selector_order": resolver["selector_order"],
-                "unknown_key_policy": resolver["unknown_key_policy"],
-                "zero_key_policy": resolver["zero_key_policy"],
-                "keys": keys,
-            }
+            if resolver["source"] == "resolved_parameter_feature_groups_v1":
+                groups = params[resolver["groups_parameter"]]
+                keys = list(groups)
+                matrix = inputs[resolver["matrix_input"]]
+                key_descriptor = input_records[resolver["matrix_input"]]
+                available = set(matrix["feature_id"])
+                resolved = []
+                for key, features in groups.items():
+                    unique = list(dict.fromkeys(features))
+                    resolved.append(
+                        {
+                            "key": key,
+                            "features_input": unique,
+                            "features_matched": [item for item in unique if item in available],
+                            "features_missing": [item for item in unique if item not in available],
+                        }
+                    )
+                resolution = {
+                    "source": resolver["source"],
+                    "groups_parameter": resolver["groups_parameter"],
+                    "matrix_input": resolver["matrix_input"],
+                    "matrix_input_descriptor_identity": {
+                        key: key_descriptor["descriptor_identity"][key]
+                        for key in ("scheme", "sha256")
+                    },
+                    "matrix_feature_axis_identity": key_descriptor["feature_order_identity"],
+                    "name_prefix_parameter": resolver["name_prefix_parameter"],
+                    "name_prefix_value": params[resolver["name_prefix_parameter"]],
+                    "matching": resolver["matching"],
+                    "normalization": resolver["normalization"],
+                    "generated_names": resolver["generated_names"],
+                    "missing_feature_policy": "drop",
+                    "empty_group_policy": resolver["empty_group_policy"],
+                    "zero_key_policy": resolver["zero_key_policy"],
+                    "groups": resolved,
+                }
+            else:
+                key_input = inputs[resolver["input"]]
+                keys = list(dict.fromkeys(key_input["key"]))
+                selector_parameter = resolver.get("selector_parameter")
+                selector_value = params.get(selector_parameter) if selector_parameter else None
+                if selector_value is not None:
+                    keys = list(selector_value)
+                key_descriptor = input_records[resolver["input"]]
+                resolution = {
+                    "source": resolver["source"],
+                    "input": resolver["input"],
+                    "input_descriptor_identity": {
+                        "scheme": key_descriptor["descriptor_identity"]["scheme"],
+                        "sha256": key_descriptor["descriptor_identity"]["sha256"],
+                    },
+                    "selector_parameter": selector_parameter,
+                    "selector_value": selector_value,
+                    "no_selector_order": resolver["no_selector_order"],
+                    "selector_order": resolver["selector_order"],
+                    "unknown_key_policy": resolver["unknown_key_policy"],
+                    "zero_key_policy": resolver["zero_key_policy"],
+                    "keys": keys,
+                }
             rows = [{"key": key, "cell_id": cell} for key in keys for cell in cells]
             grant.update(
                 key_axis_count=len(keys),
@@ -215,6 +239,85 @@ def _add_cardinality_contracts(request, operation, inputs, params):
         descriptor["expected_cell_order_identity"] = _identity(
             "scworkbench.cell_order.v1", output_cells
         )
+
+
+def _add_typed_slice_contract(request, stage):
+    input_record = next(item for item in request["inputs"] if item["name"] == "matrix")
+    descriptor = input_record["descriptor"]
+    source = {
+        "schema": "scworkbench.operation_pack.typed_slice_source_reference.v1",
+        "input_name": "matrix",
+        "input_reference": "matrix:m1",
+        "source_kind": "bundle_matrix",
+        "matrix_id": "m1",
+        "input_descriptor_identity": {
+            key: descriptor["descriptor_identity"][key] for key in ("scheme", "sha256")
+        },
+        "input_content_identity": descriptor["content_identity"],
+        "transition_source_state_identity": request["transition"]["source_state_identity"],
+    }
+    source["source_reference_identity"] = _identity(
+        "scworkbench.operation_pack.typed_slice_source_reference.v1",
+        source,
+        "source reference excluding source_reference_identity",
+    )
+    grant = {
+        "schema": "scworkbench.operation_pack.typed_slice_grant.v1",
+        "name": "matrix_chunks",
+        "input_name": "matrix",
+        "kind": "matrix",
+        "reader": "read_typed_slices",
+        "input_descriptor_identity": source["input_descriptor_identity"],
+        "input_content_identity": source["input_content_identity"],
+        "source_reference": source,
+        "supported_axes": ["cells"],
+        "chunk_axis": "cells",
+        "cells_axis": _axis(stage, "matrix_chunks", "cells", ["c2", "c1", "c3"]),
+        "features_axis": _axis(stage, "matrix_chunks", "features", ["feature_1"]),
+        "requested_chunk_size": request["params"]["chunk_size"],
+        "call_discipline": "ordered_partition_exactly_once",
+        "empty_selection_policy": "reject",
+        "duplicate_policy": "reject",
+        "max_rows": 1,
+        "max_columns": min(request["params"]["chunk_size"], 3),
+        "max_elements": min(request["params"]["chunk_size"], 3),
+        "max_control_bytes": 1_000_000,
+        "max_response_bytes": 1_000_000,
+        "max_outstanding_responses": 1,
+    }
+    grant["grant_identity"] = _identity(
+        "scworkbench.operation_pack.typed_slice_grant.v1",
+        grant,
+        "grant excluding grant_identity",
+    )
+    request["typed_slice_grants"] = [grant]
+    capability = request["execution_capability"]
+    capability["reader_grants"] = [
+        item for item in capability["reader_grants"] if item.get("input_name") != "matrix"
+    ]
+    capability["reader_grants"].append(
+        {
+            "typed_slice_name": "matrix_chunks",
+            "reader": "read_typed_slices",
+            "grant_identity": grant["grant_identity"],
+        }
+    )
+    capability["typed_slice_grant_identities"] = [
+        {key: grant["grant_identity"][key] for key in ("scheme", "sha256")}
+    ]
+    capability.pop("capability_identity")
+    capability["capability_identity"] = _identity(
+        "scworkbench.operation_pack.capability.v3",
+        capability,
+        "capability excluding capability_identity",
+    )
+    request.pop("request_identity")
+    request["request_identity"] = _identity(
+        "scworkbench.operation_pack.transition_request.v3",
+        request,
+        "request excluding request_identity",
+    )
+    return grant
 
 
 def _add_provenance_contract(request, stage):
@@ -307,155 +410,6 @@ def _add_provenance_contract(request, stage):
         {
             "scheme": descriptor["descriptor_identity"]["scheme"],
             "sha256": descriptor["descriptor_identity"]["sha256"],
-        }
-    ]
-
-
-def _add_cell_chunk_contract(request, operation, inputs, params):
-    matrix = inputs["matrix"]
-    cells = matrix["cell_id"]
-    input_descriptor = request["inputs"][0]["descriptor"]
-    input_identity = {
-        "scheme": input_descriptor["descriptor_identity"]["scheme"],
-        "sha256": input_descriptor["descriptor_identity"]["sha256"],
-    }
-    scores = next(item for item in request["outputs"] if item["name"] == "scores")
-    resolution = {
-        "source": "resolved_parameter_feature_groups_v1",
-        "groups_parameter": "features",
-        "matrix_input": "matrix",
-        "matrix_input_descriptor_identity": input_identity,
-        "matrix_feature_axis_identity": input_descriptor["feature_order_identity"],
-        "name_prefix_parameter": "name",
-        "name_prefix_value": params["name"],
-        "matching": "exact_feature_id_v1",
-        "normalization": "ordered_unique_features_v1",
-        "generated_names": "legacy_module_group_names_v1",
-        "missing_feature_policy": "drop",
-        "empty_group_policy": "error",
-        "zero_key_policy": "error",
-        "groups": [
-            {
-                "key": "module1",
-                "features_input": params["features"],
-                "features_matched": params["features"],
-                "features_missing": [],
-            }
-        ],
-    }
-    cardinality = {
-        "schema": "scworkbench.operation_pack.output_cardinality_grant.v1",
-        "output": "scores",
-        "kind": "cell_vector_family",
-        "policy": "authenticated_output_axes_v1",
-        "shape": "cell_key_cartesian",
-        "row_order": "key_major_then_cell_v1",
-        "missing_values": "forbidden",
-        "cell_axis_source": {
-            "input_name": "matrix",
-            "input_descriptor_identity": input_identity,
-            "derivation": "effective_cells_v1",
-        },
-        "cell_axis_count": len(cells),
-        "cell_axis_order_identity": _identity("scworkbench.cell_order.v1", cells),
-        "key_axis_count": 1,
-        "key_axis": ["module1"],
-        "key_axis_resolution": resolution,
-        "key_axis_order_identity": _identity("scworkbench.row_order.v1", ["module1"]),
-        "expected_row_count": len(cells),
-        "row_order_identity": _identity(
-            "scworkbench.row_order.v1",
-            [{"key": "module1", "cell_id": cell} for cell in cells],
-        ),
-    }
-    cardinality["cardinality_grant_identity"] = _identity(
-        "scworkbench.operation_pack.output_cardinality_grant.v1",
-        cardinality,
-        "grant excluding cardinality_grant_identity",
-    )
-    scores["descriptor"]["cardinality_grant"] = cardinality
-    scores["descriptor"]["expected_dimensions"] = [len(cells), 3]
-    scores["descriptor"]["expected_cell_order_identity"] = _identity(
-        "scworkbench.cell_order.v1", cells
-    )
-    summary = operation["chunking"]["summary"]
-    finalizer = {
-        "schema": "scworkbench.operation_pack.summary_finalizer_definition.v1",
-        "interface": summary["interface"],
-        "callable": summary["callable"],
-        "isolation": summary["isolation"],
-        "merged_input": "scores",
-        "summary_output": "summary",
-        "metadata_sources": summary["metadata_sources"],
-    }
-    finalizer["finalizer_definition_identity"] = _identity(
-        "scworkbench.operation_pack.summary_finalizer_definition.v1",
-        finalizer,
-        "definition excluding finalizer_definition_identity",
-    )
-    chunk_size = params["chunk_size"]
-    effective = len(cells) if chunk_size is None else min(chunk_size, len(cells))
-    batches = []
-    for index, start0 in enumerate(range(0, len(cells), effective), start=1):
-        batch_cells = cells[start0 : start0 + effective]
-        fragment = {
-            "schema": "scworkbench.operation_pack.chunk_fragment_grant.v1",
-            "fragment_output": "scores",
-            "parent_cardinality_grant_identity": cardinality["cardinality_grant_identity"],
-            "input_descriptor_identity": input_identity,
-            "batch_index": index,
-            "batch_start": start0 + 1,
-            "batch_length": len(batch_cells),
-            "batch_cell_order_identity": _identity("scworkbench.cell_order.v1", batch_cells),
-            "key_axis_count": 1,
-            "key_axis": ["module1"],
-            "key_axis_order_identity": cardinality["key_axis_order_identity"],
-            "expected_row_count": len(batch_cells),
-            "row_order_identity": _identity(
-                "scworkbench.row_order.v1",
-                [{"key": "module1", "cell_id": cell} for cell in batch_cells],
-            ),
-            "missing_values": "forbidden",
-        }
-        fragment["fragment_grant_identity"] = _identity(
-            "scworkbench.operation_pack.chunk_fragment_grant.v1",
-            fragment,
-            "grant excluding fragment_grant_identity",
-        )
-        batches.append(
-            {
-                "index": index,
-                "start": start0 + 1,
-                "length": len(batch_cells),
-                "cell_order_identity": fragment["batch_cell_order_identity"],
-                "fragment_grant": fragment,
-            }
-        )
-    schedule = {
-        "schema": "scworkbench.operation_pack.cell_chunk_schedule.v1",
-        "input_name": "matrix",
-        "input_descriptor_identity": input_identity,
-        "axis": "cells",
-        "axis_count": len(cells),
-        "axis_order_identity": _identity("scworkbench.cell_order.v1", cells),
-        "requested_chunk_size": chunk_size,
-        "effective_chunk_size": effective,
-        "batches": batches,
-        "merge_policy": "row_bind_cell_vector_family_v1",
-        "fragment_output": "scores",
-        "summary_output": "summary",
-        "summary_finalizer_definition": finalizer,
-    }
-    schedule["schedule_identity"] = _identity(
-        "scworkbench.operation_pack.cell_chunk_schedule.v1",
-        schedule,
-        "schedule excluding schedule_identity",
-    )
-    request["chunk_schedules"] = [schedule]
-    request["execution_capability"]["chunk_schedule_identities"] = [
-        {
-            "scheme": schedule["schedule_identity"]["scheme"],
-            "sha256": schedule["schedule_identity"]["sha256"],
         }
     ]
 
@@ -574,7 +528,7 @@ def test_manifest_v3_is_explicit_and_v2_reader_remains_separate():
 def test_v3_discovery_activation_and_plain_v4_execution(installed_v3, tmp_path):
     discovery = installed_v3
     registration = activate_operation_pack_v3(discovery)
-    assert set(registration.finalizers) == {"score_summary"}
+    assert not registration.finalizers
     stage = tmp_path / "stage"
     stage.mkdir()
     request = _request_v4(
@@ -604,77 +558,50 @@ def test_v3_discovery_activation_and_plain_v4_execution(installed_v3, tmp_path):
     assert validate_python_runtime_sidecar_v4(sidecar, request, discovery) == sidecar
 
 
-def test_cell_chunk_schedule_merge_and_isolated_finalizer_are_receipted(installed_v3, tmp_path):
+def test_typed_slice_executes_once_and_receipts_transport_neutral_usage(
+    installed_v3, tmp_path, monkeypatch
+):
     discovery = installed_v3
     unload_operation_pack_v3(discovery.manifest["namespace"])
     activate_operation_pack_v3(discovery)
-    identities = []
-    last_execution = None
-    for chunk_size in (3, 2):
-        stage = tmp_path / f"chunks-{chunk_size}"
-        stage.mkdir()
-        inputs = fixture_inputs()
-        inputs["matrix"].update(
-            dimensions=[1, 3],
-            cell_id=["c2", "c1", "c3"],
-            values=[[2.0, 1.0, 3.0]],
-        )
-        request = _request_v4(
-            discovery,
-            stage,
-            "scwbpyv3reference::cell_chunk_probe",
-            inputs,
-            {"features": ["feature_1"], "name": "Module", "chunk_size": chunk_size},
-        )
-        assert validate_request_v4(request, discovery) == request
-        receipt, _sidecar = execute_operation_pack_v4(request, discovery, stage)
-        execution = receipt["chunk_executions"][0]
-        last_execution = (receipt, request, stage)
-        assert [item["index"] for item in execution["observed_chunks"]] == list(
-            range(1, len(request["chunk_schedules"][0]["batches"]) + 1)
-        )
-        assert execution["summary_source_identity"] == execution["merged_family_content_identity"]
-        identities.append(
-            (
-                execution["merged_family_content_identity"],
-                execution["summary_content_identity"],
-            )
-        )
-    assert identities[0] == identities[1]
-
-    receipt, request, stage = last_execution
-    forged = copy.deepcopy(receipt)
-    execution = forged["chunk_executions"][0]
-    execution["summary_content_identity"] = _identity("fixture.summary", {"wrong": True})
-    invocation = {
-        "schema": "scworkbench.operation_pack.summary_finalizer_invocation.v1",
-        "finalizer_definition_identity": execution["finalizer_definition_identity"],
-        "merged_family_content_identity": execution["merged_family_content_identity"],
-        "finalizer_metadata_identity": execution["finalizer_metadata_identity"],
-        "summary_content_identity": execution["summary_content_identity"],
-    }
-    invocation["finalizer_invocation_identity"] = _identity(
-        "scworkbench.operation_pack.summary_finalizer_invocation.v1",
-        invocation,
-        "invocation excluding finalizer_invocation_identity",
+    stage = tmp_path / "typed-slice-process"
+    stage.mkdir()
+    inputs = fixture_inputs()
+    inputs["matrix"].update(
+        dimensions=[1, 3],
+        cell_id=["c2", "c1", "c3"],
+        values=[[2.0, 1.0, 3.0]],
     )
-    execution["finalizer_invocation_identity"] = invocation["finalizer_invocation_identity"]
-    execution.pop("chunk_execution_identity")
-    execution["chunk_execution_identity"] = _identity(
-        "scworkbench.operation_pack.cell_chunk_observation.v1",
-        execution,
-        "observation excluding chunk_execution_identity",
+    request = _request_v4(
+        discovery,
+        stage,
+        "scwbpyv3reference::cell_chunk_probe",
+        inputs,
+        {
+            "features": {"module1": ["feature_1"]},
+            "slice_features": ["feature_1"],
+            "name": "Module",
+            "chunk_size": 2,
+        },
     )
-    forged.pop("receipt_identity")
-    forged["receipt_identity"] = _identity(
-        "scworkbench.operation_pack.transition_receipt.v3",
-        forged,
-        "receipt excluding receipt_identity",
-    )
-    assert (
-        _error_code(validate_receipt_v4, forged, request, discovery, stage)
-        == "PYBENCH_RECEIPT_MISMATCH"
-    )
+    grant = _add_typed_slice_contract(request, stage)
+    assert validate_request_v4(request, discovery) == request
+    shutil.rmtree(stage / "inputs/matrix")
+    (stage / "broker").mkdir()
+    monkeypatch.setenv("PYBENCH_OPERATION_PACK_BROKER_TOKEN", TOKEN)
+    errors = []
+    broker = threading.Thread(target=_serve, args=(stage, request, grant, 2, errors), daemon=True)
+    broker.start()
+    receipt, sidecar = execute_operation_pack_v4(request, discovery, stage)
+    broker.join(5)
+    assert not broker.is_alive() and not errors
+    usage = receipt["typed_slice_usage"][0]
+    assert usage["coverage_status"] == "exact"
+    assert usage["call_count"] == 2
+    assert all("response_identity" not in call for call in usage["calls"])
+    assert not (stage / "inputs/matrix/payload.json").exists()
+    assert validate_receipt_v4(receipt, request, discovery, stage) == receipt
+    assert validate_python_runtime_sidecar_v4(sidecar, request, discovery) == sidecar
 
 
 def test_artifact_ancestry_is_single_use_identity_bound_and_mutation_safe(installed_v3, tmp_path):
@@ -870,60 +797,7 @@ def test_cardinality_adversarial_rows_fail_closed(mutation):
     )
 
 
-def test_fragment_validation_merge_and_ancestry_reader_are_deterministic(tmp_path):
-    grant = _cardinality()
-    cells = ["c2", "c1"]
-    fragment_grant = {
-        "schema": "scworkbench.operation_pack.chunk_fragment_grant.v1",
-        "fragment_output": "scores",
-        "parent_cardinality_grant_identity": grant["cardinality_grant_identity"],
-        "input_descriptor_identity": grant["cell_axis_source"]["input_descriptor_identity"],
-        "batch_index": 1,
-        "batch_start": 1,
-        "batch_length": 2,
-        "batch_cell_order_identity": _identity("scworkbench.cell_order.v1", cells),
-        "key_axis_count": 2,
-        "key_axis": ["sigB", "sigA"],
-        "key_axis_order_identity": _identity("scworkbench.row_order.v1", ["sigB", "sigA"]),
-        "expected_row_count": 4,
-        "row_order_identity": _identity(
-            "scworkbench.row_order.v1",
-            [{"key": key, "cell_id": cell} for key in ["sigB", "sigA"] for cell in cells],
-        ),
-        "missing_values": "forbidden",
-    }
-    fragment_grant["fragment_grant_identity"] = _identity(
-        "scworkbench.operation_pack.chunk_fragment_grant.v1",
-        fragment_grant,
-        "grant excluding fragment_grant_identity",
-    )
-    fragment = {
-        "kind": "cell_vector_family",
-        "dimensions": [4, 3],
-        "cell_id": cells + cells,
-        "key": ["sigB", "sigB", "sigA", "sigA"],
-        "value": [1.0, 2.0, 4.0, 5.0],
-        "storage_profile": "terminal_primitive_v1",
-        "meta": {},
-    }
-    assert _validate_fragment(fragment_grant, fragment, {})["cells"] == cells
-    schedule = {"batches": [{"fragment_grant": fragment_grant}]}
-    path = tmp_path / "payload.json"
-    path.write_text(json.dumps(fragment))
-    merged = _merge_fragments(schedule, {1: _Write(fragment, path, {}, "write_chunk")})
-    assert list(zip(merged["key"], merged["cell_id"], strict=True)) == [
-        ("sigB", "c2"),
-        ("sigB", "c1"),
-        ("sigA", "c2"),
-        ("sigA", "c1"),
-    ]
-    assert _error_code(_merge_fragments, schedule, {}) == "PYBENCH_RECEIPT_MISMATCH"
-    reversed_fragment = copy.deepcopy(fragment)
-    reversed_fragment["cell_id"].reverse()
-    assert (
-        _error_code(_validate_fragment, fragment_grant, reversed_fragment, {})
-        == "PYBENCH_OUTPUT_INVALID"
-    )
+def test_ancestry_reader_is_single_use():
     readers = V4Readers({}, provenance_values={"ancestry": {"artifact_id": "artifact_1"}})
     assert readers["ancestry"]() == {"artifact_id": "artifact_1"}
     assert _error_code(readers["ancestry"]) == "PYBENCH_CAPABILITY_MISMATCH"

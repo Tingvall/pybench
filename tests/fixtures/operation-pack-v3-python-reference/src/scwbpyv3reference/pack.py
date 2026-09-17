@@ -1,5 +1,6 @@
 import os
 
+from pybench import partition_axis
 from pybench.operation_packs_v3 import operation_pack_handlers_v3
 
 
@@ -185,31 +186,36 @@ def _registry_probe(readers, writers, params, context):
 
 
 def _cell_chunk_probe(readers, writers, params, context):
-    matrix = readers["matrix"]()
-    cells = matrix["cell_id"]
-    writers.write_chunk(
+    capability = context["typed_slice_reads"]["matrix_chunks"]
+    cells = capability["cells"]
+    features = capability["features"]
+    observed = []
+    for selected in partition_axis(cells, params["chunk_size"]):
+        matrix = readers["matrix_chunks"](features=features, cells=selected)
+        observed.extend(float(value) for value in matrix["values"][0])
+    scores = {
+        "kind": "cell_vector_family",
+        "dimensions": [len(cells), 3],
+        "cell_id": cells,
+        "key": ["module1"] * len(cells),
+        "value": observed,
+        "storage_profile": "terminal_primitive_v1",
+        "meta": {},
+    }
+    writers.write_terminal_primitive(
         "scores",
-        context["chunk_batch_index"],
+        scores,
+    )
+    writers.write_terminal_primitive(
+        "summary",
         {
-            "kind": "cell_vector_family",
-            "dimensions": [len(cells), 3],
-            "cell_id": cells,
-            "key": ["module1"] * len(cells),
-            "value": [float(value) for value in matrix["values"][0]],
+            "kind": "obs_table",
+            "dimensions": [1, 1],
+            "rows": [{"score_rows": len(scores["value"])}],
             "storage_profile": "terminal_primitive_v1",
             "meta": {},
         },
     )
-
-
-def _score_summary(merged_family, metadata):
-    return {
-        "kind": "obs_table",
-        "dimensions": [1, 1],
-        "rows": [{"score_rows": len(merged_family["value"])}],
-        "storage_profile": "terminal_primitive_v1",
-        "meta": {"metadata_fields": len(metadata["values"])},
-    }
 
 
 def _cardinality_family_probe(readers, writers, params, context):
@@ -284,6 +290,5 @@ def register():
             "scwbpyv3reference::family_probe": _family_probe,
             "scwbpyv3reference::registry_probe": _registry_probe,
             "scwbpyv3reference::registry_probe_strict": _registry_probe,
-        },
-        finalizers={"score_summary": _score_summary},
+        }
     )

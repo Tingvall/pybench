@@ -76,12 +76,11 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
     }
     for operation in inherited["operations"]:
         operation.pop("provenance_reads", None)
+        operation.pop("typed_slice_reads", None)
         policies = operation.get("dimension_policies", [])
         operation["dimension_policies"] = [
             policy for policy in policies if policy.get("policy") != "authenticated_output_axes_v1"
         ]
-        if operation.get("chunking", {}).get("axis") == "cells":
-            operation.pop("chunking")
     _semantic_admission(inherited)
 
     for operation in manifest["operations"]:
@@ -166,46 +165,38 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                         "semantic_admission",
                     )
 
-        chunk = operation.get("chunking")
-        if chunk is not None and chunk.get("axis") == "cells":
-            source = inputs.get(chunk["input"])
-            fragment = outputs.get(chunk["fragment_output"])
-            summary = outputs.get(chunk["summary_output"])
-            policy = policies.get(chunk["fragment_output"])
-            size_schema = params.get(chunk["size_parameter"])
-            size_types = size_schema.get("type", []) if isinstance(size_schema, Mapping) else []
-            size_types = [size_types] if isinstance(size_types, str) else size_types
+        slices = operation.get("typed_slice_reads", [])
+        slice_names = [item["name"] for item in slices]
+        other_reader_names = (
+            set(inputs)
+            | {item["name"] for item in operation.get("registry_reads", [])}
+            | {item["name"] for item in operation.get("provenance_reads", [])}
+        )
+        if len(slice_names) != len(set(slice_names)) or set(slice_names) & other_reader_names:
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} has duplicate or colliding typed-slice readers",
+                "semantic_admission",
+            )
+        for declaration in slices:
+            source = inputs.get(declaration["input"])
+            size_schema = params.get(declaration["chunk_size_parameter"])
             valid = (
                 source is not None
                 and source["kind"] == "matrix"
-                and fragment is not None
-                and fragment["category"] == "terminal_artifact"
-                and fragment["kind"] == "cell_vector_family"
-                and summary is not None
-                and summary["category"] == "terminal_artifact"
-                and summary["kind"] == "obs_table"
-                and policy is not None
-                and policy["shape"] == "cell_key_cartesian"
-                and policy["cell_axis"]["input"] == chunk["input"]
-                and "integer" in size_types
-                and chunk["merge"] == "row_bind_cell_vector_family_v1"
-                and chunk["summary"]["interface"] == "pure_summary_finalizer_v1"
-                and chunk["summary"]["isolation"] == "fresh_pack_invocation_v1"
+                and source["alignment"] == "cell_and_feature_ordered"
+                and declaration["chunk_axis"] in declaration["supported_axes"]
+                and isinstance(size_schema, Mapping)
+                and size_schema.get("type") == "integer"
+                and size_schema.get("minimum", 0) >= 1
             )
-            for source_spec in chunk["summary"]["metadata_sources"]:
-                source_kind = source_spec["source"]
-                if source_kind in {"normalized_parameter"}:
-                    valid &= source_spec.get("parameter") in params
-                elif source_kind in {"input_reference", "input_descriptor"}:
-                    valid &= source_spec.get("input") in inputs
-                elif source_kind == "resolved_key_axis":
-                    valid &= source_spec.get("output") == chunk["fragment_output"]
-                else:
-                    valid = False
+            for selection in declaration["selection"].values():
+                if selection["policy"] == "parameter_ordered_subset_v1":
+                    valid &= _is_string_array(params.get(selection["parameter"]))
             if not valid:
                 _fail(
                     "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
-                    f"Operation {opname!r} has an invalid cell-chunk declaration",
+                    f"Operation {opname!r} has an invalid typed-slice declaration",
                     "semantic_admission",
                 )
 
@@ -541,11 +532,7 @@ def activate_operation_pack_v3(
             "authentication",
         )
     expected = {item["qualified_name"] for item in rediscovered.manifest["operations"]}
-    expected_finalizers = {
-        item["chunking"]["summary"]["callable"]
-        for item in rediscovered.manifest["operations"]
-        if item.get("chunking", {}).get("axis") == "cells"
-    }
+    expected_finalizers: set[str] = set()
     if (
         set(registration.handlers) != expected
         or set(registration.finalizers) != expected_finalizers

@@ -42,7 +42,6 @@
       "dimension_policies": [
         {"output": "feature_table", "policy": "data_dependent_table_v1"}
       ],
-      "chunking": {"axis": "features", "input": "matrix", "sequence_parameter": "features", "size_parameter": "chunk_size", "output": "feature_table", "merge": "row_bind_then_global_p_adjust_v1", "adjust_parameter": "p_adjust_method"},
       "retained_parameters": [
         {"name": "feature_rows", "source": "output_row_count", "output": "feature_table"},
         {"name": "input_features", "source": "input_feature_count", "input": "matrix"},
@@ -145,7 +144,6 @@
       "dimension_policies": [
         {"output": "feature_table", "policy": "data_dependent_table_v1"}
       ],
-      "chunking": {"axis": "features", "input": "matrix", "sequence_parameter": "features", "size_parameter": "chunk_size", "output": "feature_table", "merge": "row_bind_then_global_p_adjust_v1", "adjust_parameter": "p_adjust_method"},
       "retained_parameters": [
         {"name": "feature_rows", "source": "output_row_count", "output": "feature_table"}
       ],
@@ -210,14 +208,27 @@
         {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
       ],
       "params_schema": {"type": "object", "properties": {
-        "features": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "features": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}},
+        "slice_features": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "name": {"type": "string", "default": "Module", "minLength": 1},
-        "chunk_size": {"type": ["integer", "null"], "default": null, "minimum": 1}
-      }, "required": ["features", "name", "chunk_size"], "additionalProperties": false},
+        "chunk_size": {"type": "integer", "default": 2, "minimum": 1}
+      }, "required": ["features", "slice_features", "name", "chunk_size"], "additionalProperties": false},
       "dimension_policies": [
         {"output": "scores", "policy": "authenticated_output_axes_v1", "shape": "cell_key_cartesian", "cell_axis": {"source": "effective_cells_v1", "input": "matrix"}, "key_axis": {"source": "resolved_parameter_feature_groups_v1", "groups_parameter": "features", "matrix_input": "matrix", "name_prefix_parameter": "name", "matching": "exact_feature_id_v1", "normalization": "ordered_unique_features_v1", "generated_names": "legacy_module_group_names_v1", "missing_feature_policy": {"source": "fixed_drop_v1"}, "empty_group_policy": "error", "zero_key_policy": "error"}, "row_order": "key_major_then_cell_v1", "missing_values": "forbidden"}
       ],
-      "chunking": {"axis": "cells", "input": "matrix", "size_parameter": "chunk_size", "fragment_output": "scores", "summary_output": "summary", "key_axis_policy": "scores", "merge": "row_bind_cell_vector_family_v1", "summary": {"interface": "pure_summary_finalizer_v1", "callable": "score_summary", "isolation": "fresh_pack_invocation_v1", "metadata_sources": [{"name": "resolved_groups", "source": "resolved_key_axis", "output": "scores"}]}},
+      "typed_slice_reads": [
+        {
+          "name": "matrix_chunks", "input": "matrix", "reader": "read_typed_slices",
+          "kind": "matrix", "supported_axes": ["cells"], "chunk_axis": "cells",
+          "chunk_size_parameter": "chunk_size",
+          "call_discipline": "ordered_partition_exactly_once",
+          "empty_selection_policy": "reject", "duplicate_policy": "reject",
+          "selection": {
+            "cells": {"policy": "effective_input_axis_v1"},
+            "features": {"policy": "parameter_ordered_subset_v1", "parameter": "slice_features", "unknown": "error", "duplicates": "reject", "order": "parameter_order"}
+          }
+        }
+      ],
       "outputs": [
         {"name": "scores", "category": "terminal_artifact", "kind": "cell_vector_family", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "scores_id", "required": true, "promotion_group": "scores", "value_kind": "continuous"},
         {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "scores", "table_type": "chunk_summary"}
