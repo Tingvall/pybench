@@ -455,6 +455,10 @@ def _distinct(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
+def _row_pairs(keys: list[str], cells: list[str]) -> list[dict[str, str]]:
+    return [{"key": key, "cell_id": cell} for key in keys for cell in cells]
+
+
 def _validate_cardinality_grant(
     grant: Mapping[str, Any], inputs: Mapping[str, Mapping[str, Any]]
 ) -> tuple[list[str], list[str]]:
@@ -474,7 +478,7 @@ def _validate_cardinality_grant(
     keys = list(grant.get("key_axis", []))
     if grant["shape"] == "cell_key_cartesian":
         expected_rows = len(cells) * len(keys)
-        pairs = [[key, cell] for key in keys for cell in cells]
+        pairs = _row_pairs(keys, cells)
         if (
             grant["key_axis_count"] != len(keys)
             or grant["key_axis_order_identity"] != _identity("scworkbench.row_order.v1", keys)
@@ -541,7 +545,7 @@ def _validate_cardinality_payload(
     if expected_keys is not None:
         observed["observed_key_axis_count"] = len(keys)
         observed["observed_key_axis_order_identity"] = _identity("scworkbench.row_order.v1", keys)
-        rows: Any = [[key, cell] for key in keys for cell in cells]
+        rows: Any = _row_pairs(keys, cells)
     else:
         rows = cells
     observed.update(
@@ -685,7 +689,7 @@ def _validate_fragment(
         != grant["batch_cell_order_identity"]
         or _identity(
             "scworkbench.row_order.v1",
-            [[key, cell] for key, cell in zip(expected_keys, cells, strict=True)],
+            [{"key": key, "cell_id": cell} for key, cell in zip(expected_keys, cells, strict=True)],
         )
         != grant["row_order_identity"]
     ):
@@ -1286,7 +1290,7 @@ def _chunk_execution(
             "observed_row_order_identity": _identity(
                 "scworkbench.row_order.v1",
                 [
-                    [key, cell]
+                    {"key": key, "cell_id": cell}
                     for key, cell in zip(write.value["key"], write.value["cell_id"], strict=True)
                 ],
             ),

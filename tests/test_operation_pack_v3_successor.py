@@ -186,7 +186,7 @@ def _add_cardinality_contracts(request, operation, inputs, params):
                 "zero_key_policy": resolver["zero_key_policy"],
                 "keys": keys,
             }
-            rows = [[key, cell] for key in keys for cell in cells]
+            rows = [{"key": key, "cell_id": cell} for key in keys for cell in cells]
             grant.update(
                 key_axis_count=len(keys),
                 key_axis=keys,
@@ -364,7 +364,8 @@ def _add_cell_chunk_contract(request, operation, inputs, params):
         "key_axis_order_identity": _identity("scworkbench.row_order.v1", ["module1"]),
         "expected_row_count": len(cells),
         "row_order_identity": _identity(
-            "scworkbench.row_order.v1", [["module1", cell] for cell in cells]
+            "scworkbench.row_order.v1",
+            [{"key": "module1", "cell_id": cell} for cell in cells],
         ),
     }
     cardinality["cardinality_grant_identity"] = _identity(
@@ -411,7 +412,8 @@ def _add_cell_chunk_contract(request, operation, inputs, params):
             "key_axis_order_identity": cardinality["key_axis_order_identity"],
             "expected_row_count": len(batch_cells),
             "row_order_identity": _identity(
-                "scworkbench.row_order.v1", [["module1", cell] for cell in batch_cells]
+                "scworkbench.row_order.v1",
+                [{"key": "module1", "cell_id": cell} for cell in batch_cells],
             ),
             "missing_values": "forbidden",
         }
@@ -498,7 +500,8 @@ def _cardinality(shape="cell_key_cartesian"):
             key_axis_order_identity=_identity("scworkbench.row_order.v1", keys),
             expected_row_count=len(cells) * len(keys),
             row_order_identity=_identity(
-                "scworkbench.row_order.v1", [[key, cell] for key in keys for cell in cells]
+                "scworkbench.row_order.v1",
+                [{"key": key, "cell_id": cell} for key in keys for cell in cells],
             ),
         )
     else:
@@ -533,6 +536,16 @@ def test_shared_successor_assets_and_identity_corpus_are_exact():
         assert hashlib.sha256(protocol_asset(name).read_bytes()).hexdigest() == expected
     corpus = json.loads(protocol_asset("fixtures/operation-pack-v3/identities.json").read_text())
     assert corpus["schema"] == "scworkbench.operation_pack.v3.identity_fixtures.v1"
+    pairs = corpus["authoritative_axes"]["pairs"]
+    frozen_row_digest = "9b66cb7cf11a0f95e146903b0e5238337b2ed62d02c97e4eac2fd6882392462d"
+    assert _identity("scworkbench.row_order.v1", pairs)["sha256"] == frozen_row_digest
+    assert (
+        _identity(
+            "scworkbench.row_order.v1",
+            [[pair["key"], pair["cell_id"]] for pair in pairs],
+        )["sha256"]
+        != frozen_row_digest
+    )
     for case in corpus["cases"]:
         assert canonical_sha256(case["preimage"]) == case["identity"]["sha256"]
         assert case["identity"] in case["value"].values()
@@ -863,7 +876,7 @@ def test_fragment_validation_merge_and_ancestry_reader_are_deterministic(tmp_pat
         "expected_row_count": 4,
         "row_order_identity": _identity(
             "scworkbench.row_order.v1",
-            [[key, cell] for key in ["sigB", "sigA"] for cell in cells],
+            [{"key": key, "cell_id": cell} for key in ["sigB", "sigA"] for cell in cells],
         ),
         "missing_values": "forbidden",
     }
