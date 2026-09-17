@@ -1599,8 +1599,8 @@ def _provenance_observations(request: Mapping[str, Any]) -> list[dict[str, Any]]
         observed = {
             "schema": "scworkbench.operation_pack.observed_provenance_read.v1",
             "name": item["name"],
-            "descriptor_identity": descriptor["descriptor_identity"],
-            "snapshot_identity": descriptor["snapshot_identity"],
+            "descriptor_identity": _identity_projection(descriptor["descriptor_identity"]),
+            "snapshot_identity": _identity_projection(descriptor["snapshot_identity"]),
             "payload_manifest_identity": descriptor["payload_manifest_identity"],
             "use_count": 1,
         }

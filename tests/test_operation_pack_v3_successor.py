@@ -661,11 +661,19 @@ def test_artifact_ancestry_is_single_use_identity_bound_and_mutation_safe(instal
     )
     assert validate_request_v4(request, discovery) == request
     receipt, _sidecar = execute_operation_pack_v4(request, discovery, stage)
-    assert receipt["provenance_reads"][0]["use_count"] == 1
-    assert (
-        receipt["provenance_reads"][0]["snapshot_identity"]
-        == request["provenance_reads"][0]["snapshot_identity"]
-    )
+    observation = receipt["provenance_reads"][0]
+    assert observation["use_count"] == 1
+    assert observation["descriptor_identity"] == {
+        key: request["provenance_reads"][0]["descriptor_identity"][key]
+        for key in ("scheme", "sha256")
+    }
+    assert observation["snapshot_identity"] == {
+        key: request["provenance_reads"][0]["snapshot_identity"][key]
+        for key in ("scheme", "sha256")
+    }
+    assert "scope" not in observation["descriptor_identity"]
+    assert "scope" not in observation["snapshot_identity"]
+    assert "scope" in observation["observed_descriptor_identity"]
 
     unload_operation_pack_v3(discovery.manifest["namespace"])
     activate_operation_pack_v3(discovery)
