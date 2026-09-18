@@ -32,14 +32,14 @@ from pybench.protocol_v4 import (
     validate_request_v4,
 )
 from test_operation_pack_v3_typed_slice import TOKEN, _axis, _serve
-from v3_helpers import fixture_inputs, make_request
+from v3_helpers import _input_descriptor, fixture_inputs, make_request
 
 FIXTURE = Path(__file__).parent / "fixtures" / "operation-pack-v3-python-reference"
 SHARED_DIGESTS = {
-    "operation-pack-v3.schema.json": "f263fbcf15d3a928c5a3b7cfa41ca27b4f5d3e0f31f2b8f42cc930b1d9713ff3",
-    "operation-pack-transition-request-v3.schema.json": "9935a10ca05c5c767e739d06839b5d4fcbf53de549ea95b8cd4d1e711e8089d6",
-    "operation-pack-transition-receipt-v3.schema.json": "6ba0a1875100cda766cc5c5f10caa01fc654dd9688250d3ff17389bb4c561e28",
-    "fixtures/operation-pack-v3/identities.json": "ed31bcf18062d57b6ea8d8f7a787f8932138f959e5762d195b3968438d052f32",
+    "operation-pack-v3.schema.json": "2003a7b359054e46dc23ba5c3f4512ed276932498f53ccd5ff49df04f2f36974",
+    "operation-pack-transition-request-v3.schema.json": "979089dfaf971e7f41cb88dd1fb0beffda1c25be8466a7e9526ad0197533b1c1",
+    "operation-pack-transition-receipt-v3.schema.json": "e266a949f8ef20d81c4e8164af0058360c911fb9220aaef2227c1d3d7a84608e",
+    "fixtures/operation-pack-v3/identities.json": "9549a955029e9ef46cfd7c088fdf4486a424d42209d22f167c9c341d9437e09d",
 }
 
 
@@ -71,13 +71,20 @@ def _error_code(function, *args):
     return caught.value.code
 
 
-def _request_v4(discovery, stage, operation_name, inputs, params=None):
+def _request_v4(discovery, stage, operation_name, inputs, params=None, registry_snapshots=None):
     source_operation = next(
         item
         for item in discovery.manifest["operations"]
         if item["qualified_name"] == operation_name
     )
-    request = make_request(discovery, stage, operation_name, inputs, params)
+    request = make_request(
+        discovery,
+        stage,
+        operation_name,
+        inputs,
+        params,
+        registry_snapshots=registry_snapshots,
+    )
     request["schema"] = "scworkbench.operation_pack.transition_request.v3"
     request["process_protocol_version"] = "pybench-op-v4"
     request["pack_abi_version"] = "3"
@@ -87,7 +94,7 @@ def _request_v4(discovery, stage, operation_name, inputs, params=None):
         policy.get("policy") == "authenticated_output_axes_v1"
         for policy in source_operation.get("dimension_policies", [])
     ):
-        _add_cardinality_contracts(request, source_operation, inputs, params or {})
+        _add_cardinality_contracts(request, source_operation, inputs, params or {}, stage)
     for output in request["outputs"]:
         descriptor = output["descriptor"]
         descriptor.pop("grant_identity")
@@ -120,20 +127,45 @@ def _request_v4(discovery, stage, operation_name, inputs, params=None):
     return request
 
 
-def _add_cardinality_contracts(request, operation, inputs, params):
+def _add_cardinality_contracts(request, operation, inputs, params, stage=None):
     input_records = {item["name"]: item["descriptor"] for item in request["inputs"]}
     output_records = {item["name"]: item for item in request["outputs"]}
     for policy in operation.get("dimension_policies", []):
         if policy.get("policy") != "authenticated_output_axes_v1":
             continue
-        source_name = policy["cell_axis"]["input"]
-        source = inputs[source_name]
-        source_descriptor = input_records[source_name]
-        source_identity = {
-            "scheme": source_descriptor["descriptor_identity"]["scheme"],
-            "sha256": source_descriptor["descriptor_identity"]["sha256"],
-        }
-        cells = list(dict.fromkeys(source["cell_id"]))
+        if policy["cell_axis"]["source"] == "session_cell_axis_read_v1":
+            read_name = policy["cell_axis"]["registry_read"]
+            registry_record = next(
+                item for item in request["registry_reads"] if item["name"] == read_name
+            )
+            registry_descriptor = registry_record["descriptor"]
+            snapshot = json.loads(
+                (Path(stage) / "registry_reads" / read_name / "payload.json").read_text()
+            )
+            cells = snapshot["cell_id"]
+            cell_axis_source = {
+                "source": policy["cell_axis"]["source"],
+                "registry_read": read_name,
+                "descriptor_identity": {
+                    key: registry_descriptor["descriptor_identity"][key]
+                    for key in ("scheme", "sha256")
+                },
+                "selection_identity": registry_descriptor["selection_identity"],
+            }
+        else:
+            source_name = policy["cell_axis"]["input"]
+            source = inputs[source_name]
+            source_descriptor = input_records[source_name]
+            source_identity = {
+                "scheme": source_descriptor["descriptor_identity"]["scheme"],
+                "sha256": source_descriptor["descriptor_identity"]["sha256"],
+            }
+            cells = list(dict.fromkeys(source["cell_id"]))
+            cell_axis_source = {
+                "input_name": source_name,
+                "input_descriptor_identity": source_identity,
+                "derivation": policy["cell_axis"]["source"],
+            }
         grant = {
             "schema": "scworkbench.operation_pack.output_cardinality_grant.v1",
             "output": policy["output"],
@@ -142,17 +174,30 @@ def _add_cardinality_contracts(request, operation, inputs, params):
             "shape": policy["shape"],
             "row_order": policy["row_order"],
             "missing_values": policy["missing_values"],
-            "cell_axis_source": {
-                "input_name": source_name,
-                "input_descriptor_identity": source_identity,
-                "derivation": policy["cell_axis"]["source"],
-            },
+            "cell_axis_source": cell_axis_source,
             "cell_axis_count": len(cells),
             "cell_axis_order_identity": _identity("scworkbench.cell_order.v1", cells),
         }
-        if policy["shape"] == "cell_key_cartesian":
+        if policy["shape"] in {
+            "cell_key_cartesian",
+            "bounded_grouped_cell_key_cartesian",
+        }:
             resolver = policy["key_axis"]
-            if resolver["source"] == "resolved_parameter_feature_groups_v1":
+            bounded = resolver["source"] == "declared_bounded_key_groups_v1"
+            if bounded:
+                required = resolver["required_keys"]
+                optional = [key for group in resolver["optional_groups"] for key in group["keys"]]
+                resolution = {
+                    key: resolver[key]
+                    for key in (
+                        "source",
+                        "required_keys",
+                        "optional_groups",
+                        "selection_owner",
+                        "group_order",
+                    )
+                }
+            elif resolver["source"] == "resolved_parameter_feature_groups_v1":
                 groups = params[resolver["groups_parameter"]]
                 keys = list(groups)
                 matrix = inputs[resolver["matrix_input"]]
@@ -211,17 +256,28 @@ def _add_cardinality_contracts(request, operation, inputs, params):
                     "zero_key_policy": resolver["zero_key_policy"],
                     "keys": keys,
                 }
-            rows = [{"key": key, "cell_id": cell} for key in keys for cell in cells]
-            grant.update(
-                key_axis_count=len(keys),
-                key_axis=keys,
-                key_axis_resolution=resolution,
-                key_axis_order_identity=_identity("scworkbench.row_order.v1", keys),
-                expected_row_count=len(rows),
-                row_order_identity=_identity("scworkbench.row_order.v1", rows),
-            )
-            output_cells = [cell for key in keys for cell in cells]
-            expected_dimensions = [len(rows), 3]
+            if bounded:
+                grant.update(
+                    minimum_key_count=len(required),
+                    maximum_key_count=len(required) + len(optional),
+                    minimum_row_count=len(required) * len(cells),
+                    maximum_row_count=(len(required) + len(optional)) * len(cells),
+                    key_axis_resolution=resolution,
+                )
+                expected_dimensions = [0, 3]
+                output_cells = []
+            else:
+                rows = [{"key": key, "cell_id": cell} for key in keys for cell in cells]
+                grant.update(
+                    key_axis_count=len(keys),
+                    key_axis=keys,
+                    key_axis_resolution=resolution,
+                    key_axis_order_identity=_identity("scworkbench.row_order.v1", keys),
+                    expected_row_count=len(rows),
+                    row_order_identity=_identity("scworkbench.row_order.v1", rows),
+                )
+                output_cells = [cell for key in keys for cell in cells]
+                expected_dimensions = [len(rows), 3]
         else:
             grant.update(
                 expected_row_count=len(cells),
@@ -237,9 +293,10 @@ def _add_cardinality_contracts(request, operation, inputs, params):
         descriptor = output_records[policy["output"]]["descriptor"]
         descriptor["cardinality_grant"] = grant
         descriptor["expected_dimensions"] = expected_dimensions
-        descriptor["expected_cell_order_identity"] = _identity(
-            "scworkbench.cell_order.v1", output_cells
-        )
+        if policy["shape"] != "bounded_grouped_cell_key_cartesian":
+            descriptor["expected_cell_order_identity"] = _identity(
+                "scworkbench.cell_order.v1", output_cells
+            )
 
 
 def _add_typed_slice_contract(
@@ -527,6 +584,41 @@ def test_manifest_v3_is_explicit_and_v2_reader_remains_separate():
     wrong = copy.deepcopy(manifest)
     wrong["pack_abi_version"] = "2"
     assert _error_code(validate_manifest_v3, wrong) == "OPERATION_PACK_MANIFEST_SCHEMA_INVALID"
+
+
+def test_authenticated_core_reader_name_collision_is_rejected():
+    manifest = json.loads((FIXTURE / "operation-pack.json").read_text())
+    operation = next(
+        item
+        for item in manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::feature_annotation_probe"
+    )
+    operation["registry_reads"][0]["name"] = "matrix"
+    assert _error_code(validate_manifest_v3, manifest) == (
+        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID"
+    )
+
+
+@pytest.mark.parametrize("shape", ["cell_key_cartesian", "bounded_grouped_cell_key_cartesian"])
+def test_bounded_cardinality_shape_and_resolver_must_be_paired(shape):
+    manifest = json.loads((FIXTURE / "operation-pack.json").read_text())
+    bounded = next(
+        item
+        for item in manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::bounded_group_probe"
+    )["dimension_policies"][0]
+    ordinary = next(
+        item
+        for item in manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::cardinality_family_probe"
+    )["dimension_policies"][0]
+    if shape == "cell_key_cartesian":
+        bounded["shape"] = shape
+    else:
+        ordinary["shape"] = shape
+    assert _error_code(validate_manifest_v3, manifest) == (
+        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID"
+    )
 
 
 @pytest.mark.parametrize(
@@ -885,6 +977,160 @@ def test_cardinality_shapes_execute_through_the_v4_process_contract(installed_v3
     assert reduction_observed["observed_row_count"] == 3
     assert reduction_observed["observed_cell_axis_count"] == 3
     assert "observed_key_axis_count" not in reduction_observed
+
+
+def _session_axis_snapshot(transition):
+    cells = ["c2", "c1", "c3"]
+    return {
+        "schema": "scworkbench.session_cell_axis.snapshot.v1",
+        "selection_policy": "effective_session_cells_v1",
+        "coverage_policy": "exact_complete_order_v1",
+        "session_id": transition["session_id"],
+        "run_id": transition["run_id"],
+        "checkpoint_generation": transition["checkpoint_generation"],
+        "transition_source_state_identity": transition["source_state_identity"],
+        "cell_count": len(cells),
+        "cell_id": cells,
+        "cell_order_identity": _identity("scworkbench.cell_order.v1", cells),
+    }
+
+
+def _feature_annotation_snapshot(discovery, matrix):
+    operation = next(
+        item
+        for item in discovery.manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::feature_annotation_probe"
+    )
+    input_descriptor = _input_descriptor("matrix", matrix, operation["inputs"][0])
+    rows = [
+        {"feature_id": "feature_1", "values": {"feature_type": "gene"}},
+        {"feature_id": "feature_2", "values": {"feature_type": None}},
+    ]
+    return {
+        "schema": "scworkbench.matrix_feature_annotations.snapshot.v1",
+        "matrix_input": "matrix",
+        "matrix_id": matrix["matrix_id"],
+        "input_descriptor_identity": {
+            key: input_descriptor["descriptor_identity"][key] for key in ("scheme", "sha256")
+        },
+        "input_content_identity": input_descriptor["content_identity"],
+        "feature_count": len(rows),
+        "feature_order_identity": input_descriptor["feature_order_identity"],
+        "fields": ["feature_type"],
+        "rows": rows,
+    }
+
+
+@pytest.mark.parametrize(
+    ("optional_groups", "expected_keys"),
+    [
+        ([], ["total_counts", "detected_features"]),
+        (
+            ["mitochondrial"],
+            ["total_counts", "detected_features", "mito_counts", "mito_percent"],
+        ),
+        (
+            ["ribosomal"],
+            ["total_counts", "detected_features", "ribo_counts", "ribo_percent"],
+        ),
+        (
+            ["mitochondrial", "ribosomal"],
+            [
+                "total_counts",
+                "detected_features",
+                "mito_counts",
+                "mito_percent",
+                "ribo_counts",
+                "ribo_percent",
+            ],
+        ),
+    ],
+)
+def test_session_axis_and_bounded_group_contracts_execute_in_process(
+    installed_v3, tmp_path, optional_groups, expected_keys
+):
+    discovery = installed_v3
+    unload_operation_pack_v3(discovery.manifest["namespace"])
+    activate_operation_pack_v3(discovery)
+    stage = tmp_path / f"bounded-{len(optional_groups)}"
+    stage.mkdir()
+    request = _request_v4(
+        discovery,
+        stage,
+        "scwbpyv3reference::bounded_group_probe",
+        {},
+        {"optional_groups": optional_groups},
+        {"session_cells": _session_axis_snapshot},
+    )
+    receipt, _ = execute_operation_pack_v4(request, discovery, stage)
+    observed = receipt["outputs"][0]["descriptor"]["observed_cardinality"]
+    assert observed["observed_key_axis"] == expected_keys
+    assert observed["selected_optional_groups"] == optional_groups
+    assert receipt["registry_reads"][0]["descriptor"]["use_count"] == 1
+
+
+def test_no_input_session_axis_and_matrix_annotations_are_process_readers(installed_v3, tmp_path):
+    discovery = installed_v3
+    unload_operation_pack_v3(discovery.manifest["namespace"])
+    activate_operation_pack_v3(discovery)
+    session_stage = tmp_path / "session-axis"
+    session_stage.mkdir()
+    session_request = _request_v4(
+        discovery,
+        session_stage,
+        "scwbpyv3reference::session_axis_probe",
+        {},
+        registry_snapshots={"session_cells": _session_axis_snapshot},
+    )
+    session_receipt, _ = execute_operation_pack_v4(session_request, discovery, session_stage)
+    labels = json.loads((session_stage / "outputs/labels/payload.json").read_text())
+    assert labels["cell_id"] == ["c2", "c1", "c3"]
+    assert session_receipt["registry_reads"][0]["descriptor"]["use_count"] == 1
+
+    matrix_stage = tmp_path / "feature-annotations"
+    matrix_stage.mkdir()
+    matrix = fixture_inputs()["matrix"]
+    matrix.update(
+        matrix_id="rna",
+        dimensions=[2, 1],
+        feature_id=["feature_1", "feature_2"],
+        values=[[1.0], [2.0]],
+    )
+    annotation_snapshot = _feature_annotation_snapshot(discovery, matrix)
+    annotation_request = _request_v4(
+        discovery,
+        matrix_stage,
+        "scwbpyv3reference::feature_annotation_probe",
+        {"matrix": matrix},
+        registry_snapshots={"feature_annotations": annotation_snapshot},
+    )
+    annotation_receipt, _ = execute_operation_pack_v4(annotation_request, discovery, matrix_stage)
+    annotations = json.loads((matrix_stage / "outputs/annotations/payload.json").read_text())
+    assert annotations["rows"][1] == {"feature_id": "feature_2", "feature_type": None}
+    assert annotation_receipt["registry_reads"][0]["descriptor"]["use_count"] == 1
+
+
+def test_authenticated_core_payload_mutation_fails_before_publication(installed_v3, tmp_path):
+    discovery = installed_v3
+    unload_operation_pack_v3(discovery.manifest["namespace"])
+    activate_operation_pack_v3(discovery)
+    stage = tmp_path / "mutated-session-axis"
+    stage.mkdir()
+    request = _request_v4(
+        discovery,
+        stage,
+        "scwbpyv3reference::session_axis_probe",
+        {},
+        registry_snapshots={"session_cells": _session_axis_snapshot},
+    )
+    path = stage / "registry_reads/session_cells/payload.json"
+    snapshot = json.loads(path.read_text())
+    snapshot["cell_id"] = ["c1", "c2", "c3"]
+    path.write_text(canonical_json(snapshot))
+    assert _error_code(execute_operation_pack_v4, request, discovery, stage) == (
+        "PYBENCH_INPUT_IDENTITY_MISMATCH"
+    )
+    assert not (stage / "outputs").exists()
 
 
 @pytest.mark.parametrize(

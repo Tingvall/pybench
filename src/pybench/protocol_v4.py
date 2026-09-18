@@ -319,23 +319,53 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
     for item in registry_grants:
         declaration = registry_declarations[item["name"]]
         descriptor = item["descriptor"]
-        selector_binding = {
-            key: declaration.get(key)
-            for key in (
-                "namespace_parameter",
-                "namespaces_parameter",
-                "feature_sets_parameter",
-                "no_selector_policy",
-                "empty_match_policy",
+        kind = declaration["kind"]
+        valid = descriptor["kind"] == kind and descriptor["reader"] == declaration["reader"]
+        if kind == "feature_set_registry":
+            selector_binding = {
+                key: declaration.get(key)
+                for key in (
+                    "namespace_parameter",
+                    "namespaces_parameter",
+                    "feature_sets_parameter",
+                    "no_selector_policy",
+                    "empty_match_policy",
+                )
+            }
+            matrix = input_descriptors[declaration["matrix_input"]]
+            valid &= (
+                descriptor["matrix_input"] == declaration["matrix_input"]
+                and descriptor["selector_binding"] == selector_binding
+                and descriptor["matrix_content_identity"] == matrix["content_identity"]
+                and descriptor["feature_order_identity"] == matrix["feature_order_identity"]
             )
-        }
-        matrix = input_descriptors[declaration["matrix_input"]]
-        if (
-            descriptor["matrix_input"] != declaration["matrix_input"]
-            or descriptor["selector_binding"] != selector_binding
-            or descriptor["matrix_content_identity"] != matrix["content_identity"]
-            or descriptor["feature_order_identity"] != matrix["feature_order_identity"]
-        ):
+        elif kind == "session_cell_axis":
+            valid &= (
+                descriptor["selection_policy"] == declaration["selection_policy"]
+                and descriptor["coverage_policy"] == declaration["coverage_policy"]
+                and descriptor["session_id"] == value["transition"]["session_id"]
+                and descriptor["run_id"] == value["transition"]["run_id"]
+                and descriptor["checkpoint_generation"]
+                == value["transition"]["checkpoint_generation"]
+                and descriptor["transition_source_state_identity"]
+                == value["transition"]["source_state_identity"]
+            )
+        elif kind == "matrix_feature_annotations":
+            matrix = input_descriptors[declaration["matrix_input"]]
+            valid &= (
+                descriptor["matrix_input"] == declaration["matrix_input"]
+                and descriptor["fields"] == declaration["fields"]
+                and descriptor["row_order"] == declaration["row_order"]
+                and descriptor["missing_annotation_policy"]
+                == declaration["missing_annotation_policy"]
+                and descriptor["input_descriptor_identity"]
+                == _identity_projection(matrix["descriptor_identity"])
+                and descriptor["input_content_identity"] == matrix["content_identity"]
+                and descriptor["feature_order_identity"] == matrix["feature_order_identity"]
+            )
+        else:
+            valid = False
+        if not valid:
             _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Registry read binding differs", "resolution")
 
     output_names = [item["name"] for item in value["outputs"]]
@@ -365,18 +395,71 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "staging",
             )
         if grant is not None:
-            if any(
-                grant[key] != policy[key]
-                for key in ("output", "policy", "shape", "row_order", "missing_values")
+            if (
+                any(
+                    grant[key] != policy[key]
+                    for key in ("output", "policy", "shape", "row_order", "missing_values")
+                )
+                or grant["kind"] != declaration["kind"]
             ):
                 _fail(
                     "PYBENCH_CAPABILITY_MISMATCH",
                     "Output cardinality grant differs from manifest",
                     "staging",
                 )
-            expected_dimensions = [grant["expected_row_count"]]
-            if grant["shape"] == "cell_key_cartesian":
+            cell_policy = policy["cell_axis"]
+            cell_source = grant["cell_axis_source"]
+            if cell_policy["source"] == "session_cell_axis_read_v1":
+                registry_record = next(
+                    record
+                    for record in registry_grants
+                    if record["name"] == cell_policy["registry_read"]
+                )
+                registry_descriptor = registry_record["descriptor"]
+                valid_source = (
+                    cell_source["source"] == cell_policy["source"]
+                    and cell_source["registry_read"] == cell_policy["registry_read"]
+                    and cell_source["descriptor_identity"]
+                    == _identity_projection(registry_descriptor["descriptor_identity"])
+                    and cell_source["selection_identity"]
+                    == registry_descriptor["selection_identity"]
+                    and grant["cell_axis_count"] == registry_descriptor["dimensions"][0]
+                    and grant["cell_axis_order_identity"]
+                    == registry_descriptor["cell_order_identity"]
+                )
+            else:
+                input_descriptor = input_descriptors[cell_policy["input"]]
+                valid_source = (
+                    cell_source["input_name"] == cell_policy["input"]
+                    and cell_source["input_descriptor_identity"]
+                    == _identity_projection(input_descriptor["descriptor_identity"])
+                    and cell_source["derivation"] == cell_policy["source"]
+                )
+            if not valid_source:
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Output cardinality cell-axis source differs from manifest",
+                    "staging",
+                )
+            bounded = grant["shape"] == "bounded_grouped_cell_key_cartesian"
+            expected_dimensions = [0 if bounded else grant["expected_row_count"]]
+            if grant["shape"] in {"cell_key_cartesian", "bounded_grouped_cell_key_cartesian"}:
                 expected_dimensions.append(3)
+            if bounded:
+                key_policy = policy["key_axis"]
+                expected_resolution = {
+                    "source": "declared_bounded_key_groups_v1",
+                    "required_keys": key_policy["required_keys"],
+                    "optional_groups": key_policy["optional_groups"],
+                    "selection_owner": key_policy["selection_owner"],
+                    "group_order": key_policy["group_order"],
+                }
+                if grant["key_axis_resolution"] != expected_resolution:
+                    _fail(
+                        "PYBENCH_CAPABILITY_MISMATCH",
+                        "Bounded key-axis resolution differs from manifest",
+                        "staging",
+                    )
             if descriptor["expected_dimensions"] != expected_dimensions:
                 _fail(
                     "PYBENCH_CAPABILITY_MISMATCH",
@@ -496,13 +579,25 @@ def _row_pairs(keys: list[str], cells: list[str]) -> list[dict[str, str]]:
 
 
 def _validate_cardinality_grant(
-    grant: Mapping[str, Any], inputs: Mapping[str, Mapping[str, Any]]
+    grant: Mapping[str, Any],
+    inputs: Mapping[str, Mapping[str, Any]],
+    registry_values: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
     source = grant["cell_axis_source"]
-    payload = inputs.get(source["input_name"])
-    if payload is None:
-        _fail("PYBENCH_CAPABILITY_MISMATCH", "Cardinality cell-axis input is absent", "audit")
-    cells = _distinct(_ordered(payload, "cell_id"))
+    if source.get("source") == "session_cell_axis_read_v1":
+        payload = (registry_values or {}).get(source["registry_read"])
+        if payload is None:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Cardinality session-cell snapshot is absent",
+                "audit",
+            )
+        cells = _ordered(payload, "cell_id")
+    else:
+        payload = inputs.get(source["input_name"])
+        if payload is None:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "Cardinality cell-axis input is absent", "audit")
+        cells = _distinct(_ordered(payload, "cell_id"))
     if grant["cell_axis_count"] != len(cells) or grant["cell_axis_order_identity"] != _identity(
         "scworkbench.cell_order.v1", cells
     ):
@@ -526,6 +621,21 @@ def _validate_cardinality_grant(
                 "Cardinality key or row grant is inconsistent",
                 "audit",
             )
+    elif grant["shape"] == "bounded_grouped_cell_key_cartesian":
+        resolution = grant["key_axis_resolution"]
+        required = list(resolution["required_keys"])
+        optional = [key for group in resolution["optional_groups"] for key in group["keys"]]
+        if (
+            grant["minimum_key_count"] != len(required)
+            or grant["maximum_key_count"] != len(required) + len(optional)
+            or grant["minimum_row_count"] != len(required) * len(cells)
+            or grant["maximum_row_count"] != (len(required) + len(optional)) * len(cells)
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Bounded cardinality limits are inconsistent",
+                "audit",
+            )
     else:
         if grant["expected_row_count"] != len(cells) or grant["row_order_identity"] != _identity(
             "scworkbench.row_order.v1", cells
@@ -539,15 +649,37 @@ def _validate_cardinality_payload(
     payload: Mapping[str, Any],
     inputs: Mapping[str, Mapping[str, Any]],
     semantic_constraints: Mapping[str, Any] | None = None,
+    registry_values: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    cells, keys = _validate_cardinality_grant(grant, inputs)
+    cells, keys = _validate_cardinality_grant(grant, inputs, registry_values)
     payload_cells = _ordered(payload, "cell_id")
     values = payload.get("value")
     if not isinstance(values, list) or len(values) != len(payload_cells):
         _fail("PYBENCH_OUTPUT_INVALID", "Cardinality output values are malformed", "audit")
     expected_cells = cells
     expected_keys: list[str] | None = None
-    if grant["shape"] == "cell_key_cartesian":
+    selected_groups: list[str] | None = None
+    if grant["shape"] in {"cell_key_cartesian", "bounded_grouped_cell_key_cartesian"}:
+        if grant["shape"] == "bounded_grouped_cell_key_cartesian":
+            observed_keys = _distinct(_ordered(payload, "key"))
+            resolution = grant["key_axis_resolution"]
+            required = list(resolution["required_keys"])
+            selected_groups = []
+            expected = list(required)
+            cursor = len(required)
+            for group in resolution["optional_groups"]:
+                group_keys = list(group["keys"])
+                if observed_keys[cursor : cursor + len(group_keys)] == group_keys:
+                    selected_groups.append(group["name"])
+                    expected.extend(group_keys)
+                    cursor += len(group_keys)
+            if observed_keys != expected:
+                _fail(
+                    "PYBENCH_OUTPUT_INVALID",
+                    "Family keys are not complete bounded groups in manifest order",
+                    "audit",
+                )
+            keys = observed_keys
         expected_cells = [cell for key in keys for cell in cells]
         expected_keys = [key for key in keys for cell in cells]
         if _ordered(payload, "key") != expected_keys:
@@ -580,6 +712,8 @@ def _validate_cardinality_payload(
     }
     if expected_keys is not None:
         observed["observed_key_axis_count"] = len(keys)
+        if selected_groups is not None:
+            observed["observed_key_axis"] = keys
         observed["observed_key_axis_order_identity"] = _identity("scworkbench.row_order.v1", keys)
         rows: Any = _row_pairs(keys, cells)
     else:
@@ -589,6 +723,11 @@ def _validate_cardinality_payload(
         missing_count=missing,
         semantic_validation="passed",
     )
+    if selected_groups is not None:
+        observed["selected_optional_groups"] = selected_groups
+        observed["selected_optional_groups_identity"] = _identity(
+            "scworkbench.operation_pack.selected_optional_groups.v1", selected_groups
+        )
     observed["observed_cardinality_identity"] = _identity(
         "scworkbench.operation_pack.observed_output_cardinality.v1",
         observed,
@@ -1571,18 +1710,30 @@ def _observed_descriptor_v4(
     write: _Write,
     cell_order: list[str],
     inputs: Mapping[str, Mapping[str, Any]],
+    registry_values: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    observed = _observed_descriptor(grant, write, cell_order)
+    inherited_grant = grant
+    cardinality = grant["descriptor"].get("cardinality_grant")
+    if cardinality is not None and cardinality["shape"] == "bounded_grouped_cell_key_cartesian":
+        inherited_grant = copy.deepcopy(dict(grant))
+        inherited_grant["descriptor"]["expected_dimensions"] = [
+            len(write.value.get("value", [])),
+            3,
+        ]
+        inherited_grant["descriptor"]["expected_cell_order_identity"] = _identity(
+            "scworkbench.cell_order.v1", _ordered(write.value, "cell_id")
+        )
+    observed = _observed_descriptor(inherited_grant, write, cell_order)
     if grant["descriptor"]["category"] == "core_registry_request":
         return observed
     observed.pop("observed_descriptor_identity")
-    cardinality = grant["descriptor"].get("cardinality_grant")
     if cardinality is not None:
         observed["observed_cardinality"] = _validate_cardinality_payload(
             cardinality,
             write.value,
             inputs,
             grant["descriptor"].get("semantic_constraints"),
+            registry_values,
         )
     observed["observed_descriptor_identity"] = _identity(
         "scworkbench.operation_pack.observed_output.v3",
@@ -1610,6 +1761,33 @@ def _provenance_observations(request: Mapping[str, Any]) -> list[dict[str, Any]]
             "observation excluding observed_descriptor_identity",
         )
         result.append(observed)
+    return result
+
+
+def _registry_observations(request: Mapping[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for item in request.get("registry_reads", []):
+        source = item["descriptor"]
+        observed = {
+            key: source[key]
+            for key in (
+                "category",
+                "kind",
+                "reader",
+                "descriptor_identity",
+                "content_identity",
+                "source_identity",
+                "ancestry_identity",
+                "payload_manifest_identity",
+            )
+        }
+        observed["use_count"] = 1
+        observed["observed_descriptor_identity"] = _identity(
+            "scworkbench.operation_pack.observed_registry_read.v2",
+            observed,
+            "descriptor excluding observed_descriptor_identity",
+        )
+        result.append({"name": item["name"], "descriptor": observed})
     return result
 
 
@@ -1748,7 +1926,9 @@ def execute_operation_pack_v4(
                     "Staged payload changed after writer return",
                     "audit",
                 )
-            descriptor = _observed_descriptor_v4(grant, write, cell_order, audit_inputs)
+            descriptor = _observed_descriptor_v4(
+                grant, write, cell_order, audit_inputs, registry_values
+            )
             record = {
                 "name": grant["name"],
                 "allocated_id": grant["allocated_id"],
@@ -1822,29 +2002,7 @@ def execute_operation_pack_v4(
             "runtime_attestation": _shared_runtime_v3(discovery, operation, preflight),
         }
         if request.get("registry_reads"):
-            receipt["registry_reads"] = []  # populated by inherited registry contract below
-            for item in request["registry_reads"]:
-                source = item["descriptor"]
-                observed = {
-                    key: source[key]
-                    for key in (
-                        "category",
-                        "kind",
-                        "reader",
-                        "descriptor_identity",
-                        "content_identity",
-                        "source_identity",
-                        "ancestry_identity",
-                        "payload_manifest_identity",
-                    )
-                }
-                observed["use_count"] = 1
-                observed["observed_descriptor_identity"] = _identity(
-                    "scworkbench.operation_pack.observed_registry_read.v2",
-                    observed,
-                    "descriptor excluding observed_descriptor_identity",
-                )
-                receipt["registry_reads"].append({"name": item["name"], "descriptor": observed})
+            receipt["registry_reads"] = _registry_observations(request)
         if request.get("provenance_reads"):
             receipt["provenance_reads"] = _provenance_observations(request)
         if typed_slice_usage:
@@ -2038,10 +2196,14 @@ def validate_receipt_v4(
     expected_provenance = _provenance_observations(request)
     if value.get("provenance_reads", []) != expected_provenance:
         _fail("PYBENCH_RECEIPT_MISMATCH", "Provenance read receipt differs", "receipt")
+    if value.get("registry_reads", []) != _registry_observations(request):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Registry read receipt differs", "receipt")
     _validate_typed_slice_usage(request, value.get("typed_slice_usage", []))
     if stage_root is not None:
         root = _safe_root(Path(stage_root))
+        operation = _operation(discovery, request["operation_authentication"]["name"])
         inputs = _read_inputs_v4(request, root)
+        registry_values = _read_registry_reads(request, operation, root)
         for grant in request.get("typed_slice_grants", []):
             inputs[grant["input_name"]] = {
                 "kind": "matrix",
@@ -2064,7 +2226,9 @@ def validate_receipt_v4(
             )
             payload = json.loads(path.read_text(encoding="utf-8"))
             write = _Write(payload, path, {}, grant["descriptor"]["writer"])
-            expected_descriptor = _observed_descriptor_v4(grant, write, cell_order, inputs)
+            expected_descriptor = _observed_descriptor_v4(
+                grant, write, cell_order, inputs, registry_values
+            )
             if by_name[grant["name"]]["descriptor"] != expected_descriptor:
                 _fail(
                     "PYBENCH_RECEIPT_MISMATCH",

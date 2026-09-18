@@ -419,9 +419,39 @@ def make_request(
                 "descriptor": _input_descriptor(name, value, declaration),
             }
         )
-    first = next(iter(selected_inputs.values()))
-    cells = first.get("cell_id", ["cell_1"])
-    features = first.get("feature_id", ["feature_1"])
+    transition = {
+        "transition_id": f"transition_{token}",
+        "session_id": f"session_{token}",
+        "run_id": f"run_{token}",
+        "checkpoint_generation": f"generation_{token}",
+        "source_state_identity": _identity(
+            "scworkbench.scientific_state.v1", {"fixture": "python-v2"}
+        ),
+    }
+    transition["transition_identity"] = _identity(
+        "scworkbench.operation_pack.transition.v2",
+        transition,
+        "transition excluding transition_identity",
+    )
+    resolved_registry_snapshots = {
+        name: snapshot(transition) if callable(snapshot) else snapshot
+        for name, snapshot in (registry_snapshots or {}).items()
+    }
+    first = next(iter(selected_inputs.values()), None)
+    session_snapshot = next(
+        (
+            resolved_registry_snapshots[item["name"]]
+            for item in operation.get("registry_reads", [])
+            if item["kind"] == "session_cell_axis" and item["name"] in resolved_registry_snapshots
+        ),
+        None,
+    )
+    cells = (
+        first.get("cell_id", ["cell_1"])
+        if first is not None
+        else list((session_snapshot or {}).get("cell_id", ["cell_1"]))
+    )
+    features = first.get("feature_id", ["feature_1"]) if first is not None else ["feature_1"]
     dynamic_outputs = {item["output"] for item in operation.get("dimension_policies", [])}
     output_records = [
         {
@@ -437,20 +467,6 @@ def make_request(
         }
         for output in operation["outputs"]
     ]
-    transition = {
-        "transition_id": f"transition_{token}",
-        "session_id": f"session_{token}",
-        "run_id": f"run_{token}",
-        "checkpoint_generation": f"generation_{token}",
-        "source_state_identity": _identity(
-            "scworkbench.scientific_state.v1", {"fixture": "python-v2"}
-        ),
-    }
-    transition["transition_identity"] = _identity(
-        "scworkbench.operation_pack.transition.v2",
-        transition,
-        "transition excluding transition_identity",
-    )
     declared = operation["dependencies"]
     selected = declared
     dynamic = []
@@ -525,73 +541,166 @@ def make_request(
         input_map = {item["name"]: item["descriptor"] for item in input_records}
         for declaration in sorted(operation.get("registry_reads", []), key=lambda x: x["name"]):
             name = declaration["name"]
-            snapshot = registry_snapshots[name]
+            snapshot = resolved_registry_snapshots[name]
             payload = canonical_json(snapshot).encode("utf-8")
             path = stage / "registry_reads" / name / "payload.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
-            matrix_descriptor = input_map[declaration["matrix_input"]]
-            binding = {
-                key: declaration.get(key)
-                for key in (
-                    "namespace_parameter",
-                    "namespaces_parameter",
-                    "feature_sets_parameter",
-                    "no_selector_policy",
-                    "empty_match_policy",
-                )
-            }
-            selection = normalized_selection(binding, params)
-            selection_identity = _identity(
-                "scworkbench.feature_set_registry.selection.v1",
-                selection,
-                "normalized selector binding",
+            payload_manifest_identity = _identity(
+                "scworkbench.operation_pack.payload_manifest.v2",
+                {
+                    "path": f"registry_reads/{name}/payload.json",
+                    "size": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                },
+                "registry read payload manifest",
             )
-            descriptor = {
-                "category": declaration["category"],
-                "kind": declaration["kind"],
-                "reader": declaration["reader"],
-                "matrix_input": declaration["matrix_input"],
-                "selector_binding": binding,
-                "matrix_id": snapshot["matrix_id"],
-                "dimensions": [
-                    len(snapshot["sets"]),
-                    sum(len(x["memberships"]) for x in snapshot["sets"]),
-                ],
-                "matrix_content_identity": matrix_descriptor["content_identity"],
-                "feature_order_identity": matrix_descriptor["feature_order_identity"],
-                "selection_identity": selection_identity,
-                "content_identity": _identity(
-                    "scworkbench.feature_set_registry.snapshot.v1",
-                    snapshot,
-                    "canonical matrix-bound registry snapshot",
-                ),
-                "source_identity": _identity(
-                    "scworkbench.feature_set_registry.source.v1",
-                    {key: snapshot[key] for key in ("matrix_id", "feature_universe", "sets")},
-                    "ordered registry source state",
-                ),
-                "ancestry_identity": _identity(
-                    "scworkbench.provenance.ancestry.v1",
+            if declaration["kind"] == "feature_set_registry":
+                matrix_descriptor = input_map[declaration["matrix_input"]]
+                binding = {
+                    key: declaration.get(key)
+                    for key in (
+                        "namespace_parameter",
+                        "namespaces_parameter",
+                        "feature_sets_parameter",
+                        "no_selector_policy",
+                        "empty_match_policy",
+                    )
+                }
+                selection = normalized_selection(binding, params)
+                selection_identity = _identity(
+                    "scworkbench.feature_set_registry.selection.v1",
+                    selection,
+                    "normalized selector binding",
+                )
+                descriptor = {
+                    "category": declaration["category"],
+                    "kind": declaration["kind"],
+                    "reader": declaration["reader"],
+                    "matrix_input": declaration["matrix_input"],
+                    "selector_binding": binding,
+                    "matrix_id": snapshot["matrix_id"],
+                    "dimensions": [
+                        len(snapshot["sets"]),
+                        sum(len(x["memberships"]) for x in snapshot["sets"]),
+                    ],
+                    "matrix_content_identity": matrix_descriptor["content_identity"],
+                    "feature_order_identity": matrix_descriptor["feature_order_identity"],
+                    "selection_identity": selection_identity,
+                    "content_identity": _identity(
+                        "scworkbench.feature_set_registry.snapshot.v1",
+                        snapshot,
+                        "canonical matrix-bound registry snapshot",
+                    ),
+                    "source_identity": _identity(
+                        "scworkbench.feature_set_registry.source.v1",
+                        {key: snapshot[key] for key in ("matrix_id", "feature_universe", "sets")},
+                        "ordered registry source state",
+                    ),
+                    "ancestry_identity": _identity(
+                        "scworkbench.provenance.ancestry.v1",
+                        {
+                            "matrix_input": declaration["matrix_input"],
+                            "matrix_content_identity": matrix_descriptor["content_identity"],
+                            "selection_identity": selection_identity,
+                        },
+                        "registry snapshot ancestry",
+                    ),
+                    "payload_manifest_identity": payload_manifest_identity,
+                }
+                descriptor_scheme = "scworkbench.operation_pack.registry_read_descriptor.v2"
+            elif declaration["kind"] == "session_cell_axis":
+                selection_identity = _identity(
+                    "scworkbench.session_cell_axis.selection.v1",
                     {
-                        "matrix_input": declaration["matrix_input"],
-                        "matrix_content_identity": matrix_descriptor["content_identity"],
-                        "selection_identity": selection_identity,
+                        "selection_policy": snapshot["selection_policy"],
+                        "coverage_policy": snapshot["coverage_policy"],
+                        "cell_id": snapshot["cell_id"],
                     },
-                    "registry snapshot ancestry",
-                ),
-                "payload_manifest_identity": _identity(
-                    "scworkbench.operation_pack.payload_manifest.v2",
+                    "ordered effective-session selection",
+                )
+                source_identity = _identity(
+                    "scworkbench.session_cell_axis.source.v1",
                     {
-                        "path": f"registry_reads/{name}/payload.json",
-                        "size": len(payload),
-                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        key: snapshot[key]
+                        for key in (
+                            "session_id",
+                            "run_id",
+                            "checkpoint_generation",
+                            "transition_source_state_identity",
+                            "cell_order_identity",
+                        )
                     },
-                    "registry read payload manifest",
-                ),
-            }
+                    "session cell-axis source state",
+                )
+                descriptor = {
+                    "category": declaration["category"],
+                    "kind": declaration["kind"],
+                    "reader": declaration["reader"],
+                    "selection_policy": declaration["selection_policy"],
+                    "coverage_policy": declaration["coverage_policy"],
+                    "session_id": snapshot["session_id"],
+                    "run_id": snapshot["run_id"],
+                    "checkpoint_generation": snapshot["checkpoint_generation"],
+                    "transition_source_state_identity": snapshot[
+                        "transition_source_state_identity"
+                    ],
+                    "dimensions": [snapshot["cell_count"]],
+                    "cell_order_identity": snapshot["cell_order_identity"],
+                    "selection_identity": selection_identity,
+                    "content_identity": _identity(
+                        snapshot["schema"], snapshot, "canonical session cell-axis snapshot"
+                    ),
+                    "source_identity": source_identity,
+                    "ancestry_identity": _identity(
+                        "scworkbench.provenance.ancestry.v1",
+                        {
+                            "source_identity": source_identity,
+                            "selection_identity": selection_identity,
+                        },
+                        "session cell-axis ancestry",
+                    ),
+                    "payload_manifest_identity": payload_manifest_identity,
+                }
+                descriptor_scheme = "scworkbench.operation_pack.registry_read_descriptor.v3"
+            else:
+                matrix_descriptor = input_map[declaration["matrix_input"]]
+                source_identity = _identity(
+                    "scworkbench.matrix_feature_annotations.source.v1",
+                    {key: snapshot[key] for key in ("matrix_id", "fields", "rows")},
+                    "ordered matrix feature annotations",
+                )
+                descriptor = {
+                    "category": declaration["category"],
+                    "kind": declaration["kind"],
+                    "reader": declaration["reader"],
+                    "matrix_input": declaration["matrix_input"],
+                    "fields": snapshot["fields"],
+                    "row_order": declaration["row_order"],
+                    "missing_annotation_policy": declaration["missing_annotation_policy"],
+                    "matrix_id": snapshot["matrix_id"],
+                    "dimensions": [snapshot["feature_count"], len(snapshot["fields"])],
+                    "input_descriptor_identity": snapshot["input_descriptor_identity"],
+                    "input_content_identity": snapshot["input_content_identity"],
+                    "feature_order_identity": snapshot["feature_order_identity"],
+                    "content_identity": _identity(
+                        snapshot["schema"], snapshot, "canonical matrix feature annotations"
+                    ),
+                    "source_identity": source_identity,
+                    "ancestry_identity": _identity(
+                        "scworkbench.provenance.ancestry.v1",
+                        {
+                            "input_descriptor_identity": snapshot["input_descriptor_identity"],
+                            "input_content_identity": snapshot["input_content_identity"],
+                            "source_identity": source_identity,
+                        },
+                        "matrix feature annotation ancestry",
+                    ),
+                    "payload_manifest_identity": payload_manifest_identity,
+                }
+                descriptor_scheme = "scworkbench.operation_pack.registry_read_descriptor.v3"
             descriptor["descriptor_identity"] = _identity(
-                "scworkbench.operation_pack.registry_read_descriptor.v2",
+                descriptor_scheme,
                 descriptor,
                 "descriptor excluding descriptor_identity",
             )

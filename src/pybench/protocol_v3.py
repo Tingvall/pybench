@@ -20,6 +20,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from .authenticated_core_reads import validate_authenticated_core_read
 from .cell_set_family import normalize_cell_set_family
 from .feature_set_registry import validate_registry_read
 from .operation_packs import OperationPackError, canonical_json, canonical_sha256, protocol_asset
@@ -1092,14 +1093,20 @@ def _read_registry_reads(
         name = item["name"]
         path = _safe_relative(root, f"registry_reads/{name}/payload.json", must_exist=True)
         declaration = declarations[name]
-        values[name] = validate_registry_read(
-            path.read_bytes(),
-            name,
-            item["descriptor"],
-            declaration,
-            request["params"],
-            matrices[declaration["matrix_input"]],
-        )
+        raw = path.read_bytes()
+        if declaration["kind"] == "feature_set_registry":
+            values[name] = validate_registry_read(
+                raw,
+                name,
+                item["descriptor"],
+                declaration,
+                request["params"],
+                matrices[declaration["matrix_input"]],
+            )
+        else:
+            values[name] = validate_authenticated_core_read(
+                raw, name, item["descriptor"], declaration, request
+            )
     return values
 
 

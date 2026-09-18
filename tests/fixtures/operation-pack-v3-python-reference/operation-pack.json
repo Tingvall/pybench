@@ -353,6 +353,73 @@
       "dependencies": [],
       "promotion_closure": {"summary": ["summary"]},
       "replay_equivalence": {"summary": "exact_canonical_value"}
+    },
+    {
+      "name": "session_axis_probe",
+      "qualified_name": "scwbpyv3reference::session_axis_probe",
+      "title": "Authenticated session-cell axis probe",
+      "description": "Synthetic ABI-v3 no-input operation consuming the exact effective session-cell axis.",
+      "runner": ".session_axis_probe",
+      "inputs": [],
+      "registry_reads": [
+        {"name": "session_cells", "category": "authenticated_core_axis_snapshot", "kind": "session_cell_axis", "reader": "read_session_cell_axis", "selection_policy": "effective_session_cells_v1", "coverage_policy": "exact_complete_order_v1", "call_discipline": "single_use"}
+      ],
+      "params_schema": {"type": "object", "properties": {}, "additionalProperties": false},
+      "dimension_policies": [
+        {"output": "labels", "policy": "authenticated_output_axes_v1", "shape": "one_per_cell", "cell_axis": {"source": "session_cell_axis_read_v1", "registry_read": "session_cells"}, "row_order": "session_cell_axis_order_v1", "missing_values": "forbidden"}
+      ],
+      "outputs": [
+        {"name": "labels", "category": "terminal_artifact", "kind": "cell_vector", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "labels_id", "required": true, "promotion_group": "labels", "value_kind": "categorical"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"labels": ["labels"]},
+      "replay_equivalence": {"labels": "exact_canonical_value"}
+    },
+    {
+      "name": "feature_annotation_probe",
+      "qualified_name": "scwbpyv3reference::feature_annotation_probe",
+      "title": "Authenticated matrix feature-annotation probe",
+      "description": "Synthetic ABI-v3 operation consuming exact matrix-bound feature annotations.",
+      "runner": ".feature_annotation_probe",
+      "inputs": [
+        {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
+      ],
+      "registry_reads": [
+        {"name": "feature_annotations", "category": "authenticated_core_registry_snapshot", "kind": "matrix_feature_annotations", "reader": "read_matrix_feature_annotations", "matrix_input": "matrix", "fields": ["feature_type"], "row_order": "matrix_feature_order_v1", "missing_annotation_policy": "preserve_null", "call_discipline": "single_use"}
+      ],
+      "params_schema": {"type": "object", "properties": {}, "additionalProperties": false},
+      "dimension_policies": [
+        {"output": "annotations", "policy": "data_dependent_table_v1"}
+      ],
+      "outputs": [
+        {"name": "annotations", "category": "terminal_artifact", "kind": "feature_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "annotations_id", "required": true, "promotion_group": "annotations", "table_type": "feature_annotation_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"annotations": ["annotations"]},
+      "replay_equivalence": {"annotations": "exact_canonical_value"}
+    },
+    {
+      "name": "bounded_group_probe",
+      "qualified_name": "scwbpyv3reference::bounded_group_probe",
+      "title": "Bounded grouped cardinality probe",
+      "description": "Synthetic ABI-v3 operation selecting zero, one, or both complete optional output-key groups.",
+      "runner": ".bounded_group_probe",
+      "inputs": [],
+      "registry_reads": [
+        {"name": "session_cells", "category": "authenticated_core_axis_snapshot", "kind": "session_cell_axis", "reader": "read_session_cell_axis", "selection_policy": "effective_session_cells_v1", "coverage_policy": "exact_complete_order_v1", "call_discipline": "single_use"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "optional_groups": {"type": "array", "default": [], "uniqueItems": true, "items": {"enum": ["mitochondrial", "ribosomal"]}}
+      }, "required": ["optional_groups"], "additionalProperties": false},
+      "dimension_policies": [
+        {"output": "metrics", "policy": "authenticated_output_axes_v1", "shape": "bounded_grouped_cell_key_cartesian", "cell_axis": {"source": "session_cell_axis_read_v1", "registry_read": "session_cells"}, "key_axis": {"source": "declared_bounded_key_groups_v1", "required_keys": ["total_counts", "detected_features"], "optional_groups": [{"name": "mitochondrial", "keys": ["mito_counts", "mito_percent"]}, {"name": "ribosomal", "keys": ["ribo_counts", "ribo_percent"]}], "selection_owner": "operation_pack_v1", "group_order": "manifest_order_v1"}, "row_order": "key_major_then_cell_v1", "missing_values": "forbidden"}
+      ],
+      "outputs": [
+        {"name": "metrics", "category": "terminal_artifact", "kind": "cell_vector_family", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "metrics_id", "required": true, "promotion_group": "metrics", "value_kind": "continuous"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"metrics": ["metrics"]},
+      "replay_equivalence": {"metrics": "exact_canonical_value"}
     }
   ]
 }

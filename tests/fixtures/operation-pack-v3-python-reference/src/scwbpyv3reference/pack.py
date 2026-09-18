@@ -293,6 +293,68 @@ def _ancestry_probe(readers, writers, params, context):
     )
 
 
+def _session_axis_probe(readers, writers, params, context):
+    cells = readers["session_cells"]()["cell_id"]
+    writers.write_terminal_primitive(
+        "labels",
+        {
+            "kind": "cell_vector",
+            "dimensions": [len(cells)],
+            "cell_id": cells,
+            "value": [f"label_{index}" for index, _ in enumerate(cells, start=1)],
+            "storage_profile": "terminal_primitive_v1",
+            "meta": {},
+        },
+    )
+
+
+def _feature_annotation_probe(readers, writers, params, context):
+    readers["matrix"]()
+    annotations = readers["feature_annotations"]()
+    rows = [
+        {
+            "feature_id": row["feature_id"],
+            "feature_type": row["values"]["feature_type"],
+        }
+        for row in annotations["rows"]
+    ]
+    writers.write_terminal_primitive(
+        "annotations",
+        {
+            "kind": "feature_table",
+            "dimensions": [len(rows), 2],
+            "feature_id": [row["feature_id"] for row in rows],
+            "rows": rows,
+            "storage_profile": "terminal_primitive_v1",
+            "meta": {},
+        },
+    )
+
+
+def _bounded_group_probe(readers, writers, params, context):
+    cells = readers["session_cells"]()["cell_id"]
+    groups = {
+        "mitochondrial": ["mito_counts", "mito_percent"],
+        "ribosomal": ["ribo_counts", "ribo_percent"],
+    }
+    keys = ["total_counts", "detected_features"]
+    for name in ("mitochondrial", "ribosomal"):
+        if name in params["optional_groups"]:
+            keys.extend(groups[name])
+    writers.write_terminal_primitive(
+        "metrics",
+        {
+            "kind": "cell_vector_family",
+            "dimensions": [len(keys) * len(cells), 3],
+            "key": [key for key in keys for _ in cells],
+            "cell_id": [cell for _ in keys for cell in cells],
+            "value": [float(index) for index, _ in enumerate(keys) for _ in cells],
+            "storage_profile": "terminal_primitive_v1",
+            "meta": {},
+        },
+    )
+
+
 def register():
     return operation_pack_handlers_v3(
         {
@@ -304,6 +366,9 @@ def register():
             "scwbpyv3reference::cardinality_family_probe": _cardinality_family_probe,
             "scwbpyv3reference::cardinality_reduction_probe": _cardinality_reduction_probe,
             "scwbpyv3reference::ancestry_probe": _ancestry_probe,
+            "scwbpyv3reference::session_axis_probe": _session_axis_probe,
+            "scwbpyv3reference::feature_annotation_probe": _feature_annotation_probe,
+            "scwbpyv3reference::bounded_group_probe": _bounded_group_probe,
             "scwbpyv3reference::family_probe": _family_probe,
             "scwbpyv3reference::registry_probe": _registry_probe,
             "scwbpyv3reference::registry_probe_strict": _registry_probe,

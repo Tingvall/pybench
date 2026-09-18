@@ -77,6 +77,13 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
     for operation in inherited["operations"]:
         operation.pop("provenance_reads", None)
         operation.pop("typed_slice_reads", None)
+        operation["registry_reads"] = [
+            read
+            for read in operation.get("registry_reads", [])
+            if read.get("kind") == "feature_set_registry"
+        ]
+        if not operation["registry_reads"]:
+            operation.pop("registry_reads")
         policies = operation.get("dimension_policies", [])
         operation["dimension_policies"] = [
             policy for policy in policies if policy.get("policy") != "authenticated_output_axes_v1"
@@ -95,22 +102,40 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         }
         for policy in policies.values():
             output = outputs.get(policy["output"])
-            cell_input = inputs.get(policy["cell_axis"]["input"])
-            expected_kind = (
-                "cell_vector_family" if policy["shape"] == "cell_key_cartesian" else "cell_vector"
+            cell_source = policy["cell_axis"]["source"]
+            cell_input = inputs.get(policy["cell_axis"].get("input"))
+            registry_reads = {item["name"]: item for item in operation.get("registry_reads", [])}
+            axis_read = registry_reads.get(policy["cell_axis"].get("registry_read"))
+            cell_source_valid = (
+                cell_input is not None
+                and cell_source
+                in {"effective_cells_v1", "distinct_input_cells_first_occurrence_v1"}
+                and cell_input.get("alignment") in {"cell_ordered", "cell_and_feature_ordered"}
+            ) or (
+                cell_source == "session_cell_axis_read_v1"
+                and axis_read is not None
+                and axis_read.get("kind") == "session_cell_axis"
             )
+            family_shape = policy["shape"] in {
+                "cell_key_cartesian",
+                "bounded_grouped_cell_key_cartesian",
+            }
+            expected_kind = "cell_vector_family" if family_shape else "cell_vector"
             expected_order = (
                 "key_major_then_cell_v1"
-                if policy["shape"] == "cell_key_cartesian"
-                else "input_cell_order_v1"
+                if family_shape
+                else (
+                    "session_cell_axis_order_v1"
+                    if cell_source == "session_cell_axis_read_v1"
+                    else "input_cell_order_v1"
+                )
             )
             if (
                 output is None
                 or output["category"] != "terminal_artifact"
                 or output["kind"] != expected_kind
                 or output["storage_profile"] != "terminal_primitive_v1"
-                or cell_input is None
-                or cell_input.get("alignment") not in {"cell_ordered", "cell_and_feature_ordered"}
+                or not cell_source_valid
                 or policy["row_order"] != expected_order
             ):
                 _fail(
@@ -133,6 +158,14 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                     f"Operation {opname!r} omits the family key-axis resolver",
                     "semantic_admission",
                 )
+            bounded_shape = policy["shape"] == "bounded_grouped_cell_key_cartesian"
+            bounded_source = key_axis["source"] == "declared_bounded_key_groups_v1"
+            if bounded_shape != bounded_source:
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} mismatches bounded cardinality shape and resolver",
+                    "semantic_admission",
+                )
             if key_axis["source"] == "resolved_parameter_feature_groups_v1":
                 group_schema = params.get(key_axis["groups_parameter"])
                 matrix = inputs.get(key_axis["matrix_input"])
@@ -151,6 +184,21 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                         f"Operation {opname!r} has unresolved parameter feature groups",
                         "semantic_admission",
                     )
+            elif key_axis["source"] == "declared_bounded_key_groups_v1":
+                required = key_axis["required_keys"]
+                groups = key_axis["optional_groups"]
+                group_names = [group["name"] for group in groups]
+                all_keys = required + [key for group in groups for key in group["keys"]]
+                if (
+                    not required
+                    or len(all_keys) != len(set(all_keys))
+                    or len(group_names) != len(set(group_names))
+                ):
+                    _fail(
+                        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                        f"Operation {opname!r} has an invalid bounded key family",
+                        "semantic_admission",
+                    )
             else:
                 source = inputs.get(key_axis["input"])
                 selector = key_axis.get("selector_parameter")
@@ -164,6 +212,43 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                         f"Operation {opname!r} has an unresolved input-family key axis",
                         "semantic_admission",
                     )
+
+        all_registry_reads = operation.get("registry_reads", [])
+        registry_names = [read["name"] for read in all_registry_reads]
+        if len(registry_names) != len(set(registry_names)) or set(registry_names) & set(inputs):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} has duplicate or colliding registry readers",
+                "semantic_admission",
+            )
+        new_reads = [
+            read
+            for read in all_registry_reads
+            if read["kind"] in {"session_cell_axis", "matrix_feature_annotations"}
+        ]
+        new_names = [read["name"] for read in new_reads]
+        if len(new_names) != len(set(new_names)):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} repeats an authenticated core snapshot name",
+                "semantic_admission",
+            )
+        for read in new_reads:
+            if read["kind"] == "session_cell_axis":
+                valid = read["reader"] == "read_session_cell_axis"
+            else:
+                source = inputs.get(read["matrix_input"])
+                valid = (
+                    read["reader"] == "read_matrix_feature_annotations"
+                    and source is not None
+                    and source["kind"] == "matrix"
+                )
+            if not valid:
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid authenticated core snapshot declaration",
+                    "semantic_admission",
+                )
 
         slices = operation.get("typed_slice_reads", [])
         slice_names = [item["name"] for item in slices]
@@ -202,7 +287,11 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
 
         reads = operation.get("provenance_reads", [])
         read_names = [item["name"] for item in reads]
-        if len(read_names) != len(set(read_names)) or set(read_names) & set(inputs):
+        if (
+            len(read_names) != len(set(read_names))
+            or set(read_names) & set(inputs)
+            or set(read_names) & set(registry_names)
+        ):
             _fail(
                 "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
                 f"Operation {opname!r} has duplicate or colliding provenance reads",
