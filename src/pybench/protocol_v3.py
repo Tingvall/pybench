@@ -11,7 +11,7 @@ import platform
 import shutil
 import sys
 import sysconfig
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -746,6 +746,7 @@ class _Write:
     path: Path
     semantic_metadata: dict[str, Any]
     writer: str
+    paths: list[Path] = field(default_factory=list)
 
 
 class V3Readers(Mapping[str, Callable[..., dict[str, Any]]]):

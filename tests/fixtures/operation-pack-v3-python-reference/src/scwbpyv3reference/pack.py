@@ -355,6 +355,110 @@ def _bounded_group_probe(readers, writers, params, context):
     )
 
 
+def _matrix_fragment_probe(readers, writers, params, context):
+    capability = context["typed_slice_reads"]["matrix_chunks"]
+    features = capability["features"]
+    cells = capability["cells"]
+    writer = writers.open_matrix_fragments("normalized")
+    writers.write_terminal_primitive(
+        "summary",
+        {
+            "kind": "obs_table",
+            "dimensions": [1, 1],
+            "rows": [{"matrix_id": params["output_matrix_id"]}],
+            "storage_profile": "terminal_primitive_v1",
+            "meta": {},
+        },
+    )
+    for source in writer.source_fragments:
+        start = source["cell_start"] - 1
+        selected = cells[start : start + source["cell_count"]]
+        matrix = readers["matrix_chunks"](features=features, cells=selected)
+        if os.environ.get("SCWBPYV3_MATRIX_FRAGMENT_FAULT") == "second" and source["ordinal"] == 2:
+            raise RuntimeError("synthetic second-fragment failure")
+        writer.write_fragment(
+            source["ordinal"],
+            matrix["values"],
+            matrix["feature_id"],
+            matrix["cell_id"],
+        )
+    writer.finish({"fixture": "matrix_fragment_probe"})
+
+
+def _parameter_axis_probe(readers, writers, params, context):
+    capability = context["typed_slice_reads"]["matrix_chunks"]
+    cells = capability["cells"]
+    features = capability["features"]
+    matrix = readers["matrix_chunks"](features=features, cells=cells)
+    count = params["n_components"]
+    labels = [f"PC{index}" for index in range(1, count + 1)]
+    fault = os.environ.get("SCWBPYV3_PARAMETER_AXIS_FAULT", "")
+    output_cells = cells[:-1] if fault == "missing_cell" else cells
+    if fault == "two_columns":
+        output_labels = labels[:2]
+    elif fault == "four_columns":
+        output_labels = [*labels, "PC4"]
+    elif fault == "duplicate_dimension":
+        output_labels = [labels[0], labels[0], *labels[2:]]
+    else:
+        output_labels = labels
+    writers.write_space(
+        "space",
+        {
+            "kind": "space",
+            "dimensions": [len(output_cells), len(output_labels)],
+            "cell_id": output_cells,
+            "dimension_id": output_labels,
+            "values": [
+                [
+                    float(matrix["values"][0][index]) + component
+                    for component in range(len(output_labels))
+                ]
+                for index in range(len(output_cells))
+            ],
+        },
+    )
+    loading_rows = [
+        {
+            "feature_id": feature,
+            "PC": label,
+            "component_index": index,
+            "loading": float(feature_index + index),
+        }
+        for index, label in enumerate(labels, start=1)
+        for feature_index, feature in enumerate(features, start=1)
+    ]
+    writers.write_terminal_primitive(
+        "loadings",
+        {
+            "kind": "feature_table",
+            "dimensions": [len(loading_rows), 4],
+            "feature_id": [row["feature_id"] for row in loading_rows],
+            "rows": loading_rows,
+        },
+    )
+    writers.write_terminal_primitive(
+        "variance",
+        {
+            "kind": "obs_table",
+            "dimensions": [count, 3],
+            "rows": [
+                {"PC": label, "component_index": index, "variance": float(index)}
+                for index, label in enumerate(labels, start=1)
+            ],
+        },
+    )
+    if fault != "partial_output":
+        writers.write_terminal_primitive(
+            "summary",
+            {
+                "kind": "obs_table",
+                "dimensions": [1, 1],
+                "rows": [{"n_components": count}],
+            },
+        )
+
+
 def register():
     return operation_pack_handlers_v3(
         {
@@ -369,6 +473,8 @@ def register():
             "scwbpyv3reference::session_axis_probe": _session_axis_probe,
             "scwbpyv3reference::feature_annotation_probe": _feature_annotation_probe,
             "scwbpyv3reference::bounded_group_probe": _bounded_group_probe,
+            "scwbpyv3reference::matrix_fragment_probe": _matrix_fragment_probe,
+            "scwbpyv3reference::parameter_axis_probe": _parameter_axis_probe,
             "scwbpyv3reference::family_probe": _family_probe,
             "scwbpyv3reference::registry_probe": _registry_probe,
             "scwbpyv3reference::registry_probe_strict": _registry_probe,

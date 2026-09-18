@@ -22,6 +22,17 @@ from .operation_packs_v3 import (
     PackDiscoveryV3,
     active_operation_packs_v3,
 )
+from .phase4c_contracts import (
+    finite_matrix,
+    fragment_payload_identity,
+    matrix_slice_content_identity,
+    plain,
+    publication_observations,
+    validate_axis_bound_outputs,
+    validate_fragment_grant,
+    validate_parameter_axis_grants,
+    validate_publication_grant,
+)
 from .protocol_v3 import (
     V3Readers,
     V3Writers,
@@ -256,6 +267,20 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "staging",
             )
         _assert_identity(descriptor, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+        if "publication_grant" in descriptor:
+            _assert_identity(
+                descriptor["publication_grant"],
+                "publication_grant_identity",
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "staging",
+            )
+        if "matrix_fragment_grant" in descriptor:
+            _assert_identity(
+                descriptor["matrix_fragment_grant"],
+                "grant_identity",
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "staging",
+            )
     for grant in value.get("typed_slice_grants", []):
         _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
     _assert_identity(
@@ -373,6 +398,9 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         _fail("PYBENCH_CAPABILITY_MISMATCH", "Request output closure differs", "staging")
     policies = {item["output"]: item for item in operation.get("dimension_policies", [])}
     outputs = {item["name"]: item for item in operation["outputs"]}
+    publication_policies = {
+        item["output"]: item for item in operation.get("publication_policies", [])
+    }
     for item in value["outputs"]:
         declaration = outputs[item["name"]]
         descriptor = item["descriptor"]
@@ -467,7 +495,116 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                     "staging",
                 )
 
+        publication = descriptor.get("publication_grant")
+        publication_policy = publication_policies.get(item["name"])
+        if (publication is None) != (publication_policy is None):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Publication grant presence differs from the manifest",
+                "staging",
+            )
+        if publication is not None:
+            validate_publication_grant(publication, publication_policy, value, item)
+            promotion_group = declaration["promotion_group"]
+            expected_closure = sorted(
+                child["name"]
+                for child in operation["outputs"]
+                if child["promotion_group"] == promotion_group
+            )
+            if (
+                publication["promotion_group"] != promotion_group
+                or publication["closure_outputs"] != expected_closure
+            ):
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Publication closure differs from the manifest promotion group",
+                    "staging",
+                )
+
+        fragment = descriptor.get("matrix_fragment_grant")
+        fragment_policy = declaration.get("fragment_policy")
+        if (fragment is None) != (fragment_policy is None):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Matrix fragment grant presence differs from the manifest",
+                "staging",
+            )
+        if fragment is not None:
+            validate_fragment_grant(fragment, fragment_policy, value)
+        axis_policy = policy is not None and policy.get("policy") in {
+            "cell_by_parameter_axis_v1",
+            "feature_parameter_axis_cartesian_v1",
+            "one_per_parameter_axis_v1",
+            "singleton_parameter_echo_v1",
+        }
+        if (descriptor.get("parameter_axis_grant_identity") is not None) != axis_policy:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Parameter-axis output binding presence differs from the manifest",
+                "staging",
+            )
+
     typed_slice_grants = _validate_typed_slice_grants(value, operation)
+    parameter_axis_grants = validate_parameter_axis_grants(value, operation)
+    for policy in operation.get("dimension_policies", []):
+        kind = policy.get("policy")
+        if kind not in {
+            "cell_by_parameter_axis_v1",
+            "feature_parameter_axis_cartesian_v1",
+            "one_per_parameter_axis_v1",
+            "singleton_parameter_echo_v1",
+        }:
+            continue
+        axis_name = policy.get("parameter_axis", policy.get("dimension_axis"))
+        axis = parameter_axis_grants[axis_name]
+        descriptor = next(
+            item["descriptor"] for item in value["outputs"] if item["name"] == policy["output"]
+        )
+        if descriptor.get("parameter_axis_grant_identity") != plain(axis["grant_identity"]):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Output parameter-axis binding differs from its grant",
+                "staging",
+            )
+        expected_dimensions = {
+            "cell_by_parameter_axis_v1": [axis["source"]["cell_axis_count"], axis["value"]],
+            "feature_parameter_axis_cartesian_v1": [
+                axis["source"]["feature_axis_count"] * axis["value"],
+                0,
+            ],
+            "one_per_parameter_axis_v1": [axis["value"], 0],
+            "singleton_parameter_echo_v1": [1, 0],
+        }[kind]
+        if descriptor.get("expected_dimensions") != expected_dimensions:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Output dimensions differ from its parameter-axis grant",
+                "staging",
+            )
+        if (
+            kind == "cell_by_parameter_axis_v1"
+            and descriptor.get("expected_dimension_order_identity") != axis["axis_order_identity"]
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Space dimension order differs from its parameter-axis grant",
+                "staging",
+            )
+        if kind == "cell_by_parameter_axis_v1":
+            typed = next(
+                item
+                for item in typed_slice_grants
+                if item["name"] == policy["cell_axis"]["typed_slice_read"]
+            )
+            if (
+                descriptor.get("expected_cell_order_identity")
+                != typed["cells_axis"]["order_identity"]
+            ):
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Space cell order differs from its typed-slice grant",
+                    "staging",
+                )
 
     declared_reads = {item["name"]: item for item in operation.get("provenance_reads", [])}
     observed_names = [item["name"] for item in value.get("provenance_reads", [])]
@@ -545,6 +682,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         capability["writer_grants"] == expected_writers,
         capability.get("typed_slice_grant_identities", [])
         == [_identity_projection(item["grant_identity"]) for item in typed_slice_grants],
+        capability.get("parameter_axis_grant_identities", [])
+        == [plain(item["grant_identity"]) for item in parameter_axis_grants.values()],
         capability.get("provenance_read_identities", [])
         == [
             _identity_projection(item["descriptor_identity"])
@@ -1365,10 +1504,320 @@ class V4Readers(V3Readers):
         return super().__len__() + len(self._provenance_values) + len(self._typed_slice_clients)
 
 
+class MatrixFragmentWriter:
+    def __init__(self, owner: "V4Writers", name: str):
+        self._owner = owner
+        self._name = name
+        self._grant_record = owner._grants.get(name)
+        if (
+            owner._consumed
+            or self._grant_record is None
+            or self._grant_record["descriptor"]["writer"] != "write_matrix"
+            or "matrix_fragment_grant" not in self._grant_record["descriptor"]
+            or name in owner._writes
+            or name in owner._fragment_handles
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                f"Fragment writer is not granted for {name!r}",
+                "execution",
+            )
+        owner._fragment_handles[name] = self
+        self._grant = self._grant_record["descriptor"]["matrix_fragment_grant"]
+        self._source = owner._inputs[self._grant["source_input"]]
+        self._features = list(self._source["feature_id"])
+        self._cells = list(self._source["cell_id"])
+        self._schedule = self._grant["source_fragment_schedule"]["fragments"]
+        if self._grant["feature_order_identity"] != _identity(
+            "scworkbench.feature_order.v1", self._features
+        ) or self._grant["cell_order_identity"] != _identity(
+            "scworkbench.cell_order.v1", self._cells
+        ):
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Matrix fragment grant axes differ from the authenticated input",
+                "resolution",
+            )
+        for parent in self._schedule:
+            start = parent["cell_start"] - 1
+            stop = start + parent["cell_count"]
+            if parent["cell_order_identity"] != _identity(
+                "scworkbench.cell_order.v1", self._cells[start:stop]
+            ):
+                _fail(
+                    "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                    "Source fragment schedule differs from the authenticated cell axis",
+                    "resolution",
+                )
+        self._next_cell = 1
+        self._entries: list[dict[str, Any]] = []
+        self._paths: list[Path] = []
+        self._parts: dict[int, int] = {}
+        self._finished = False
+
+    @property
+    def source_fragments(self) -> list[dict[str, int]]:
+        return [
+            {
+                "ordinal": item["ordinal"],
+                "cell_start": item["cell_start"],
+                "cell_count": item["cell_count"],
+            }
+            for item in self._schedule
+        ]
+
+    def write_fragment(
+        self,
+        source_fragment_ordinal: int,
+        values: Any,
+        feature_ids: Any,
+        cell_ids: Any,
+    ) -> dict[str, Any]:
+        if self._owner._consumed or self._finished:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "Fragment writer is consumed", "execution")
+        if (
+            not isinstance(source_fragment_ordinal, int)
+            or isinstance(source_fragment_ordinal, bool)
+            or not 1 <= source_fragment_ordinal <= len(self._schedule)
+        ):
+            _fail("PYBENCH_OUTPUT_INVALID", "Source fragment ordinal is invalid", "audit")
+        feature_ids = list(feature_ids)
+        cell_ids = list(cell_ids)
+        parent = self._schedule[source_fragment_ordinal - 1]
+        parent_start = parent["cell_start"]
+        parent_end = parent_start + parent["cell_count"] - 1
+        observed_end = self._next_cell + len(cell_ids) - 1
+        expected_cells = self._cells[self._next_cell - 1 : observed_end]
+        if (
+            feature_ids != self._features
+            or not cell_ids
+            or cell_ids != expected_cells
+            or self._next_cell < parent_start
+            or observed_end > parent_end
+            or not finite_matrix(values, len(feature_ids), len(cell_ids))
+        ):
+            _fail(
+                "PYBENCH_OUTPUT_INVALID",
+                "Matrix fragment axes, parent boundary, or values are invalid",
+                "audit",
+            )
+        ordinal = len(self._entries) + 1
+        part = self._parts.get(source_fragment_ordinal, 0) + 1
+        self._parts[source_fragment_ordinal] = part
+        payload = {
+            "schema": "scworkbench.operation_pack.matrix_fragment.v1",
+            "ordinal": ordinal,
+            "source_fragment_ordinal": source_fragment_ordinal,
+            "source_fragment_identity": parent["source_fragment_identity"],
+            "part_ordinal": part,
+            "cell_start": self._next_cell,
+            "dimensions": [len(feature_ids), len(cell_ids)],
+            "feature_id": feature_ids,
+            "cell_id": cell_ids,
+            "values": copy.deepcopy(values),
+        }
+        root = _safe_relative(
+            self._owner._stage_root,
+            f"outputs/{self._name}/fragments/{ordinal:06d}",
+        )
+        if root.exists():
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "Matrix fragment path exists", "execution")
+        root.parent.mkdir(parents=True, exist_ok=True)
+        path = root.with_suffix(".json")
+        path.write_text(canonical_json(payload), encoding="utf-8")
+        relative = path.relative_to(self._owner._stage_root).as_posix()
+        entry = {
+            "ordinal": ordinal,
+            "source_fragment_ordinal": source_fragment_ordinal,
+            "source_fragment_identity": parent["source_fragment_identity"],
+            "part_ordinal": part,
+            "cell_start": self._next_cell,
+            "cell_count": len(cell_ids),
+            "dimensions": [len(feature_ids), len(cell_ids)],
+            "feature_order_identity": _identity("scworkbench.feature_order.v1", feature_ids),
+            "cell_order_identity": _identity("scworkbench.cell_order.v1", cell_ids),
+            "content_identity": matrix_slice_content_identity(values, feature_ids, cell_ids),
+            "payload_manifest_identity": fragment_payload_identity(path, relative),
+        }
+        self._entries.append(entry)
+        self._paths.append(path)
+        self._next_cell += len(cell_ids)
+        return copy.deepcopy(entry)
+
+    def finish(self, semantic_metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        if (
+            self._owner._consumed
+            or self._finished
+            or self._next_cell != len(self._cells) + 1
+            or len(self._entries) < self._grant["fragment_policy"]["minimum_fragment_count"]
+        ):
+            _fail(
+                "PYBENCH_OUTPUT_INVALID",
+                "Matrix fragment closure is incomplete or already consumed",
+                "audit",
+            )
+        manifest = {
+            "schema": "scworkbench.operation_pack.matrix_fragment_manifest.v1",
+            "source_fragment_schedule_identity": self._grant["source_fragment_schedule"][
+                "schedule_identity"
+            ],
+            "dimensions": [len(self._features), len(self._cells)],
+            "feature_order_identity": self._grant["feature_order_identity"],
+            "cell_order_identity": self._grant["cell_order_identity"],
+            "fragment_count": len(self._entries),
+            "fragments": copy.deepcopy(self._entries),
+        }
+        manifest["fragment_manifest_identity"] = _identity(
+            manifest["schema"], manifest, "manifest excluding fragment_manifest_identity"
+        )
+        root = _safe_relative(self._owner._stage_root, f"outputs/{self._name}")
+        value = {
+            "kind": "matrix",
+            "dimensions": manifest["dimensions"],
+            "feature_id": self._features,
+            "cell_id": self._cells,
+            "matrix_fragment_manifest": manifest,
+            "meta": copy.deepcopy(dict(semantic_metadata or {})),
+        }
+        path = root / "payload.json"
+        path.write_text(canonical_json(value), encoding="utf-8")
+        self._paths.append(path)
+        self._owner._writes[self._name] = _Write(
+            value,
+            path,
+            dict(semantic_metadata or {}),
+            "write_matrix",
+            list(self._paths),
+        )
+        self._finished = True
+        return {
+            "name": self._name,
+            "allocated_id": self._grant_record["allocated_id"],
+            "grant_identity": self._grant_record["descriptor"]["grant_identity"],
+        }
+
+
+def _validate_matrix_fragment_stage(
+    root: Path,
+    output_name: str,
+    value: Mapping[str, Any],
+    grant: Mapping[str, Any],
+) -> list[Path]:
+    manifest = value.get("matrix_fragment_manifest")
+    if not isinstance(manifest, Mapping):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment manifest is absent", "receipt")
+    _assert_identity(
+        manifest,
+        "fragment_manifest_identity",
+        "PYBENCH_RECEIPT_MISMATCH",
+        "receipt",
+    )
+    entries = manifest.get("fragments")
+    if not isinstance(entries, list) or manifest.get("fragment_count") != len(entries):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment closure differs", "receipt")
+    fragment_root = _safe_relative(root, f"outputs/{output_name}/fragments")
+    if not fragment_root.is_dir():
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment directory is absent", "receipt")
+    paths = sorted(fragment_root.glob("*.json"))
+    expected_names = [f"{ordinal:06d}.json" for ordinal in range(1, len(entries) + 1)]
+    if [path.name for path in paths] != expected_names:
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment path closure differs", "receipt")
+    features = list(value.get("feature_id", []))
+    cells = list(value.get("cell_id", []))
+    schedule = grant["source_fragment_schedule"]["fragments"]
+    next_cell = 1
+    part_counts: dict[int, int] = {}
+    payload_fields = {
+        "schema",
+        "ordinal",
+        "source_fragment_ordinal",
+        "source_fragment_identity",
+        "part_ordinal",
+        "cell_start",
+        "dimensions",
+        "feature_id",
+        "cell_id",
+        "values",
+    }
+    for ordinal, (entry, path) in enumerate(zip(entries, paths, strict=True), start=1):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            _fail(
+                "PYBENCH_RECEIPT_MISMATCH",
+                f"Matrix fragment payload is unreadable: {exc}",
+                "receipt",
+            )
+        if not isinstance(payload, Mapping) or set(payload) != payload_fields:
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment payload shape differs", "receipt")
+        source_ordinal_value = payload.get("source_fragment_ordinal")
+        if (
+            not isinstance(source_ordinal_value, (int, float))
+            or isinstance(source_ordinal_value, bool)
+            or not math.isfinite(source_ordinal_value)
+            or source_ordinal_value != int(source_ordinal_value)
+            or not 1 <= int(source_ordinal_value) <= len(schedule)
+        ):
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment parent differs", "receipt")
+        source_ordinal = int(source_ordinal_value)
+        parent = schedule[source_ordinal - 1]
+        part_ordinal = part_counts.get(source_ordinal, 0) + 1
+        part_counts[source_ordinal] = part_ordinal
+        fragment_cells = list(payload.get("cell_id", []))
+        values = payload.get("values")
+        parent_end = parent["cell_start"] + parent["cell_count"] - 1
+        observed_end = next_cell + len(fragment_cells) - 1
+        if (
+            payload.get("schema") != "scworkbench.operation_pack.matrix_fragment.v1"
+            or payload.get("ordinal") != ordinal
+            or payload.get("part_ordinal") != part_ordinal
+            or payload.get("cell_start") != next_cell
+            or payload.get("source_fragment_identity") != parent["source_fragment_identity"]
+            or list(payload.get("feature_id", [])) != features
+            or fragment_cells != cells[next_cell - 1 : observed_end]
+            or next_cell < parent["cell_start"]
+            or observed_end > parent_end
+            or not finite_matrix(values, len(features), len(fragment_cells))
+        ):
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment payload differs", "receipt")
+        relative = path.relative_to(root).as_posix()
+        expected_entry = {
+            "ordinal": ordinal,
+            "source_fragment_ordinal": source_ordinal,
+            "source_fragment_identity": parent["source_fragment_identity"],
+            "part_ordinal": part_ordinal,
+            "cell_start": next_cell,
+            "cell_count": len(fragment_cells),
+            "dimensions": [len(features), len(fragment_cells)],
+            "feature_order_identity": _identity("scworkbench.feature_order.v1", features),
+            "cell_order_identity": _identity("scworkbench.cell_order.v1", fragment_cells),
+            "content_identity": matrix_slice_content_identity(values, features, fragment_cells),
+            "payload_manifest_identity": fragment_payload_identity(path, relative),
+        }
+        if entry != expected_entry:
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment evidence differs", "receipt")
+        next_cell += len(fragment_cells)
+    if (
+        next_cell != len(cells) + 1
+        or manifest.get("dimensions") != [len(features), len(cells)]
+        or manifest.get("feature_order_identity")
+        != _identity("scworkbench.feature_order.v1", features)
+        or manifest.get("cell_order_identity") != _identity("scworkbench.cell_order.v1", cells)
+        or manifest.get("source_fragment_schedule_identity")
+        != grant["source_fragment_schedule"]["schedule_identity"]
+    ):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Matrix fragment manifest differs", "receipt")
+    return paths
+
+
 class V4Writers(V3Writers):
     def __init__(self, request, stage_root, cell_order, inputs):
         super().__init__(request, stage_root, cell_order)
         self._inputs = inputs
+        self._fragment_handles: dict[str, MatrixFragmentWriter] = {}
+
+    def open_matrix_fragments(self, name: str) -> MatrixFragmentWriter:
+        return MatrixFragmentWriter(self, name)
 
 
 def _validate_provenance_snapshot(
@@ -1711,6 +2160,7 @@ def _observed_descriptor_v4(
     cell_order: list[str],
     inputs: Mapping[str, Mapping[str, Any]],
     registry_values: Mapping[str, Mapping[str, Any]] | None = None,
+    parameter_axis_observation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     inherited_grant = grant
     cardinality = grant["descriptor"].get("cardinality_grant")
@@ -1723,10 +2173,47 @@ def _observed_descriptor_v4(
         inherited_grant["descriptor"]["expected_cell_order_identity"] = _identity(
             "scworkbench.cell_order.v1", _ordered(write.value, "cell_id")
         )
+    elif grant["descriptor"].get("parameter_axis_grant_identity") is not None and grant[
+        "descriptor"
+    ]["kind"] in {"feature_table", "obs_table"}:
+        inherited_grant = copy.deepcopy(dict(grant))
+        inherited_grant["descriptor"]["expected_dimensions"] = list(
+            write.value.get("dimensions", [])
+        )
+        if grant["descriptor"]["kind"] == "feature_table":
+            inherited_grant["descriptor"]["expected_feature_order_identity"] = _identity(
+                "scworkbench.feature_order.v1", _ordered(write.value, "feature_id")
+            )
     observed = _observed_descriptor(inherited_grant, write, cell_order)
     if grant["descriptor"]["category"] == "core_registry_request":
         return observed
     observed.pop("observed_descriptor_identity")
+    fragment_manifest = write.value.get("matrix_fragment_manifest")
+    if fragment_manifest is not None:
+        observed["matrix_fragment_manifest"] = copy.deepcopy(fragment_manifest)
+        observed["matrix_fragment_manifest_identity"] = plain(
+            fragment_manifest["fragment_manifest_identity"]
+        )
+        observed["content_identity"] = _identity(
+            "scworkbench.matrix.content.v1",
+            {
+                "dimensions": fragment_manifest["dimensions"],
+                "feature_order_identity": fragment_manifest["feature_order_identity"],
+                "cell_order_identity": fragment_manifest["cell_order_identity"],
+                "fragment_content_identities": [
+                    item["content_identity"] for item in fragment_manifest["fragments"]
+                ],
+            },
+        )
+        observed["payload_manifest_identity"] = _identity(
+            "scworkbench.operation_pack.payload_manifest.v2",
+            {
+                "fragment_manifest_identity": fragment_manifest["fragment_manifest_identity"],
+                "fragment_payload_identities": [
+                    item["payload_manifest_identity"] for item in fragment_manifest["fragments"]
+                ],
+            },
+        )
     if cardinality is not None:
         observed["observed_cardinality"] = _validate_cardinality_payload(
             cardinality,
@@ -1735,6 +2222,8 @@ def _observed_descriptor_v4(
             grant["descriptor"].get("semantic_constraints"),
             registry_values,
         )
+    if parameter_axis_observation is not None:
+        observed["observed_parameter_axis"] = copy.deepcopy(dict(parameter_axis_observation))
     observed["observed_descriptor_identity"] = _identity(
         "scworkbench.operation_pack.observed_output.v3",
         observed,
@@ -1910,6 +2399,9 @@ def execute_operation_pack_v4(
         expected_names = [item["name"] for item in request["outputs"]]
         if set(writes) != set(expected_names) or len(writes) != len(expected_names):
             _fail("PYBENCH_RECEIPT_MISMATCH", "Returned output closure differs", "receipt")
+        parameter_axis_observations = validate_axis_bound_outputs(
+            operation, request, writes, audit_inputs
+        )
         writers.consume()
         outputs: list[dict[str, Any]] = []
         registry_requests: list[dict[str, Any]] = []
@@ -1920,14 +2412,20 @@ def execute_operation_pack_v4(
                 staged_value = json.loads(write.path.read_text(encoding="utf-8"))
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 _fail("PYBENCH_OUTPUT_INVALID", f"Staged output is unreadable: {exc}", "audit")
-            if canonical_json(staged_value) != canonical_json(write.value):
+            expected_staged = write.value
+            if canonical_json(staged_value) != canonical_json(expected_staged):
                 _fail(
                     "PYBENCH_OUT_OF_SCOPE_MUTATION",
                     "Staged payload changed after writer return",
                     "audit",
                 )
             descriptor = _observed_descriptor_v4(
-                grant, write, cell_order, audit_inputs, registry_values
+                grant,
+                write,
+                cell_order,
+                audit_inputs,
+                registry_values,
+                parameter_axis_observations.get(grant["name"]),
             )
             record = {
                 "name": grant["name"],
@@ -1940,12 +2438,13 @@ def execute_operation_pack_v4(
                 else outputs
             )
             target.append(record)
-            entries.append(
-                {
-                    "path": write.path.relative_to(root).as_posix(),
-                    "sha256": hashlib.sha256(write.path.read_bytes()).hexdigest(),
-                }
-            )
+            for path in write.paths or [write.path]:
+                entries.append(
+                    {
+                        "path": path.relative_to(root).as_posix(),
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                )
         after = _snapshot(root)
         tree_after = _tree(root)
         changed = sorted(
@@ -2007,6 +2506,9 @@ def execute_operation_pack_v4(
             receipt["provenance_reads"] = _provenance_observations(request)
         if typed_slice_usage:
             receipt["typed_slice_usage"] = typed_slice_usage
+        publication = publication_observations(request, outputs)
+        if publication:
+            receipt["publication_observations"] = publication
         receipt["receipt_identity"] = _identity(
             RECEIPT_SCHEMA_V4, receipt, "receipt excluding receipt_identity"
         )
@@ -2199,6 +2701,10 @@ def validate_receipt_v4(
     if value.get("registry_reads", []) != _registry_observations(request):
         _fail("PYBENCH_RECEIPT_MISMATCH", "Registry read receipt differs", "receipt")
     _validate_typed_slice_usage(request, value.get("typed_slice_usage", []))
+    if value.get("publication_observations", []) != publication_observations(
+        request, value["outputs"]
+    ):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Publication observation differs", "receipt")
     if stage_root is not None:
         root = _safe_root(Path(stage_root))
         operation = _operation(discovery, request["operation_authentication"]["name"])
@@ -2213,21 +2719,48 @@ def validate_receipt_v4(
             }
         cell_order = list(next(iter(inputs.values())).get("cell_id", [])) if inputs else []
         by_name = {item["name"]: item for item in observed}
+        stage_writes: dict[str, _Write] = {}
         for grant in request["outputs"]:
             default_root = (
                 f"registry_requests/{grant['name']}"
                 if grant["descriptor"]["category"] == "core_registry_request"
                 else f"outputs/{grant['name']}"
             )
-            path = _safe_relative(
-                root,
-                grant["descriptor"].get("relative_root", default_root) + "/payload.json",
-                must_exist=True,
-            )
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            write = _Write(payload, path, {}, grant["descriptor"]["writer"])
+            relative_root = grant["descriptor"].get("relative_root", default_root)
+            fragment_grant = grant["descriptor"].get("matrix_fragment_grant")
+            if fragment_grant is None:
+                path = _safe_relative(root, relative_root + "/payload.json", must_exist=True)
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                write = _Write(payload, path, {}, grant["descriptor"]["writer"])
+            else:
+                path = _safe_relative(root, relative_root + "/payload.json", must_exist=True)
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                paths = _validate_matrix_fragment_stage(
+                    root,
+                    grant["name"],
+                    payload,
+                    fragment_grant,
+                ) + [path]
+                write = _Write(
+                    payload,
+                    path,
+                    dict(payload.get("meta", {})),
+                    grant["descriptor"]["writer"],
+                    paths,
+                )
+            stage_writes[grant["name"]] = write
+        expected_axis_observations = validate_axis_bound_outputs(
+            operation, request, stage_writes, inputs
+        )
+        for grant in request["outputs"]:
+            write = stage_writes[grant["name"]]
             expected_descriptor = _observed_descriptor_v4(
-                grant, write, cell_order, inputs, registry_values
+                grant,
+                write,
+                cell_order,
+                inputs,
+                registry_values,
+                expected_axis_observations.get(grant["name"]),
             )
             if by_name[grant["name"]]["descriptor"] != expected_descriptor:
                 _fail(

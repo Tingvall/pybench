@@ -77,6 +77,10 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
     for operation in inherited["operations"]:
         operation.pop("provenance_reads", None)
         operation.pop("typed_slice_reads", None)
+        operation.pop("publication_policies", None)
+        operation.pop("parameter_axes", None)
+        for output in operation["outputs"]:
+            output.pop("fragment_policy", None)
         operation["registry_reads"] = [
             read
             for read in operation.get("registry_reads", [])
@@ -86,7 +90,7 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
             operation.pop("registry_reads")
         policies = operation.get("dimension_policies", [])
         operation["dimension_policies"] = [
-            policy for policy in policies if policy.get("policy") != "authenticated_output_axes_v1"
+            policy for policy in policies if policy.get("policy") in {"data_dependent_table_v1"}
         ]
     _semantic_admission(inherited)
 
@@ -247,6 +251,122 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                 _fail(
                     "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
                     f"Operation {opname!r} has an invalid authenticated core snapshot declaration",
+                    "semantic_admission",
+                )
+
+        slice_reads = {item["name"]: item for item in operation.get("typed_slice_reads", [])}
+        publication_outputs: set[str] = set()
+        for policy in operation.get("publication_policies", []):
+            output = outputs.get(policy["output"])
+            target_schema = params.get(policy["target_id_parameter"])
+            overwrite_schema = params.get(policy["overwrite_parameter"])
+            if (
+                output is None
+                or output["category"] != "materialization"
+                or output["kind"] != policy["target_kind"]
+                or output["kind"] not in {"matrix", "space"}
+                or target_schema is None
+                or target_schema.get("type") != "string"
+                or overwrite_schema is None
+                or overwrite_schema.get("type") != "boolean"
+                or policy["transaction_scope"] != "promotion_group_v1"
+                or policy["output"] in publication_outputs
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid publication policy",
+                    "semantic_admission",
+                )
+            publication_outputs.add(policy["output"])
+
+        for output in outputs.values():
+            fragment = output.get("fragment_policy")
+            if fragment is None:
+                continue
+            source = inputs.get(fragment["source_input"])
+            typed = slice_reads.get(fragment["source_typed_slice_read"])
+            if (
+                output["category"] != "materialization"
+                or output["kind"] != "matrix"
+                or output["storage_profile"] != "matrix_backed_chunked_v1"
+                or source is None
+                or source["kind"] != "matrix"
+                or typed is None
+                or typed["input"] != fragment["source_input"]
+                or typed["chunk_axis"] != "cells"
+                or output["name"] not in publication_outputs
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid matrix fragment policy",
+                    "semantic_admission",
+                )
+
+        parameter_axes = {item["name"]: item for item in operation.get("parameter_axes", [])}
+        if len(parameter_axes) != len(operation.get("parameter_axes", [])):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} repeats a parameter axis",
+                "semantic_admission",
+            )
+        for axis in parameter_axes.values():
+            parameter_schema = params.get(axis["parameter"])
+            typed = slice_reads.get(axis["maximum"]["typed_slice_read"])
+            if (
+                parameter_schema is None
+                or parameter_schema.get("type") != "integer"
+                or typed is None
+                or axis["minimum"] < 1
+                or axis["maximum"]["cell_offset"] != -1
+                or axis["maximum"]["feature_offset"] != -1
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid parameter axis",
+                    "semantic_admission",
+                )
+
+        axis_policies = {
+            "cell_by_parameter_axis_v1",
+            "feature_parameter_axis_cartesian_v1",
+            "one_per_parameter_axis_v1",
+            "singleton_parameter_echo_v1",
+        }
+        for policy in operation.get("dimension_policies", []):
+            if policy.get("policy") not in axis_policies:
+                continue
+            output = outputs.get(policy["output"])
+            axis_name = policy.get("parameter_axis", policy.get("dimension_axis"))
+            if output is None or axis_name not in parameter_axes:
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an unresolved parameter-axis output",
+                    "semantic_admission",
+                )
+            if policy["policy"] == "cell_by_parameter_axis_v1":
+                valid = output["category"] == "materialization" and output["kind"] == "space"
+                valid &= policy["cell_axis"]["typed_slice_read"] in slice_reads
+            elif policy["policy"] == "feature_parameter_axis_cartesian_v1":
+                valid = output["kind"] == "feature_table"
+                valid &= policy["feature_axis"]["typed_slice_read"] in slice_reads
+                valid &= (
+                    len(
+                        {
+                            policy["feature_field"],
+                            policy["axis_label_field"],
+                            policy["axis_index_field"],
+                        }
+                    )
+                    == 3
+                )
+            else:
+                valid = output["kind"] == "obs_table"
+                if policy["policy"] == "one_per_parameter_axis_v1":
+                    valid &= policy["axis_label_field"] != policy["axis_index_field"]
+            if not valid:
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an incompatible parameter-axis output",
                     "semantic_admission",
                 )
 

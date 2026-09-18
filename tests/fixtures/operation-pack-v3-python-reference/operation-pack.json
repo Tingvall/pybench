@@ -420,6 +420,74 @@
       "dependencies": [],
       "promotion_closure": {"metrics": ["metrics"]},
       "replay_equivalence": {"metrics": "exact_canonical_value"}
+    },
+    {
+      "name": "matrix_fragment_probe",
+      "qualified_name": "scwbpyv3reference::matrix_fragment_probe",
+      "title": "Authenticated staged matrix-fragment probe",
+      "description": "Synthetic ABI-v3 operation proving bounded matrix-fragment staging and atomic publication intent.",
+      "runner": ".matrix_fragment_probe",
+      "inputs": [
+        {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "output_matrix_id": {"type": "string", "minLength": 1},
+        "overwrite": {"type": "boolean"},
+        "chunk_size": {"type": "integer", "minimum": 1}
+      }, "required": ["output_matrix_id", "overwrite", "chunk_size"], "additionalProperties": false},
+      "typed_slice_reads": [
+        {"name": "matrix_chunks", "input": "matrix", "reader": "read_typed_slices", "kind": "matrix", "supported_axes": ["cells"], "chunk_axis": "cells", "chunk_size_parameter": "chunk_size", "call_discipline": "ordered_partition_exactly_once", "empty_selection_policy": "reject", "duplicate_policy": "reject", "selection": {"cells": {"policy": "effective_input_axis_v1"}, "features": {"policy": "effective_input_axis_v1"}}}
+      ],
+      "publication_policies": [
+        {"output": "normalized", "policy": "authenticated_add_or_replace_v1", "target_kind": "matrix", "target_id_parameter": "output_matrix_id", "overwrite_parameter": "overwrite", "transaction_scope": "promotion_group_v1"}
+      ],
+      "outputs": [
+        {"name": "normalized", "category": "materialization", "kind": "matrix", "storage_profile": "matrix_backed_chunked_v1", "allocated_id_key": "normalized_id", "required": true, "promotion_group": "normalized", "materialized_by_terminals": ["summary"], "fragment_policy": {"policy": "staged_matrix_fragments_v1", "source_input": "matrix", "source_typed_slice_read": "matrix_chunks", "fragment_axis": "cells", "feature_coverage": "exact_source_feature_order_v1", "cell_coverage": "exact_source_cell_order_partition_v1", "source_fragment_binding": "single_parent_no_crossing_v1", "fragment_order": "source_fragment_then_part_v1", "minimum_fragment_count": 1}},
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "normalized", "table_type": "matrix_fragment_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"summary": ["normalized", "summary"]},
+      "replay_equivalence": {"normalized": "exact_canonical_value", "summary": "exact_canonical_value"}
+    },
+    {
+      "name": "parameter_axis_probe",
+      "qualified_name": "scwbpyv3reference::parameter_axis_probe",
+      "title": "Authenticated parameter-bound space probe",
+      "description": "Synthetic ABI-v3 operation proving an exact four-output parameter-axis closure.",
+      "runner": ".parameter_axis_probe",
+      "inputs": [
+        {"name": "matrix", "kind": "matrix", "required": true, "alignment": "cell_and_feature_ordered"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "space_id": {"type": "string", "minLength": 1},
+        "overwrite": {"type": "boolean"},
+        "n_components": {"type": "integer", "minimum": 1},
+        "chunk_size": {"type": "integer", "minimum": 1}
+      }, "required": ["space_id", "overwrite", "n_components", "chunk_size"], "additionalProperties": false},
+      "typed_slice_reads": [
+        {"name": "matrix_chunks", "input": "matrix", "reader": "read_typed_slices", "kind": "matrix", "supported_axes": ["cells"], "chunk_axis": "cells", "chunk_size_parameter": "chunk_size", "call_discipline": "ordered_partition_exactly_once", "empty_selection_policy": "reject", "duplicate_policy": "reject", "selection": {"cells": {"policy": "effective_input_axis_v1"}, "features": {"policy": "effective_input_axis_v1"}}}
+      ],
+      "parameter_axes": [
+        {"name": "components", "policy": "integer_parameter_axis_v1", "parameter": "n_components", "minimum": 1, "maximum": {"source": "typed_slice_rank_upper_bound_v1", "typed_slice_read": "matrix_chunks", "cell_offset": -1, "feature_offset": -1}, "labels": {"policy": "prefix_one_based_v1", "prefix": "PC"}}
+      ],
+      "dimension_policies": [
+        {"output": "space", "policy": "cell_by_parameter_axis_v1", "cell_axis": {"source": "typed_slice_read_v1", "typed_slice_read": "matrix_chunks"}, "dimension_axis": "components", "row_order": "typed_slice_cell_order_v1", "column_order": "parameter_axis_order_v1"},
+        {"output": "loadings", "policy": "feature_parameter_axis_cartesian_v1", "feature_axis": {"source": "typed_slice_read_v1", "typed_slice_read": "matrix_chunks"}, "parameter_axis": "components", "row_order": "parameter_axis_then_feature_v1", "feature_field": "feature_id", "axis_label_field": "PC", "axis_index_field": "component_index"},
+        {"output": "variance", "policy": "one_per_parameter_axis_v1", "parameter_axis": "components", "row_order": "parameter_axis_order_v1", "axis_label_field": "PC", "axis_index_field": "component_index"},
+        {"output": "summary", "policy": "singleton_parameter_echo_v1", "parameter_axis": "components", "count_field": "n_components"}
+      ],
+      "publication_policies": [
+        {"output": "space", "policy": "authenticated_add_or_replace_v1", "target_kind": "space", "target_id_parameter": "space_id", "overwrite_parameter": "overwrite", "transaction_scope": "promotion_group_v1"}
+      ],
+      "outputs": [
+        {"name": "space", "category": "materialization", "kind": "space", "storage_profile": "space_dense_v1", "allocated_id_key": "space_output_id", "required": true, "promotion_group": "pca", "materialized_by_terminals": ["loadings", "summary", "variance"]},
+        {"name": "loadings", "category": "terminal_artifact", "kind": "feature_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "loadings_id", "required": true, "promotion_group": "pca", "table_type": "parameter_axis_loadings"},
+        {"name": "variance", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "variance_id", "required": true, "promotion_group": "pca", "table_type": "parameter_axis_variance"},
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "pca", "table_type": "parameter_axis_summary"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"loadings": ["loadings", "space", "summary", "variance"], "variance": ["loadings", "space", "summary", "variance"], "summary": ["loadings", "space", "summary", "variance"]},
+      "replay_equivalence": {"space": "exact_canonical_value", "loadings": "exact_canonical_value", "variance": "exact_canonical_value", "summary": "exact_canonical_value"}
     }
   ]
 }
