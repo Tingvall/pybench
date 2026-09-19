@@ -233,6 +233,72 @@ def _validate_typed_slice_grants(
     return result
 
 
+def _validate_typed_space_grants(
+    request: Mapping[str, Any], operation: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    declarations = operation.get("typed_space_reads", [])
+    grants = request.get("typed_space_grants", [])
+    if [item["name"] for item in grants] != [item["name"] for item in declarations]:
+        _fail(
+            "PYBENCH_CAPABILITY_MISMATCH",
+            "Typed-space grant closure differs from the manifest",
+            "staging",
+        )
+    inputs = {item["name"]: item["descriptor"] for item in request["inputs"]}
+    selectors = {item["parameter"]: item for item in operation.get("cell_selector_axes", [])}
+    result: list[dict[str, Any]] = []
+    for declaration, grant in zip(declarations, grants, strict=True):
+        _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+        source = grant["source_reference"]
+        _assert_identity(
+            source,
+            "source_reference_identity",
+            "PYBENCH_INPUT_IDENTITY_MISMATCH",
+            "resolution",
+        )
+        descriptor = inputs.get(declaration["input"])
+        selector = selectors.get(declaration["selection"]["parameter"])
+        selected = request["params"].get(declaration["selection"]["parameter"])
+        if (
+            descriptor is None
+            or selector is None
+            or not isinstance(selected, list)
+            or not selected
+            or len(selected) != len(set(selected))
+            or grant["name"] != declaration["name"]
+            or grant["input_name"] != declaration["input"]
+            or grant["reader"] != declaration["reader"]
+            or declaration["reader"] != "read_typed_space"
+            or grant["kind"] != declaration["kind"]
+            or declaration["kind"] != "space"
+            or grant["role"] != declaration["role"]
+            or declaration["role"] != selector["role"]
+            or grant["selector_parameter"] != declaration["selection"]["parameter"]
+            or grant["requested_chunk_size"]
+            != request["params"][declaration["chunk_size_parameter"]]
+            or grant["call_discipline"] != declaration["call_discipline"]
+            or grant["cells_axis"]["count"] != len(selected)
+            or grant["cells_axis"]["order_identity"]
+            != _identity("scworkbench.cell_order.v1", selected)
+            or source["input_name"] != declaration["input"]
+            or source["input_descriptor_identity"]
+            != _identity_projection(descriptor["descriptor_identity"])
+            or source["input_content_identity"] != descriptor["content_identity"]
+            or source["transition_source_state_identity"]
+            != request["transition"]["source_state_identity"]
+            or grant["max_rows"] != min(grant["requested_chunk_size"], len(selected))
+            or grant["max_columns"] != grant["dimension_count"]
+            or grant["max_elements"] != grant["max_rows"] * grant["max_columns"]
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Typed-space grant differs from its manifest, selector, or input",
+                "staging",
+            )
+        result.append(copy.deepcopy(grant))
+    return result
+
+
 def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) -> dict[str, Any]:
     value = copy.deepcopy(dict(request))
     if (
@@ -280,6 +346,20 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "PYBENCH_CAPABILITY_MISMATCH",
                 "staging",
             )
+        if "sparse_membership_grant" in descriptor:
+            _assert_identity(
+                descriptor["sparse_membership_grant"],
+                "grant_identity",
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "staging",
+            )
+        if "pseudobulk_grant" in descriptor:
+            _assert_identity(
+                descriptor["pseudobulk_grant"],
+                "grant_identity",
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "staging",
+            )
         _assert_identity(descriptor, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
         if "publication_grant" in descriptor:
             _assert_identity(
@@ -303,6 +383,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "staging",
             )
     for grant in value.get("typed_slice_grants", []):
+        _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    for grant in value.get("typed_space_grants", []):
         _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
     for grant in value.get("model_payload_grants", []):
         _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
@@ -518,6 +600,53 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                     "staging",
                 )
 
+        sparse = descriptor.get("sparse_membership_grant")
+        sparse_policy = policy is not None and policy.get("policy") == (
+            "authenticated_sparse_membership_v1"
+        )
+        if (sparse is not None) != sparse_policy:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Sparse-membership grant presence differs from the manifest",
+                "staging",
+            )
+        if sparse is not None and (
+            sparse["output"] != item["name"]
+            or sparse["representation"] != policy["representation"]
+            or sparse["partner_output"] != policy["partner_output"]
+            or sparse["maximum_per_query"] != value["params"][policy["k_parameter"]]
+            or sparse["row_order"] != "query_then_rank_v1"
+            or sparse["unique_pairs"] is not True
+            or sparse["finite_nonnegative_values"] is not True
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Sparse-membership grant differs from the manifest",
+                "staging",
+            )
+        pseudobulk = descriptor.get("pseudobulk_grant")
+        pseudobulk_policy = policy is not None and policy.get("policy") == (
+            "authenticated_pseudobulk_v1"
+        )
+        if (pseudobulk is not None) != pseudobulk_policy:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Pseudobulk grant presence differs from the manifest",
+                "staging",
+            )
+        if pseudobulk is not None and (
+            pseudobulk["output"] != item["name"]
+            or pseudobulk["membership_output"] != policy["membership_output"]
+            or pseudobulk["aggregate"] != value["params"][policy["aggregate_parameter"]]
+            or pseudobulk["zero_neighbor_policy"] != policy["zero_neighbor_policy"]
+            or pseudobulk["row_order"] != "query_then_feature_v1"
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Pseudobulk grant differs from the manifest",
+                "staging",
+            )
+
         publication = descriptor.get("publication_grant")
         publication_policy = publication_policies.get(item["name"])
         if (publication is None) != (publication_policy is None):
@@ -571,6 +700,47 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             )
 
     typed_slice_grants = _validate_typed_slice_grants(value, operation)
+    typed_space_grants = _validate_typed_space_grants(value, operation)
+    typed_space_map = {item["name"]: item for item in typed_space_grants}
+    typed_slice_map = {item["name"]: item for item in typed_slice_grants}
+    typed_slice_declarations = {
+        item["name"]: item for item in operation.get("typed_slice_reads", [])
+    }
+    for item in value["outputs"]:
+        policy = policies.get(item["name"])
+        descriptor = item["descriptor"]
+        sparse = descriptor.get("sparse_membership_grant")
+        if sparse is not None:
+            query = typed_space_map[policy["query_space_read"]]
+            candidate = typed_space_map[policy["candidate_space_read"]]
+            if (
+                sparse["query_axis_identity"] != query["cells_axis"]["order_identity"]
+                or sparse["candidate_axis_identity"] != candidate["cells_axis"]["order_identity"]
+                or sparse["query_count"] != query["cells_axis"]["count"]
+                or sparse["candidate_count"] != candidate["cells_axis"]["count"]
+            ):
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Sparse-membership axes differ from typed-space grants",
+                    "staging",
+                )
+        pseudobulk = descriptor.get("pseudobulk_grant")
+        if pseudobulk is not None:
+            query = typed_space_map[policy["query_space_read"]]
+            matrix = typed_slice_map[policy["matrix_slice_read"]]
+            matrix_declaration = typed_slice_declarations[policy["matrix_slice_read"]]
+            if (
+                pseudobulk["query_axis_identity"] != query["cells_axis"]["order_identity"]
+                or pseudobulk["feature_axis_identity"] != matrix["features_axis"]["order_identity"]
+                or pseudobulk["query_cells"] != value["params"][query["selector_parameter"]]
+                or pseudobulk["features"]
+                != value["params"][matrix_declaration["selection"]["features"]["parameter"]]
+            ):
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Pseudobulk axes differ from typed grants",
+                    "staging",
+                )
     model_payload_grants = validate_contained_model_grants(value, operation)
     parameter_axis_grants = validate_parameter_axis_grants(value, operation)
     for policy in operation.get("dimension_policies", []):
@@ -652,6 +822,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
 
     capability = value["execution_capability"]
     typed_input_names = {item["input_name"] for item in typed_slice_grants}
+    typed_input_names |= {item["input_name"] for item in typed_space_grants}
     model_input_names = {item["input_name"] for item in model_payload_grants}
     expected_readers = [
         {
@@ -694,6 +865,14 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         }
         for item in typed_slice_grants
     ]
+    expected_readers += [
+        {
+            "typed_space_name": item["name"],
+            "reader": item["reader"],
+            "grant_identity": item["grant_identity"],
+        }
+        for item in typed_space_grants
+    ]
     expected_writers = [
         {
             "output_name": item["name"],
@@ -718,6 +897,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         capability["writer_grants"] == expected_writers,
         capability.get("typed_slice_grant_identities", [])
         == [_identity_projection(item["grant_identity"]) for item in typed_slice_grants],
+        capability.get("typed_space_grant_identities", [])
+        == [_identity_projection(item["grant_identity"]) for item in typed_space_grants],
         capability.get("parameter_axis_grant_identities", [])
         == [plain(item["grant_identity"]) for item in parameter_axis_grants.values()],
         capability.get("model_payload_grant_identities", [])
@@ -3101,6 +3282,50 @@ def _validate_typed_slice_usage(
             )
 
 
+def _validate_typed_space_usage(
+    request: Mapping[str, Any], usage_values: list[Mapping[str, Any]]
+) -> None:
+    grants = request.get("typed_space_grants", [])
+    if len(usage_values) != len(grants):
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Typed-space usage closure differs", "receipt")
+    for usage, grant in zip(usage_values, grants, strict=True):
+        _assert_identity(usage, "usage_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")
+        calls = usage["calls"]
+        if usage["call_count"] != len(calls) or usage["coverage_status"] != "exact":
+            _fail("PYBENCH_RECEIPT_MISMATCH", "Typed-space call count differs", "receipt")
+        count = 0
+        for ordinal, call in enumerate(calls, start=1):
+            _assert_identity(call, "call_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")
+            if (
+                call["ordinal"] != ordinal
+                or call["grant_identity"] != _identity_projection(grant["grant_identity"])
+                or call["dimensions"] != [call["cell_count"], grant["dimension_count"]]
+                or call["cell_count"] > grant["max_rows"]
+            ):
+                _fail(
+                    "PYBENCH_RECEIPT_MISMATCH",
+                    "Typed-space call differs from its grant",
+                    "receipt",
+                )
+            count += call["cell_count"]
+        if (
+            count != grant["cells_axis"]["count"]
+            or usage["concatenated_cell_order_identity"] != grant["cells_axis"]["order_identity"]
+            or usage["request_identity"] != _identity_projection(request["request_identity"])
+            or usage["capability_identity"]
+            != _identity_projection(request["execution_capability"]["capability_identity"])
+            or usage["operation_definition_identity"]
+            != _identity_projection(
+                request["operation_authentication"]["operation_definition_identity"]
+            )
+        ):
+            _fail(
+                "PYBENCH_RECEIPT_MISMATCH",
+                "Typed-space ordered coverage differs from its grant",
+                "receipt",
+            )
+
+
 def validate_receipt_v4(
     receipt: Mapping[str, Any],
     request: Mapping[str, Any],
@@ -3148,6 +3373,20 @@ def validate_receipt_v4(
                 "PYBENCH_RECEIPT_MISMATCH",
                 "receipt",
             )
+        if "observed_sparse_membership" in descriptor:
+            _assert_identity(
+                descriptor["observed_sparse_membership"],
+                "observation_identity",
+                "PYBENCH_RECEIPT_MISMATCH",
+                "receipt",
+            )
+        if "observed_pseudobulk" in descriptor:
+            _assert_identity(
+                descriptor["observed_pseudobulk"],
+                "observation_identity",
+                "PYBENCH_RECEIPT_MISMATCH",
+                "receipt",
+            )
         _assert_identity(
             descriptor, "observed_descriptor_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt"
         )
@@ -3163,6 +3402,41 @@ def validate_receipt_v4(
     if value.get("model_payload_reads", []) != expected_model_reads:
         _fail("PYBENCH_RECEIPT_MISMATCH", "Contained-model read receipt differs", "receipt")
     _validate_typed_slice_usage(request, value.get("typed_slice_usage", []))
+    _validate_typed_space_usage(request, value.get("typed_space_usage", []))
+    observed_map = {item["name"]: item["descriptor"] for item in observed}
+    for grant in request["outputs"]:
+        sparse = grant["descriptor"].get("sparse_membership_grant")
+        if sparse is None:
+            continue
+        current = observed_map[grant["name"]].get("observed_sparse_membership")
+        partner = observed_map[sparse["partner_output"]].get("observed_sparse_membership")
+        if (
+            current is None
+            or partner is None
+            or current["edge_ledger_identity"] != partner["edge_ledger_identity"]
+            or current["edge_ledger"] != partner["edge_ledger"]
+        ):
+            _fail(
+                "PYBENCH_RECEIPT_MISMATCH",
+                "Sparse membership representations disagree",
+                "receipt",
+            )
+    for grant in request["outputs"]:
+        pseudobulk = grant["descriptor"].get("pseudobulk_grant")
+        if pseudobulk is None:
+            continue
+        observation = observed_map[grant["name"]].get("observed_pseudobulk")
+        membership = observed_map[pseudobulk["membership_output"]].get("observed_sparse_membership")
+        if (
+            observation is None
+            or membership is None
+            or observation["edge_ledger_identity"] != membership["edge_ledger_identity"]
+        ):
+            _fail(
+                "PYBENCH_RECEIPT_MISMATCH",
+                "Pseudobulk observation differs from sparse membership",
+                "receipt",
+            )
     if value.get("publication_observations", []) != _publication_observations_v4(
         request, value["outputs"]
     ):

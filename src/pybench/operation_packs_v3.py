@@ -83,8 +83,18 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         "maximum": "pybench-op-v3",
     }
     for operation in inherited["operations"]:
+        selector_parameters = {
+            item["parameter"] for item in operation.get("cell_selector_axes", [])
+        }
+        for parameter in selector_parameters:
+            schema = operation["params_schema"]["properties"][parameter]
+            types = schema.get("type", [])
+            types = [types] if isinstance(types, str) else types
+            schema["type"] = [item for item in types if item != "string"]
         operation.pop("provenance_reads", None)
         operation.pop("typed_slice_reads", None)
+        operation.pop("typed_space_reads", None)
+        operation.pop("cell_selector_axes", None)
         operation.pop("contained_model_reads", None)
         operation.pop("publication_policies", None)
         operation.pop("parameter_axes", None)
@@ -278,6 +288,72 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                 )
 
         slice_reads = {item["name"]: item for item in operation.get("typed_slice_reads", [])}
+        selectors = operation.get("cell_selector_axes", [])
+        selector_parameters = [item["parameter"] for item in selectors]
+        selector_roles = [item["role"] for item in selectors]
+        if selectors and (
+            len(selector_parameters) != len(set(selector_parameters))
+            or set(selector_roles) != {"query", "candidate"}
+            or not set(selector_parameters) <= set(params)
+        ):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} has invalid generic cell-selector axes",
+                "semantic_admission",
+            )
+        space_reads = {item["name"]: item for item in operation.get("typed_space_reads", [])}
+        if len(space_reads) != len(operation.get("typed_space_reads", [])) or set(space_reads) & (
+            set(inputs) | set(slice_reads)
+        ):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} has duplicate or colliding typed-space capabilities",
+                "semantic_admission",
+            )
+        for read in space_reads.values():
+            source = inputs.get(read["input"])
+            selection_parameter = read["selection"]["parameter"]
+            chunk_schema = params.get(read["chunk_size_parameter"])
+            if (
+                source is None
+                or source["kind"] != "space"
+                or selection_parameter not in selector_parameters
+                or not _has_type(chunk_schema, "integer")
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an incompatible typed-space reader",
+                    "semantic_admission",
+                )
+        for policy in operation.get("dimension_policies", []):
+            output = outputs.get(policy["output"])
+            if policy["policy"] == "authenticated_sparse_membership_v1":
+                expected_kind = (
+                    "obs_table" if policy["representation"] == "obs_table" else "cell_vector_family"
+                )
+                valid = (
+                    output is not None
+                    and output["kind"] == expected_kind
+                    and policy["query_space_read"] in space_reads
+                    and policy["candidate_space_read"] in space_reads
+                    and _has_type(params.get(policy["k_parameter"]), "integer")
+                )
+            elif policy["policy"] == "authenticated_pseudobulk_v1":
+                valid = (
+                    output is not None
+                    and output["kind"] == "feature_table"
+                    and policy["query_space_read"] in space_reads
+                    and policy["matrix_slice_read"] in slice_reads
+                )
+            else:
+                continue
+            if not valid:
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an incompatible sparse boundary declaration",
+                    "semantic_admission",
+                )
+
         publication_outputs: set[str] = set()
         for policy in operation.get("publication_policies", []):
             output = outputs.get(policy["output"])
