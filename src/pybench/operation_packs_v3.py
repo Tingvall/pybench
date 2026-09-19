@@ -59,6 +59,14 @@ def _is_string_array(schema: Any) -> bool:
     )
 
 
+def _has_type(schema: Any, expected: str) -> bool:
+    if not isinstance(schema, Mapping):
+        return False
+    types = schema.get("type", [])
+    types = [types] if isinstance(types, str) else types
+    return expected in types
+
+
 def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
     """Apply frozen v2 semantics plus the three closed v3 declarations.
 
@@ -77,10 +85,25 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
     for operation in inherited["operations"]:
         operation.pop("provenance_reads", None)
         operation.pop("typed_slice_reads", None)
+        operation.pop("contained_model_reads", None)
         operation.pop("publication_policies", None)
         operation.pop("parameter_axes", None)
+        operation["parameter_bindings"] = [
+            binding
+            for binding in operation.get("parameter_bindings", [])
+            if binding.get("policy")
+            not in {
+                "input_id_with_numeric_suffix_v1",
+                "feature_ids_from_table_or_matrix_v1",
+                "input_id_with_literal_affix_v1",
+                "model_space_id_v1",
+            }
+        ]
+        if not operation["parameter_bindings"]:
+            operation.pop("parameter_bindings")
         for output in operation["outputs"]:
             output.pop("fragment_policy", None)
+            output.pop("contained_model_policy", None)
         operation["registry_reads"] = [
             read
             for read in operation.get("registry_reads", [])
@@ -259,25 +282,224 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         for policy in operation.get("publication_policies", []):
             output = outputs.get(policy["output"])
             target_schema = params.get(policy["target_id_parameter"])
-            overwrite_schema = params.get(policy["overwrite_parameter"])
-            if (
-                output is None
-                or output["category"] != "materialization"
-                or output["kind"] != policy["target_kind"]
-                or output["kind"] not in {"matrix", "space"}
-                or target_schema is None
-                or target_schema.get("type") != "string"
-                or overwrite_schema is None
-                or overwrite_schema.get("type") != "boolean"
-                or policy["transaction_scope"] != "promotion_group_v1"
-                or policy["output"] in publication_outputs
-            ):
+            if policy["policy"] == "authenticated_space_2d_publication_v1":
+                axis = inputs.get(policy["cell_axis_input"])
+                binding = policy["model_binding"]
+                model = (
+                    inputs.get(binding["name"])
+                    if binding["source"] == "input"
+                    else outputs.get(binding["name"])
+                )
+                same_group = binding["source"] == "input" or (
+                    model is not None
+                    and output is not None
+                    and output["promotion_group"] == model["promotion_group"]
+                )
+                mode = policy["mode"]
+                mode_binding_valid = (
+                    mode["policy"] == "add_only_v1"
+                    and binding["source"] == "sibling_output"
+                    and model is not None
+                    and model.get("contained_model_policy") is not None
+                ) or (
+                    mode["policy"] == "selected_merge_or_full_replace_v1"
+                    and binding["source"] == "input"
+                )
+                overwrite_schema = params.get(mode.get("overwrite_parameter"))
+                valid = (
+                    output is not None
+                    and output["category"] == "materialization"
+                    and output["kind"] == policy["target_kind"] == "space_2d"
+                    and _has_type(target_schema, "string")
+                    and axis is not None
+                    and axis["kind"] in {"space", "space_2d"}
+                    and model is not None
+                    and model["kind"] == "model_ref"
+                    and same_group
+                    and mode_binding_valid
+                    and (
+                        mode["policy"] == "add_only_v1"
+                        or (
+                            mode["policy"] == "selected_merge_or_full_replace_v1"
+                            and _has_type(overwrite_schema, "boolean")
+                        )
+                    )
+                    and policy["transaction_scope"] == "promotion_group_v1"
+                    and policy["output"] not in publication_outputs
+                )
+            else:
+                overwrite_schema = params.get(policy["overwrite_parameter"])
+                valid = (
+                    output is not None
+                    and output["category"] == "materialization"
+                    and output["kind"] == policy["target_kind"]
+                    and output["kind"] in {"matrix", "space"}
+                    and _has_type(target_schema, "string")
+                    and _has_type(overwrite_schema, "boolean")
+                    and policy["transaction_scope"] == "promotion_group_v1"
+                    and policy["output"] not in publication_outputs
+                )
+            if not valid:
                 _fail(
                     "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
                     f"Operation {opname!r} has an invalid publication policy",
                     "semantic_admission",
                 )
             publication_outputs.add(policy["output"])
+
+        model_outputs = [
+            output for output in outputs.values() if output.get("contained_model_policy")
+        ]
+        for output in model_outputs:
+            policy = output["contained_model_policy"]
+            source = inputs.get(policy["source_space_input"])
+            paired = outputs.get(policy["paired_space_output"])
+            dimension_schema = params.get(policy["dimensions_parameter"])
+            dimension_types = (
+                [dimension_schema.get("type")]
+                if isinstance(dimension_schema, Mapping)
+                and isinstance(dimension_schema.get("type"), str)
+                else dimension_schema.get("type", [])
+                if isinstance(dimension_schema, Mapping)
+                else []
+            )
+            if (
+                output["kind"] != "model_ref"
+                or output["storage_profile"] != "model_ref_contained_tree_v1"
+                or source is None
+                or source["kind"] != "space"
+                or paired is None
+                or paired["kind"] != "space_2d"
+                or paired["category"] != "materialization"
+                or paired["promotion_group"] != output["promotion_group"]
+                or not isinstance(dimension_schema, Mapping)
+                or "array" not in dimension_types
+                or not isinstance(dimension_schema.get("items"), Mapping)
+                or dimension_schema["items"].get("type") != "integer"
+                or dimension_schema["items"].get("minimum", 0) < 1
+                or dimension_schema.get("uniqueItems") is not True
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid contained-model output",
+                    "semantic_admission",
+                )
+
+        model_reads = operation.get("contained_model_reads", [])
+        model_read_names = [item["name"] for item in model_reads]
+        other_names = (
+            set(inputs)
+            | set(registry_names)
+            | set(slice_reads)
+            | {item["name"] for item in operation.get("provenance_reads", [])}
+        )
+        if (
+            len(model_read_names) != len(set(model_read_names))
+            or set(model_read_names) & other_names
+        ):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} repeats or collides a contained-model reader",
+                "semantic_admission",
+            )
+        for read in model_reads:
+            model = inputs.get(read["input"])
+            source = inputs.get(read["source_space_input"])
+            dimension_schema = params.get(read["dimensions_parameter"])
+            dimension_types = (
+                [dimension_schema.get("type")]
+                if isinstance(dimension_schema, Mapping)
+                and isinstance(dimension_schema.get("type"), str)
+                else dimension_schema.get("type", [])
+                if isinstance(dimension_schema, Mapping)
+                else []
+            )
+            if (
+                model is None
+                or model["kind"] != "model_ref"
+                or source is None
+                or source["kind"] != "space"
+                or read["reader"] != "read_contained_model_payload"
+                or read["access"] != "verified_private_copy_read_only_v1"
+                or read["call_discipline"] != "exactly_once"
+                or not isinstance(dimension_schema, Mapping)
+                or "array" not in dimension_types
+                or not isinstance(dimension_schema.get("items"), Mapping)
+                or dimension_schema["items"].get("type") != "integer"
+                or dimension_schema["items"].get("minimum", 0) < 1
+                or dimension_schema.get("uniqueItems") is not True
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid contained-model read",
+                    "semantic_admission",
+                )
+
+        for binding in operation.get("parameter_bindings", []):
+            binding_policy = binding.get("policy")
+            successor_bindings = {
+                "input_id_with_numeric_suffix_v1",
+                "feature_ids_from_table_or_matrix_v1",
+                "input_id_with_literal_affix_v1",
+                "model_space_id_v1",
+            }
+            if binding_policy not in successor_bindings:
+                continue
+            source = inputs.get(binding["input"])
+            parameter_schema = params.get(binding["parameter"])
+            parameter_types = (
+                [parameter_schema.get("type")]
+                if isinstance(parameter_schema, Mapping)
+                and isinstance(parameter_schema.get("type"), str)
+                else parameter_schema.get("type", [])
+                if isinstance(parameter_schema, Mapping)
+                else []
+            )
+            valid = False
+            if binding_policy == "input_id_with_numeric_suffix_v1":
+                numeric_schema = params.get(binding["numeric_parameter"])
+                numeric_types = (
+                    [numeric_schema.get("type")]
+                    if isinstance(numeric_schema, Mapping)
+                    and isinstance(numeric_schema.get("type"), str)
+                    else numeric_schema.get("type", [])
+                    if isinstance(numeric_schema, Mapping)
+                    else []
+                )
+                valid = (
+                    source is not None
+                    and source["kind"] in {"matrix", "space"}
+                    and {"string", "null"} <= set(parameter_types)
+                    and "number" in numeric_types
+                )
+            elif binding_policy == "feature_ids_from_table_or_matrix_v1":
+                table = inputs.get(binding["table_input"])
+                valid = (
+                    source is not None
+                    and source["kind"] == "matrix"
+                    and table is not None
+                    and table["kind"] == "feature_table"
+                    and {"array", "null"} <= set(parameter_types)
+                )
+            else:
+                expected_kind = (
+                    "space" if binding_policy == "input_id_with_literal_affix_v1" else "model_ref"
+                )
+                valid = (
+                    source is not None
+                    and source["kind"] == expected_kind
+                    and {"string", "null"} <= set(parameter_types)
+                    and (
+                        binding_policy != "input_id_with_literal_affix_v1"
+                        or bool(binding.get("affix"))
+                    )
+                )
+            if not valid:
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid derived target identifier binding",
+                    "semantic_admission",
+                )
 
         for output in outputs.values():
             fragment = output.get("fragment_policy")

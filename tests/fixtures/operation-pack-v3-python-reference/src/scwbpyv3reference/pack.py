@@ -459,6 +459,53 @@ def _parameter_axis_probe(readers, writers, params, context):
         )
 
 
+def _contained_model_fit_probe(readers, writers, params, context):
+    space = readers["space"]()
+    model = writers.open_model_tree("model")
+    model.write_bytes("model.bin", b"synthetic-contained-model")
+    model.write_bytes("state/axes.txt", ",".join(space["dimension_id"]).encode("utf-8"))
+    model.finish(
+        {
+            "kind": "model_ref",
+            "in_space_id": space["space_id"],
+        },
+        {"fixture": "contained_model_fit_probe"},
+    )
+    writers.write_space_2d(
+        "embedding",
+        {
+            "kind": "space_2d",
+            "dimensions": [len(space["cell_id"]), 2],
+            "cell_id": list(space["cell_id"]),
+            "values": [list(row[:2]) for row in space["values"]],
+        },
+    )
+
+
+def _contained_model_transform_probe(readers, writers, params, context):
+    space = readers["space"]()
+    model = readers["model_payload"]()
+    if model.read_bytes(model.primary_path) != b"synthetic-contained-model":
+        raise RuntimeError("synthetic model payload differs")
+    writers.write_space_2d(
+        "embedding",
+        {
+            "kind": "space_2d",
+            "dimensions": [len(space["cell_id"]), 2],
+            "cell_id": list(space["cell_id"]),
+            "values": [list(row[:2]) for row in space["values"]],
+        },
+    )
+    writers.write_terminal_primitive(
+        "summary",
+        {
+            "kind": "obs_table",
+            "dimensions": [1, 1],
+            "rows": [{"projected_cells": len(space["cell_id"])}],
+        },
+    )
+
+
 def register():
     return operation_pack_handlers_v3(
         {
@@ -475,6 +522,8 @@ def register():
             "scwbpyv3reference::bounded_group_probe": _bounded_group_probe,
             "scwbpyv3reference::matrix_fragment_probe": _matrix_fragment_probe,
             "scwbpyv3reference::parameter_axis_probe": _parameter_axis_probe,
+            "scwbpyv3reference::contained_model_fit_probe": _contained_model_fit_probe,
+            "scwbpyv3reference::contained_model_transform_probe": _contained_model_transform_probe,
             "scwbpyv3reference::family_probe": _family_probe,
             "scwbpyv3reference::registry_probe": _registry_probe,
             "scwbpyv3reference::registry_probe_strict": _registry_probe,

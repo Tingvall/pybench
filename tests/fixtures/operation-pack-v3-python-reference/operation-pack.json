@@ -488,6 +488,59 @@
       "dependencies": [],
       "promotion_closure": {"loadings": ["loadings", "space", "summary", "variance"], "variance": ["loadings", "space", "summary", "variance"], "summary": ["loadings", "space", "summary", "variance"]},
       "replay_equivalence": {"space": "exact_canonical_value", "loadings": "exact_canonical_value", "variance": "exact_canonical_value", "summary": "exact_canonical_value"}
+    },
+    {
+      "name": "contained_model_fit_probe",
+      "qualified_name": "scwbpyv3reference::contained_model_fit_probe",
+      "title": "Contained model fit capability probe",
+      "description": "Synthetic ABI-v3 operation proving a private contained-model tree paired with an add-only 2D embedding.",
+      "runner": ".contained_model_fit_probe",
+      "inputs": [
+        {"name": "space", "kind": "space", "required": true, "alignment": "cell_ordered"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "dims": {"type": ["array", "null"], "default": null, "uniqueItems": true, "items": {"type": "integer", "minimum": 1}},
+        "space_id_out": {"type": "string", "minLength": 1}
+      }, "required": ["space_id_out"], "additionalProperties": false},
+      "publication_policies": [
+        {"output": "embedding", "policy": "authenticated_space_2d_publication_v1", "target_kind": "space_2d", "target_id_parameter": "space_id_out", "mode": {"policy": "add_only_v1"}, "cell_axis_input": "space", "model_binding": {"source": "sibling_output", "name": "model"}, "transaction_scope": "promotion_group_v1"}
+      ],
+      "outputs": [
+        {"name": "embedding", "category": "materialization", "kind": "space_2d", "storage_profile": "space_2d_dense_v1", "allocated_id_key": "embedding_id", "required": true, "promotion_group": "fit", "materialized_by_terminals": ["model"]},
+        {"name": "model", "category": "terminal_artifact", "kind": "model_ref", "storage_profile": "model_ref_contained_tree_v1", "allocated_id_key": "model_id", "required": true, "promotion_group": "fit", "contained_model_policy": {"policy": "staged_contained_model_tree_v1", "engine": "synthetic", "model_type": "synthetic_embedding", "primary_path": "model.bin", "source_space_input": "space", "paired_space_output": "embedding", "dimensions_parameter": "dims", "file_order": "utf8_path_lexicographic_v1", "maximum_file_count": 4, "maximum_total_bytes": 1024}}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"model": ["embedding", "model"]},
+      "replay_equivalence": {"embedding": "cell_aligned_embedding", "model": "loadable_reference"}
+    },
+    {
+      "name": "contained_model_transform_probe",
+      "qualified_name": "scwbpyv3reference::contained_model_transform_probe",
+      "title": "Contained model transform capability probe",
+      "description": "Synthetic ABI-v3 operation proving private model reads and selected-cell 2D publication intent.",
+      "runner": ".contained_model_transform_probe",
+      "inputs": [
+        {"name": "space", "kind": "space", "required": true, "alignment": "cell_ordered"},
+        {"name": "model", "kind": "model_ref", "required": true, "alignment": "model_linked"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "dims": {"type": ["array", "null"], "default": null, "uniqueItems": true, "items": {"type": "integer", "minimum": 1}},
+        "space_id_out": {"type": "string", "minLength": 1},
+        "overwrite": {"type": "boolean"}
+      }, "required": ["space_id_out", "overwrite"], "additionalProperties": false},
+      "contained_model_reads": [
+        {"name": "model_payload", "input": "model", "reader": "read_contained_model_payload", "engine": "synthetic", "model_type": "synthetic_embedding", "source_space_input": "space", "dimensions_parameter": "dims", "access": "verified_private_copy_read_only_v1", "call_discipline": "exactly_once"}
+      ],
+      "publication_policies": [
+        {"output": "embedding", "policy": "authenticated_space_2d_publication_v1", "target_kind": "space_2d", "target_id_parameter": "space_id_out", "mode": {"policy": "selected_merge_or_full_replace_v1", "overwrite_parameter": "overwrite"}, "cell_axis_input": "space", "model_binding": {"source": "input", "name": "model"}, "transaction_scope": "promotion_group_v1"}
+      ],
+      "outputs": [
+        {"name": "embedding", "category": "materialization", "kind": "space_2d", "storage_profile": "space_2d_dense_v1", "allocated_id_key": "embedding_id", "required": true, "promotion_group": "transform", "materialized_by_terminals": ["summary"]},
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "transform", "table_type": "contained_model_transform_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"summary": ["embedding", "summary"]},
+      "replay_equivalence": {"embedding": "cell_aligned_embedding", "summary": "exact_canonical_value"}
     }
   ]
 }

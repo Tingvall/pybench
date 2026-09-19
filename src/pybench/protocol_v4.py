@@ -33,6 +33,20 @@ from .phase4c_contracts import (
     validate_parameter_axis_grants,
     validate_publication_grant,
 )
+from .phase4d_contracts import (
+    inventory_model_tree,
+    model_read_observations,
+    safe_model_path,
+    tree_payload_identity,
+    validate_contained_model_grants,
+    validate_contained_model_source_axes,
+    validate_private_model_copy,
+    validate_space_2d_candidates,
+    validate_space_2d_publication_grant,
+)
+from .phase4d_contracts import (
+    plain as plain_v4d,
+)
 from .protocol_v3 import (
     V3Readers,
     V3Writers,
@@ -281,7 +295,16 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "PYBENCH_CAPABILITY_MISMATCH",
                 "staging",
             )
+        if "contained_model_write_grant" in descriptor:
+            _assert_identity(
+                descriptor["contained_model_write_grant"],
+                "write_grant_identity",
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "staging",
+            )
     for grant in value.get("typed_slice_grants", []):
+        _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    for grant in value.get("model_payload_grants", []):
         _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
     _assert_identity(
         value["execution_capability"],
@@ -504,7 +527,10 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "staging",
             )
         if publication is not None:
-            validate_publication_grant(publication, publication_policy, value, item)
+            if publication_policy["policy"] == "authenticated_space_2d_publication_v1":
+                validate_space_2d_publication_grant(publication, publication_policy, value, item)
+            else:
+                validate_publication_grant(publication, publication_policy, value, item)
             promotion_group = declaration["promotion_group"]
             expected_closure = sorted(
                 child["name"]
@@ -545,6 +571,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             )
 
     typed_slice_grants = _validate_typed_slice_grants(value, operation)
+    model_payload_grants = validate_contained_model_grants(value, operation)
     parameter_axis_grants = validate_parameter_axis_grants(value, operation)
     for policy in operation.get("dimension_policies", []):
         kind = policy.get("policy")
@@ -625,6 +652,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
 
     capability = value["execution_capability"]
     typed_input_names = {item["input_name"] for item in typed_slice_grants}
+    model_input_names = {item["input_name"] for item in model_payload_grants}
     expected_readers = [
         {
             "input_name": item["name"],
@@ -632,7 +660,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "descriptor_identity": item["descriptor"]["descriptor_identity"],
         }
         for item in value["inputs"]
-        if item["name"] not in typed_input_names
+        if item["name"] not in typed_input_names | model_input_names
     ]
     expected_readers += [
         {
@@ -649,6 +677,14 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "descriptor_identity": item["descriptor_identity"],
         }
         for item in value.get("provenance_reads", [])
+    ]
+    expected_readers += [
+        {
+            "model_payload_name": item["name"],
+            "reader": item["reader"],
+            "grant_identity": item["grant_identity"],
+        }
+        for item in model_payload_grants
     ]
     expected_readers += [
         {
@@ -684,6 +720,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         == [_identity_projection(item["grant_identity"]) for item in typed_slice_grants],
         capability.get("parameter_axis_grant_identities", [])
         == [plain(item["grant_identity"]) for item in parameter_axis_grants.values()],
+        capability.get("model_payload_grant_identities", [])
+        == [plain_v4d(item["grant_identity"]) for item in model_payload_grants],
         capability.get("provenance_read_identities", [])
         == [
             _identity_projection(item["descriptor_identity"])
@@ -1462,6 +1500,43 @@ class TypedSliceBrokerClient:
         return usage
 
 
+class ContainedModelReader:
+    def __init__(self, root: Path, grant: Mapping[str, Any]):
+        self._root = root
+        self._grant = copy.deepcopy(dict(grant))
+        self._paths = validate_private_model_copy(root, grant)
+
+    @property
+    def entries(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._grant["tree_manifest"]["entries"])
+
+    @property
+    def primary_path(self) -> str:
+        return self._grant["tree_manifest"]["primary_path"]
+
+    def path(self, relative: str) -> Path:
+        relative = safe_model_path(relative, code="PYBENCH_CAPABILITY_MISMATCH", phase="execution")
+        if relative not in {item["path"] for item in self._grant["tree_manifest"]["entries"]}:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Contained-model reader path is outside its authenticated manifest",
+                "execution",
+            )
+        return _safe_relative(self._root, relative, must_exist=True)
+
+    def read_bytes(self, relative: str) -> bytes:
+        return self.path(relative).read_bytes()
+
+    def revalidate(self) -> None:
+        observed = validate_private_model_copy(self._root, self._grant)
+        if observed != self._paths:
+            _fail(
+                "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                "Contained-model private copy changed during execution",
+                "audit",
+            )
+
+
 class V4Readers(V3Readers):
     def __init__(
         self,
@@ -1469,19 +1544,43 @@ class V4Readers(V3Readers):
         registry_values=None,
         provenance_values=None,
         typed_slice_clients: Mapping[str, TypedSliceBrokerClient] | None = None,
+        model_payload_readers: Mapping[str, ContainedModelReader] | None = None,
     ):
         super().__init__(values, registry_values)
         self._provenance_values = dict(provenance_values or {})
         self._provenance_calls: list[str] = []
         self._typed_slice_clients = dict(typed_slice_clients or {})
+        self._model_payload_readers = dict(model_payload_readers or {})
+        self._model_payload_calls: list[str] = []
 
     @property
     def provenance_calls(self) -> list[str]:
         return list(self._provenance_calls)
 
+    @property
+    def model_payload_calls(self) -> list[str]:
+        return list(self._model_payload_calls)
+
+    @property
+    def model_payload_readers(self) -> Mapping[str, ContainedModelReader]:
+        return dict(self._model_payload_readers)
+
     def __getitem__(self, key):
         if key in self._typed_slice_clients:
             return self._typed_slice_clients[key]
+        if key in self._model_payload_readers:
+
+            def read_model_payload(*args, **kwargs):
+                if args or kwargs or key in self._model_payload_calls:
+                    _fail(
+                        "PYBENCH_CAPABILITY_MISMATCH",
+                        "Contained-model reader is no-argument and single-use",
+                        "execution",
+                    )
+                self._model_payload_calls.append(key)
+                return self._model_payload_readers[key]
+
+            return read_model_payload
         if key in self._provenance_values:
 
             def read_ancestry(*args, **kwargs):
@@ -1498,10 +1597,22 @@ class V4Readers(V3Readers):
         return super().__getitem__(key)
 
     def __iter__(self):
-        return iter((*super().__iter__(), *self._provenance_values, *self._typed_slice_clients))
+        return iter(
+            (
+                *super().__iter__(),
+                *self._provenance_values,
+                *self._typed_slice_clients,
+                *self._model_payload_readers,
+            )
+        )
 
     def __len__(self):
-        return super().__len__() + len(self._provenance_values) + len(self._typed_slice_clients)
+        return (
+            super().__len__()
+            + len(self._provenance_values)
+            + len(self._typed_slice_clients)
+            + len(self._model_payload_readers)
+        )
 
 
 class MatrixFragmentWriter:
@@ -1810,14 +1921,157 @@ def _validate_matrix_fragment_stage(
     return paths
 
 
+class ContainedModelTreeWriter:
+    def __init__(self, owner: "V4Writers", name: str):
+        self._owner = owner
+        self._name = name
+        self._grant_record = owner._grants.get(name)
+        self._grant = (
+            self._grant_record["descriptor"].get("contained_model_write_grant")
+            if self._grant_record is not None
+            else None
+        )
+        if (
+            owner._consumed
+            or self._grant is None
+            or self._grant_record["descriptor"]["writer"] != "write_model_ref"
+            or name in owner._writes
+            or name in owner._model_handles
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                f"Contained-model tree writer is not granted for {name!r}",
+                "execution",
+            )
+        self._root = _safe_relative(owner._stage_root, self._grant["relative_root"])
+        if self._root.exists():
+            _fail(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                "Contained-model output root already exists",
+                "execution",
+            )
+        self._root.mkdir(parents=True)
+        self._finished = False
+        owner._model_handles[name] = self
+
+    def path(self, relative: str) -> Path:
+        if self._owner._consumed or self._finished:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "Model writer is consumed", "execution")
+        relative = safe_model_path(relative)
+        path = _safe_relative(self._root, relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def write_bytes(self, relative: str, payload: bytes) -> Path:
+        if not isinstance(payload, bytes):
+            _fail("PYBENCH_OUTPUT_INVALID", "Model payload must be bytes", "execution")
+        path = self.path(relative)
+        if path.exists() or path.is_symlink():
+            _fail(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                "Contained-model output path already exists",
+                "execution",
+            )
+        path.write_bytes(payload)
+        return path
+
+    def finish(
+        self,
+        value: Mapping[str, Any],
+        semantic_metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if self._owner._consumed or self._finished:
+            _fail("PYBENCH_CAPABILITY_MISMATCH", "Model writer is consumed", "execution")
+        value = copy.deepcopy(dict(value))
+        if value.get("kind") != "model_ref" or not isinstance(value.get("in_space_id"), str):
+            _fail(
+                "PYBENCH_OUTPUT_INVALID",
+                "Contained-model writer requires a linked model_ref value",
+                "audit",
+            )
+        limits = self._grant["limits"]
+        manifest, paths = inventory_model_tree(
+            self._root,
+            engine=self._grant["engine"],
+            model_type=self._grant["model_type"],
+            primary_path=self._grant["primary_path"],
+            maximum_file_count=limits["maximum_file_count"],
+            maximum_total_bytes=limits["maximum_total_bytes"],
+        )
+        source = self._grant["source_space"]
+        source_value = self._owner._inputs[source["input_name"]]
+        source_id = source_value.get("space_id")
+        if source_id is not None and value["in_space_id"] != source_id:
+            _fail(
+                "PYBENCH_OUTPUT_INVALID",
+                "Contained-model linkage differs from its source space",
+                "audit",
+            )
+        linkage = {
+            "engine": self._grant["engine"],
+            "model_type": self._grant["model_type"],
+            "source_space_id": value["in_space_id"],
+            "selected_dimension_count": source["selected_dimension_count"],
+            "selected_dimension_order_identity": source["selected_dimension_order_identity"],
+        }
+        linkage["linkage_identity"] = _identity(
+            "scworkbench.operation_pack.model_linkage.v1",
+            linkage,
+            "linkage excluding linkage_identity",
+        )
+        value.update(
+            dimensions=[1],
+            engine=self._grant["engine"],
+            model_type=self._grant["model_type"],
+            model_linkage=linkage,
+            model_payload_entry=manifest["primary_path"],
+            payload_tree={
+                entry["path"]: {"size": entry["size"], "sha256": entry["sha256"]}
+                for entry in manifest["entries"]
+            },
+            contained_model_tree_manifest=manifest,
+            meta=copy.deepcopy(dict(semantic_metadata or {})),
+        )
+        output_root = _safe_relative(self._owner._stage_root, f"outputs/{self._name}")
+        path = output_root / "payload.json"
+        path.write_text(canonical_json(value), encoding="utf-8")
+        self._owner._writes[self._name] = _Write(
+            value,
+            path,
+            dict(semantic_metadata or {}),
+            "write_model_ref",
+            [*paths, path],
+        )
+        self._finished = True
+        return {
+            "name": self._name,
+            "allocated_id": self._grant_record["allocated_id"],
+            "grant_identity": self._grant_record["descriptor"]["grant_identity"],
+        }
+
+
 class V4Writers(V3Writers):
     def __init__(self, request, stage_root, cell_order, inputs):
         super().__init__(request, stage_root, cell_order)
         self._inputs = inputs
         self._fragment_handles: dict[str, MatrixFragmentWriter] = {}
+        self._model_handles: dict[str, ContainedModelTreeWriter] = {}
 
     def open_matrix_fragments(self, name: str) -> MatrixFragmentWriter:
         return MatrixFragmentWriter(self, name)
+
+    def open_model_tree(self, name: str) -> ContainedModelTreeWriter:
+        return ContainedModelTreeWriter(self, name)
+
+    def write_model_ref(self, name, value, semantic_metadata=None):
+        grant = self._grants.get(name, {}).get("descriptor", {})
+        if "contained_model_write_grant" in grant:
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Contained-model outputs require the private tree writer",
+                "execution",
+            )
+        return super().write_model_ref(name, value, semantic_metadata)
 
 
 def _validate_provenance_snapshot(
@@ -2232,6 +2486,139 @@ def _observed_descriptor_v4(
     return observed
 
 
+def _finalize_contained_model_descriptors(
+    request: Mapping[str, Any],
+    observed_records: list[dict[str, Any]],
+    writes: Mapping[str, _Write],
+) -> None:
+    by_name = {item["name"]: item for item in observed_records}
+    for grant_record in request["outputs"]:
+        grant = grant_record["descriptor"].get("contained_model_write_grant")
+        if grant is None:
+            continue
+        write = writes[grant_record["name"]]
+        manifest = write.value.get("contained_model_tree_manifest")
+        if not isinstance(manifest, Mapping):
+            _fail("PYBENCH_OUTPUT_INVALID", "Contained-model tree manifest is absent", "audit")
+        observed_manifest, _paths = inventory_model_tree(
+            _safe_relative(Path(write.path.parents[2]), grant["relative_root"]),
+            engine=grant["engine"],
+            model_type=grant["model_type"],
+            primary_path=grant["primary_path"],
+            maximum_file_count=grant["limits"]["maximum_file_count"],
+            maximum_total_bytes=grant["limits"]["maximum_total_bytes"],
+        )
+        if observed_manifest != manifest:
+            _fail(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                "Contained-model tree changed after writer closure",
+                "audit",
+            )
+        paired = by_name[grant["paired_space_output"]["name"]]["descriptor"]
+        observation = {
+            "engine": grant["engine"],
+            "model_type": grant["model_type"],
+            "primary_path": manifest["primary_path"],
+            "file_count": manifest["file_count"],
+            "total_size": manifest["total_size"],
+            "tree_manifest_identity": plain_v4d(manifest["manifest_identity"]),
+            "payload_manifest_identity": tree_payload_identity(manifest),
+            "source_space_binding_identity": _identity(
+                "scworkbench.operation_pack.model_source_space.v1",
+                grant["source_space"],
+            ),
+            "paired_space_observed_descriptor_identity": plain_v4d(
+                paired["observed_descriptor_identity"]
+            ),
+            "status": "validated_not_published",
+        }
+        observation["observation_identity"] = _identity(
+            "scworkbench.operation_pack.contained_model_tree_observation.v1",
+            observation,
+            "observation excluding observation_identity",
+        )
+        descriptor = by_name[grant_record["name"]]["descriptor"]
+        descriptor.pop("observed_descriptor_identity", None)
+        linkage_identity = plain_v4d(write.value["model_linkage"]["linkage_identity"])
+        descriptor["content_identity"] = _identity(
+            "scworkbench.model_ref.content.v1",
+            {
+                "engine": manifest["engine"],
+                "model_type": manifest["model_type"],
+                "linkage_identity": linkage_identity,
+                "tree_manifest_identity": plain_v4d(manifest["manifest_identity"]),
+            },
+        )
+        descriptor["payload_manifest_identity"] = tree_payload_identity(manifest)
+        descriptor["model_linkage"] = grant_record["descriptor"]["expected_model_linkage"]
+        descriptor["model_linkage_identity"] = linkage_identity
+        descriptor["contained_model_tree"] = observation
+        descriptor["contained_payload"] = {
+            "contained": True,
+            "no_symlinks": True,
+            "payload_tree_identity": _identity(
+                "scworkbench.operation_pack.contained_payload.v2",
+                plain_v4d(manifest["manifest_identity"]),
+            ),
+        }
+        descriptor["observed_descriptor_identity"] = _identity(
+            "scworkbench.operation_pack.observed_output.v3",
+            descriptor,
+            "descriptor excluding observed_descriptor_identity",
+        )
+
+
+def _publication_observations_v4(
+    request: Mapping[str, Any], outputs: list[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    by_name = {item["name"]: item for item in outputs}
+    result: list[dict[str, Any]] = []
+    legacy_request = copy.deepcopy(dict(request))
+    legacy_request["outputs"] = []
+    for output in request["outputs"]:
+        grant = output["descriptor"].get("publication_grant")
+        if grant is None:
+            continue
+        if grant["schema"] != "scworkbench.operation_pack.space_2d_publication_grant.v1":
+            legacy_request["outputs"].append(copy.deepcopy(output))
+            continue
+        closure = [
+            {
+                "name": name,
+                "observed_descriptor_identity": plain_v4d(
+                    by_name[name]["descriptor"]["observed_descriptor_identity"]
+                ),
+            }
+            for name in grant["closure_outputs"]
+        ]
+        observed = {
+            "schema": "scworkbench.operation_pack.observed_space_2d_publication.v1",
+            "publication_grant_identity": plain_v4d(grant["publication_grant_identity"]),
+            "mode": grant["mode"],
+            "preimage_identity": _identity(
+                "scworkbench.operation_pack.materialization_preimage.v1", grant["preimage"]
+            ),
+            "source_model_binding_identity": _identity(
+                "scworkbench.operation_pack.model_binding.v1",
+                grant["source_model_binding"],
+            ),
+            "candidate_observed_descriptor_identity": plain_v4d(
+                by_name[grant["output"]]["descriptor"]["observed_descriptor_identity"]
+            ),
+            "selected_cell_order_identity": grant["selected_cells"]["order_identity"],
+            "expected_final_cell_order_identity": grant["expected_final_cell_order_identity"],
+            "closure_output_identities": closure,
+            "status": "validated_not_published",
+        }
+        observed["observation_identity"] = _identity(
+            observed["schema"], observed, "observation excluding observation_identity"
+        )
+        result.append(observed)
+    if legacy_request["outputs"]:
+        result = publication_observations(legacy_request, outputs) + result
+    return result
+
+
 def _provenance_observations(request: Mapping[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for item in request.get("provenance_reads", []):
@@ -2282,6 +2669,7 @@ def _registry_observations(request: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, Any]]:
     typed_inputs = {item["input_name"] for item in request.get("typed_slice_grants", [])}
+    model_inputs = {item["input_name"] for item in request.get("model_payload_grants", [])}
     for name in typed_inputs:
         eager = _safe_relative(root, f"inputs/{name}/payload.json")
         if eager.exists():
@@ -2291,8 +2679,25 @@ def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[st
                 "staging",
             )
     projected = copy.deepcopy(dict(request))
-    projected["inputs"] = [item for item in request["inputs"] if item["name"] not in typed_inputs]
-    return _read_inputs(projected, root)
+    projected["inputs"] = [
+        item for item in request["inputs"] if item["name"] not in typed_inputs | model_inputs
+    ]
+    values = _read_inputs(projected, root)
+    input_records = {item["name"]: item["descriptor"] for item in request["inputs"]}
+    grants = {item["input_name"]: item for item in request.get("model_payload_grants", [])}
+    for name in model_inputs:
+        descriptor = input_records[name]
+        grant = grants[name]
+        values[name] = {
+            "kind": "model_ref",
+            "dimensions": copy.deepcopy(descriptor["dimensions"]),
+            "storage_profile": descriptor["storage_profile"],
+            "engine": grant["engine"],
+            "model_type": grant["model_type"],
+            "model_linkage_identity": grant["model_linkage_identity"],
+            "contained_payload_identity": grant["contained_payload_identity"],
+        }
+    return values
 
 
 def _typed_slice_clients(
@@ -2301,6 +2706,15 @@ def _typed_slice_clients(
     return {
         grant["name"]: TypedSliceBrokerClient(request, grant, root)
         for grant in request.get("typed_slice_grants", [])
+    }
+
+
+def _model_payload_readers(
+    request: Mapping[str, Any], root: Path
+) -> dict[str, ContainedModelReader]:
+    return {
+        grant["name"]: ContainedModelReader(_safe_relative(root, grant["relative_root"]), grant)
+        for grant in request.get("model_payload_grants", [])
     }
 
 
@@ -2328,10 +2742,12 @@ def execute_operation_pack_v4(
         if fault_hook:
             fault_hook("before_input_read")
         inputs = _read_inputs_v4(request, root)
+        validate_contained_model_source_axes(request, operation, inputs)
         registry_values = _read_registry_reads(request, operation, root)
         provenance_values = _read_provenance(request, operation, root)
         preflight = preflight_v3(operation, inputs, request["params"], request)
         slice_clients = _typed_slice_clients(request, root)
+        model_readers = _model_payload_readers(request, root)
         slice_inputs = {
             grant["input_name"]: {
                 "kind": "matrix",
@@ -2349,7 +2765,16 @@ def execute_operation_pack_v4(
             list(next(iter(audit_inputs.values())).get("cell_id", [])) if audit_inputs else []
         )
         writers = V4Writers(request, root, cell_order, audit_inputs)
-        readers = V4Readers(inputs, registry_values, provenance_values, slice_clients)
+        model_input_names = {
+            grant["input_name"] for grant in request.get("model_payload_grants", [])
+        }
+        readers = V4Readers(
+            {name: value for name, value in inputs.items() if name not in model_input_names},
+            registry_values,
+            provenance_values,
+            slice_clients,
+            model_readers,
+        )
         if fault_hook:
             fault_hook("before_dispatch")
         context = {
@@ -2366,6 +2791,17 @@ def execute_operation_pack_v4(
                     "features": slice_clients[grant["name"]].selected_features,
                 }
                 for grant in request.get("typed_slice_grants", [])
+            },
+            "model_payload_reads": {
+                grant["name"]: {
+                    "name": grant["name"],
+                    "input_name": grant["input_name"],
+                    "engine": grant["engine"],
+                    "model_type": grant["model_type"],
+                    "call_discipline": grant["call_discipline"],
+                    "primary_path": grant["tree_manifest"]["primary_path"],
+                }
+                for grant in request.get("model_payload_grants", [])
             },
         }
         active[1].handlers[operation["qualified_name"]](
@@ -2390,6 +2826,16 @@ def execute_operation_pack_v4(
                 "Provenance readers must be consumed exactly once",
                 "execution",
             )
+        if sorted(readers.model_payload_calls) != sorted(
+            item["name"] for item in request.get("model_payload_grants", [])
+        ):
+            _fail(
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "Contained-model readers must be consumed exactly once",
+                "execution",
+            )
+        for model_reader in readers.model_payload_readers.values():
+            model_reader.revalidate()
         typed_slice_usage = [
             slice_clients[grant["name"]].usage() for grant in request.get("typed_slice_grants", [])
         ]
@@ -2402,6 +2848,7 @@ def execute_operation_pack_v4(
         parameter_axis_observations = validate_axis_bound_outputs(
             operation, request, writes, audit_inputs
         )
+        validate_space_2d_candidates(request, writes)
         writers.consume()
         outputs: list[dict[str, Any]] = []
         registry_requests: list[dict[str, Any]] = []
@@ -2445,6 +2892,7 @@ def execute_operation_pack_v4(
                         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                     }
                 )
+        _finalize_contained_model_descriptors(request, outputs, writes)
         after = _snapshot(root)
         tree_after = _tree(root)
         changed = sorted(
@@ -2506,7 +2954,15 @@ def execute_operation_pack_v4(
             receipt["provenance_reads"] = _provenance_observations(request)
         if typed_slice_usage:
             receipt["typed_slice_usage"] = typed_slice_usage
-        publication = publication_observations(request, outputs)
+        if request.get("model_payload_grants"):
+            receipt["model_payload_reads"] = model_read_observations(
+                request["model_payload_grants"],
+                {
+                    name: readers.model_payload_calls.count(name)
+                    for name in readers.model_payload_calls
+                },
+            )
+        publication = _publication_observations_v4(request, outputs)
         if publication:
             receipt["publication_observations"] = publication
         receipt["receipt_identity"] = _identity(
@@ -2700,8 +3156,14 @@ def validate_receipt_v4(
         _fail("PYBENCH_RECEIPT_MISMATCH", "Provenance read receipt differs", "receipt")
     if value.get("registry_reads", []) != _registry_observations(request):
         _fail("PYBENCH_RECEIPT_MISMATCH", "Registry read receipt differs", "receipt")
+    expected_model_reads = model_read_observations(
+        request.get("model_payload_grants", []),
+        {item["name"]: 1 for item in request.get("model_payload_grants", [])},
+    )
+    if value.get("model_payload_reads", []) != expected_model_reads:
+        _fail("PYBENCH_RECEIPT_MISMATCH", "Contained-model read receipt differs", "receipt")
     _validate_typed_slice_usage(request, value.get("typed_slice_usage", []))
-    if value.get("publication_observations", []) != publication_observations(
+    if value.get("publication_observations", []) != _publication_observations_v4(
         request, value["outputs"]
     ):
         _fail("PYBENCH_RECEIPT_MISMATCH", "Publication observation differs", "receipt")
@@ -2709,6 +3171,9 @@ def validate_receipt_v4(
         root = _safe_root(Path(stage_root))
         operation = _operation(discovery, request["operation_authentication"]["name"])
         inputs = _read_inputs_v4(request, root)
+        validate_contained_model_source_axes(request, operation, inputs)
+        for model_reader in _model_payload_readers(request, root).values():
+            model_reader.revalidate()
         registry_values = _read_registry_reads(request, operation, root)
         for grant in request.get("typed_slice_grants", []):
             inputs[grant["input_name"]] = {
@@ -2728,7 +3193,35 @@ def validate_receipt_v4(
             )
             relative_root = grant["descriptor"].get("relative_root", default_root)
             fragment_grant = grant["descriptor"].get("matrix_fragment_grant")
-            if fragment_grant is None:
+            model_grant = grant["descriptor"].get("contained_model_write_grant")
+            if model_grant is not None:
+                path = _safe_relative(root, relative_root + "/payload.json", must_exist=True)
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                manifest = payload.get("contained_model_tree_manifest")
+                observed_manifest, paths = inventory_model_tree(
+                    _safe_relative(root, model_grant["relative_root"]),
+                    engine=model_grant["engine"],
+                    model_type=model_grant["model_type"],
+                    primary_path=model_grant["primary_path"],
+                    maximum_file_count=model_grant["limits"]["maximum_file_count"],
+                    maximum_total_bytes=model_grant["limits"]["maximum_total_bytes"],
+                    failure_code="PYBENCH_RECEIPT_MISMATCH",
+                    phase="receipt",
+                )
+                if manifest != observed_manifest:
+                    _fail(
+                        "PYBENCH_RECEIPT_MISMATCH",
+                        "Contained-model staged tree differs from its manifest",
+                        "receipt",
+                    )
+                write = _Write(
+                    payload,
+                    path,
+                    dict(payload.get("meta", {})),
+                    grant["descriptor"]["writer"],
+                    [*paths, path],
+                )
+            elif fragment_grant is None:
                 path = _safe_relative(root, relative_root + "/payload.json", must_exist=True)
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 write = _Write(payload, path, {}, grant["descriptor"]["writer"])
@@ -2752,6 +3245,8 @@ def validate_receipt_v4(
         expected_axis_observations = validate_axis_bound_outputs(
             operation, request, stage_writes, inputs
         )
+        validate_space_2d_candidates(request, stage_writes)
+        expected_records: list[dict[str, Any]] = []
         for grant in request["outputs"]:
             write = stage_writes[grant["name"]]
             expected_descriptor = _observed_descriptor_v4(
@@ -2762,7 +3257,20 @@ def validate_receipt_v4(
                 registry_values,
                 expected_axis_observations.get(grant["name"]),
             )
-            if by_name[grant["name"]]["descriptor"] != expected_descriptor:
+            expected_records.append(
+                {
+                    "name": grant["name"],
+                    "allocated_id": grant["allocated_id"],
+                    "descriptor": expected_descriptor,
+                }
+            )
+        _finalize_contained_model_descriptors(request, expected_records, stage_writes)
+        expected_by_name = {item["name"]: item for item in expected_records}
+        for grant in request["outputs"]:
+            if (
+                by_name[grant["name"]]["descriptor"]
+                != expected_by_name[grant["name"]]["descriptor"]
+            ):
                 _fail(
                     "PYBENCH_RECEIPT_MISMATCH",
                     "Output receipt differs from staged payload",
