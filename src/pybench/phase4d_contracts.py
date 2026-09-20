@@ -191,10 +191,11 @@ def validate_tree_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def validate_private_model_copy(root: Path, grant: Mapping[str, Any]) -> list[Path]:
     expected = validate_tree_manifest(grant["tree_manifest"])
+    selected_model = grant.get("selected_model", {})
     observed, paths = inventory_model_tree(
         root,
-        engine=grant["engine"],
-        model_type=grant["model_type"],
+        engine=grant.get("engine", selected_model.get("engine")),
+        model_type=grant.get("model_type", selected_model.get("model_type")),
         primary_path=expected["primary_path"],
         maximum_file_count=expected["file_count"],
         maximum_total_bytes=expected["total_size"],

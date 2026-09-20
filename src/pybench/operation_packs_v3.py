@@ -96,6 +96,10 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         operation.pop("typed_space_reads", None)
         operation.pop("cell_selector_axes", None)
         operation.pop("contained_model_reads", None)
+        operation.pop("self_linked_contained_model_reads", None)
+        operation.pop("artifact_collection_reads", None)
+        operation.pop("named_cell_axis_collections", None)
+        operation.pop("optional_display_axis_groups", None)
         operation.pop("publication_policies", None)
         operation.pop("parameter_axes", None)
         operation["parameter_bindings"] = [
@@ -114,6 +118,7 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         for output in operation["outputs"]:
             output.pop("fragment_policy", None)
             output.pop("contained_model_policy", None)
+            output.pop("contained_model_sibling_closure_policy", None)
         operation["registry_reads"] = [
             read
             for read in operation.get("registry_reads", [])
@@ -132,9 +137,30 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         inputs = {item["name"]: item for item in operation["inputs"]}
         outputs = {item["name"]: item for item in operation["outputs"]}
         params = _properties(operation)
+        dimension_policies = operation.get("dimension_policies", [])
+        policy_outputs = [item["output"] for item in dimension_policies]
+        if len(policy_outputs) != len(set(policy_outputs)):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} repeats a dimension-policy output",
+                "semantic_admission",
+            )
+        for policy in dimension_policies:
+            if policy.get("policy") != "data_dependent_family_v1":
+                continue
+            output = outputs.get(policy["output"])
+            if output is None or output["kind"] not in {
+                "path_2d_family",
+                "space_path_family",
+            }:
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid data-dependent family declaration",
+                    "semantic_admission",
+                )
         policies = {
             item["output"]: item
-            for item in operation.get("dimension_policies", [])
+            for item in dimension_policies
             if item.get("policy") == "authenticated_output_axes_v1"
         }
         for policy in policies.values():
@@ -234,6 +260,20 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                     _fail(
                         "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
                         f"Operation {opname!r} has an invalid bounded key family",
+                        "semantic_admission",
+                    )
+            elif key_axis["source"] == "declared_keys_with_optional_prefix_v1":
+                keys = key_axis["keys"]
+                prefix_parameter = key_axis["prefix_parameter"]
+                prefix_schema = params.get(prefix_parameter)
+                if (
+                    not keys
+                    or len(keys) != len(set(keys))
+                    or not _has_type(prefix_schema, "string")
+                ):
+                    _fail(
+                        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                        f"Operation {opname!r} has an invalid declared output key axis",
                         "semantic_admission",
                     )
             else:
@@ -467,6 +507,7 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
             set(inputs)
             | set(registry_names)
             | set(slice_reads)
+            | set(space_reads)
             | {item["name"] for item in operation.get("provenance_reads", [])}
         )
         if (
@@ -493,6 +534,7 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
             if (
                 model is None
                 or model["kind"] != "model_ref"
+                or model["required"] is not True
                 or source is None
                 or source["kind"] != "space"
                 or read["reader"] != "read_contained_model_payload"
@@ -508,6 +550,88 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
                 _fail(
                     "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
                     f"Operation {opname!r} has an invalid contained-model read",
+                    "semantic_admission",
+                )
+
+        self_linked_reads = operation.get("self_linked_contained_model_reads", [])
+        self_linked_names = [item["name"] for item in self_linked_reads]
+        if len(self_linked_names) != len(set(self_linked_names)) or set(self_linked_names) & (
+            other_names | set(model_read_names)
+        ):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} repeats or collides a self-linked model reader",
+                "semantic_admission",
+            )
+        for read in self_linked_reads:
+            model = inputs.get(read["input"])
+            selected = [(item["engine"], item["model_type"]) for item in read["allowed_models"]]
+            if (
+                model is None
+                or model["kind"] != "model_ref"
+                or model["required"] is not True
+                or read["reader"] != "read_self_linked_contained_model_payload"
+                or read["linkage_policy"] != "authenticated_existing_source_and_cell_linkage_v1"
+                or read["call_discipline"] != "exactly_once"
+                or not selected
+                or len(selected) != len(set(selected))
+                or read["maximum_file_count"] > 32
+                or read["maximum_total_bytes"] > 1_073_741_824
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid self-linked model read",
+                    "semantic_admission",
+                )
+
+        sibling_model_outputs = [
+            output
+            for output in outputs.values()
+            if output.get("contained_model_sibling_closure_policy")
+        ]
+        for output in sibling_model_outputs:
+            policy = output["contained_model_sibling_closure_policy"]
+            source = inputs.get(policy["source_space_input"])
+            siblings = policy["required_sibling_terminals"]
+            sibling_outputs = [outputs.get(name) for name in siblings]
+            dimension_parameter = policy["dimensions_parameter"]
+            dimension_schema = (
+                params.get(dimension_parameter) if dimension_parameter is not None else None
+            )
+            valid_dimension = dimension_parameter is None or (
+                _has_type(dimension_schema, "array")
+                and isinstance(dimension_schema.get("items"), Mapping)
+                and dimension_schema["items"].get("type") == "integer"
+                and dimension_schema["items"].get("minimum", 0) >= 1
+                and dimension_schema.get("uniqueItems") is True
+            )
+            if (
+                output["kind"] != "model_ref"
+                or output["category"] != "terminal_artifact"
+                or output["required"] is not True
+                or output["storage_profile"] != "model_ref_contained_tree_v1"
+                or output.get("contained_model_policy") is not None
+                or source is None
+                or source["kind"] != "space"
+                or not siblings
+                or len(siblings) != len(set(siblings))
+                or output["name"] in siblings
+                or any(
+                    sibling is None
+                    or sibling["category"] != "terminal_artifact"
+                    or sibling["required"] is not True
+                    or sibling["promotion_group"] != output["promotion_group"]
+                    for sibling in sibling_outputs
+                )
+                or policy["policy"] != "staged_contained_model_sibling_closure_v1"
+                or policy["file_order"] != "utf8_path_lexicographic_v1"
+                or policy["maximum_file_count"] > 32
+                or policy["maximum_total_bytes"] > 1_073_741_824
+                or not valid_dimension
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an invalid sibling-bound model output",
                     "semantic_admission",
                 )
 

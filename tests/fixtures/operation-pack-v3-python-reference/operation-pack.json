@@ -541,6 +541,51 @@
       "dependencies": [],
       "promotion_closure": {"summary": ["embedding", "summary"]},
       "replay_equivalence": {"embedding": "cell_aligned_embedding", "summary": "exact_canonical_value"}
+    },
+    {
+      "name": "self_linked_model_read_probe",
+      "qualified_name": "scwbpyv3reference::self_linked_model_read_probe",
+      "title": "Self-linked model read probe",
+      "description": "Synthetic ABI-v3 operation proving a self-linked private contained-model read.",
+      "runner": ".self_linked_model_read_probe",
+      "inputs": [
+        {"name": "model", "kind": "model_ref", "required": true, "alignment": "model_linked"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "reader_calls": {"type": "integer", "minimum": 0, "maximum": 2, "default": 1}
+      }, "additionalProperties": false},
+      "self_linked_contained_model_reads": [
+        {"name": "fit_model", "input": "model", "reader": "read_self_linked_contained_model_payload", "allowed_models": [{"engine": "synthetic", "model_type": "synthetic_trajectory"}], "linkage_policy": "authenticated_existing_source_and_cell_linkage_v1", "maximum_file_count": 4, "maximum_total_bytes": 1024, "call_discipline": "exactly_once"}
+      ],
+      "outputs": [
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "read", "table_type": "self_linked_model_read_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"summary": ["summary"]},
+      "replay_equivalence": {"summary": "exact_canonical_value"}
+    },
+    {
+      "name": "sibling_model_fit_probe",
+      "qualified_name": "scwbpyv3reference::sibling_model_fit_probe",
+      "title": "Sibling-bound model fit probe",
+      "description": "Synthetic ABI-v3 operation proving atomic contained-model and sibling terminal output closure.",
+      "runner": ".sibling_model_fit_probe",
+      "inputs": [
+        {"name": "fit_space", "kind": "space", "required": true, "alignment": "cell_ordered"}
+      ],
+      "params_schema": {"type": "object", "properties": {
+        "dims": {"type": ["array", "null"], "default": null, "uniqueItems": true, "items": {"type": "integer", "minimum": 1}},
+        "omit_terminal": {"type": "string", "enum": ["none", "pseudotime", "entropy", "summary"], "default": "none"}
+      }, "additionalProperties": false},
+      "outputs": [
+        {"name": "model", "category": "terminal_artifact", "kind": "model_ref", "storage_profile": "model_ref_contained_tree_v1", "allocated_id_key": "model_id", "required": true, "promotion_group": "fit", "contained_model_sibling_closure_policy": {"policy": "staged_contained_model_sibling_closure_v1", "engine": "synthetic", "model_type": "synthetic_trajectory", "primary_path": "model.bin", "source_space_input": "fit_space", "dimensions_parameter": "dims", "required_sibling_terminals": ["pseudotime", "entropy", "summary"], "file_order": "utf8_path_lexicographic_v1", "maximum_file_count": 4, "maximum_total_bytes": 1024}},
+        {"name": "pseudotime", "category": "terminal_artifact", "kind": "cell_vector", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "pseudotime_id", "required": true, "promotion_group": "fit", "value_kind": "continuous"},
+        {"name": "entropy", "category": "terminal_artifact", "kind": "cell_vector", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "entropy_id", "required": true, "promotion_group": "fit", "value_kind": "continuous"},
+        {"name": "summary", "category": "terminal_artifact", "kind": "obs_table", "storage_profile": "terminal_primitive_v1", "allocated_id_key": "summary_id", "required": true, "promotion_group": "fit", "table_type": "sibling_model_fit_probe"}
+      ],
+      "dependencies": [],
+      "promotion_closure": {"model": ["entropy", "model", "pseudotime", "summary"], "pseudotime": ["entropy", "model", "pseudotime", "summary"], "entropy": ["entropy", "model", "pseudotime", "summary"], "summary": ["entropy", "model", "pseudotime", "summary"]},
+      "replay_equivalence": {"model": "loadable_reference", "pseudotime": "exact_canonical_value", "entropy": "exact_canonical_value", "summary": "exact_canonical_value"}
     }
   ]
 }

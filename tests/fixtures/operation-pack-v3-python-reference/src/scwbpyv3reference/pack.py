@@ -506,6 +506,61 @@ def _contained_model_transform_probe(readers, writers, params, context):
     )
 
 
+def _self_linked_model_read_probe(readers, writers, params, context):
+    payload = b""
+    for _call in range(params.get("reader_calls", 1)):
+        model = readers["fit_model"]()
+        payload = model.read_bytes(model.primary_path)
+    writers.write_terminal_primitive(
+        "summary",
+        {
+            "kind": "obs_table",
+            "dimensions": [1, 1],
+            "rows": [{"model_bytes": len(payload)}],
+        },
+    )
+
+
+def _sibling_model_fit_probe(readers, writers, params, context):
+    space = readers["fit_space"]()
+    model = writers.open_model_tree("model")
+    model.write_bytes("model.bin", b"synthetic-sibling-model")
+    model.finish(
+        {"kind": "model_ref", "in_space_id": space["space_id"]},
+        {"fixture": "sibling_model_fit_probe"},
+    )
+    cells = list(space["cell_id"])
+    if params.get("omit_terminal", "none") != "pseudotime":
+        writers.write_terminal_primitive(
+            "pseudotime",
+            {
+                "kind": "cell_vector",
+                "dimensions": [len(cells)],
+                "cell_id": cells,
+                "value": [float(index) for index in range(len(cells))],
+            },
+        )
+    if params.get("omit_terminal", "none") != "entropy":
+        writers.write_terminal_primitive(
+            "entropy",
+            {
+                "kind": "cell_vector",
+                "dimensions": [len(cells)],
+                "cell_id": cells,
+                "value": [0.5 for _cell in cells],
+            },
+        )
+    if params.get("omit_terminal", "none") != "summary":
+        writers.write_terminal_primitive(
+            "summary",
+            {
+                "kind": "obs_table",
+                "dimensions": [1, 1],
+                "rows": [{"fitted_cells": len(cells)}],
+            },
+        )
+
+
 def register():
     return operation_pack_handlers_v3(
         {
@@ -524,6 +579,8 @@ def register():
             "scwbpyv3reference::parameter_axis_probe": _parameter_axis_probe,
             "scwbpyv3reference::contained_model_fit_probe": _contained_model_fit_probe,
             "scwbpyv3reference::contained_model_transform_probe": _contained_model_transform_probe,
+            "scwbpyv3reference::self_linked_model_read_probe": _self_linked_model_read_probe,
+            "scwbpyv3reference::sibling_model_fit_probe": _sibling_model_fit_probe,
             "scwbpyv3reference::family_probe": _family_probe,
             "scwbpyv3reference::registry_probe": _registry_probe,
             "scwbpyv3reference::registry_probe_strict": _registry_probe,

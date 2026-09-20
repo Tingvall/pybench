@@ -47,6 +47,13 @@ from .phase4d_contracts import (
 from .phase4d_contracts import (
     plain as plain_v4d,
 )
+from .phase5_contracts import (
+    self_linked_model_read_observations,
+    validate_self_linked_model_grants,
+    validate_sibling_model_grants,
+    validate_sibling_model_observations,
+    validate_sibling_model_source_axes,
+)
 from .protocol_v3 import (
     V3Readers,
     V3Writers,
@@ -382,11 +389,20 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                 "PYBENCH_CAPABILITY_MISMATCH",
                 "staging",
             )
+        if "contained_model_sibling_write_grant" in descriptor:
+            _assert_identity(
+                descriptor["contained_model_sibling_write_grant"],
+                "write_grant_identity",
+                "PYBENCH_CAPABILITY_MISMATCH",
+                "staging",
+            )
     for grant in value.get("typed_slice_grants", []):
         _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
     for grant in value.get("typed_space_grants", []):
         _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
     for grant in value.get("model_payload_grants", []):
+        _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    for grant in value.get("self_linked_model_payload_grants", []):
         _assert_identity(grant, "grant_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging")
     _assert_identity(
         value["execution_capability"],
@@ -742,6 +758,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
                     "staging",
                 )
     model_payload_grants = validate_contained_model_grants(value, operation)
+    self_linked_model_payload_grants = validate_self_linked_model_grants(value, operation)
+    validate_sibling_model_grants(value, operation)
     parameter_axis_grants = validate_parameter_axis_grants(value, operation)
     for policy in operation.get("dimension_policies", []):
         kind = policy.get("policy")
@@ -824,6 +842,7 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
     typed_input_names = {item["input_name"] for item in typed_slice_grants}
     typed_input_names |= {item["input_name"] for item in typed_space_grants}
     model_input_names = {item["input_name"] for item in model_payload_grants}
+    model_input_names |= {item["input_name"] for item in self_linked_model_payload_grants}
     expected_readers = [
         {
             "input_name": item["name"],
@@ -856,6 +875,14 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "grant_identity": item["grant_identity"],
         }
         for item in model_payload_grants
+    ]
+    expected_readers += [
+        {
+            "self_linked_model_payload_name": item["name"],
+            "reader": item["reader"],
+            "grant_identity": item["grant_identity"],
+        }
+        for item in self_linked_model_payload_grants
     ]
     expected_readers += [
         {
@@ -903,6 +930,8 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         == [plain(item["grant_identity"]) for item in parameter_axis_grants.values()],
         capability.get("model_payload_grant_identities", [])
         == [plain_v4d(item["grant_identity"]) for item in model_payload_grants],
+        capability.get("self_linked_model_payload_grant_identities", [])
+        == [plain_v4d(item["grant_identity"]) for item in self_linked_model_payload_grants],
         capability.get("provenance_read_identities", [])
         == [
             _identity_projection(item["descriptor_identity"])
@@ -2107,11 +2136,11 @@ class ContainedModelTreeWriter:
         self._owner = owner
         self._name = name
         self._grant_record = owner._grants.get(name)
-        self._grant = (
-            self._grant_record["descriptor"].get("contained_model_write_grant")
-            if self._grant_record is not None
-            else None
+        descriptor = self._grant_record["descriptor"] if self._grant_record is not None else {}
+        self._grant = descriptor.get("contained_model_write_grant") or descriptor.get(
+            "contained_model_sibling_write_grant"
         )
+        self._sibling_bound = "contained_model_sibling_write_grant" in descriptor
         if (
             owner._consumed
             or self._grant is None
@@ -2188,18 +2217,27 @@ class ContainedModelTreeWriter:
                 "Contained-model linkage differs from its source space",
                 "audit",
             )
-        linkage = {
-            "engine": self._grant["engine"],
-            "model_type": self._grant["model_type"],
-            "source_space_id": value["in_space_id"],
-            "selected_dimension_count": source["selected_dimension_count"],
-            "selected_dimension_order_identity": source["selected_dimension_order_identity"],
-        }
-        linkage["linkage_identity"] = _identity(
-            "scworkbench.operation_pack.model_linkage.v1",
-            linkage,
-            "linkage excluding linkage_identity",
-        )
+        if self._sibling_bound:
+            linkage = copy.deepcopy(self._grant["model_source_linkage"])
+            if linkage["source_space_id"] != value["in_space_id"]:
+                _fail(
+                    "PYBENCH_OUTPUT_INVALID",
+                    "Contained-model source-space identity differs from its grant",
+                    "audit",
+                )
+        else:
+            linkage = {
+                "engine": self._grant["engine"],
+                "model_type": self._grant["model_type"],
+                "source_space_id": value["in_space_id"],
+                "selected_dimension_count": source["selected_dimension_count"],
+                "selected_dimension_order_identity": source["selected_dimension_order_identity"],
+            }
+            linkage["linkage_identity"] = _identity(
+                "scworkbench.operation_pack.model_linkage.v1",
+                linkage,
+                "linkage excluding linkage_identity",
+            )
         value.update(
             dimensions=[1],
             engine=self._grant["engine"],
@@ -2246,7 +2284,7 @@ class V4Writers(V3Writers):
 
     def write_model_ref(self, name, value, semantic_metadata=None):
         grant = self._grants.get(name, {}).get("descriptor", {})
-        if "contained_model_write_grant" in grant:
+        if "contained_model_write_grant" in grant or "contained_model_sibling_write_grant" in grant:
             _fail(
                 "PYBENCH_CAPABILITY_MISMATCH",
                 "Contained-model outputs require the private tree writer",
@@ -2748,6 +2786,105 @@ def _finalize_contained_model_descriptors(
             "descriptor excluding observed_descriptor_identity",
         )
 
+    for grant_record in request["outputs"]:
+        grant = grant_record["descriptor"].get("contained_model_sibling_write_grant")
+        if grant is None:
+            continue
+        write = writes[grant_record["name"]]
+        manifest = write.value.get("contained_model_tree_manifest")
+        if not isinstance(manifest, Mapping):
+            _fail("PYBENCH_OUTPUT_INVALID", "Contained-model tree manifest is absent", "audit")
+        observed_manifest, _paths = inventory_model_tree(
+            _safe_relative(Path(write.path.parents[2]), grant["relative_root"]),
+            engine=grant["engine"],
+            model_type=grant["model_type"],
+            primary_path=grant["primary_path"],
+            maximum_file_count=grant["limits"]["maximum_file_count"],
+            maximum_total_bytes=grant["limits"]["maximum_total_bytes"],
+        )
+        if observed_manifest != manifest:
+            _fail(
+                "PYBENCH_OUT_OF_SCOPE_MUTATION",
+                "Sibling-bound contained-model tree changed after writer closure",
+                "audit",
+            )
+        linkage_identity = copy.deepcopy(grant["model_source_linkage"]["linkage_identity"])
+        if write.value["model_linkage"]["linkage_identity"] != linkage_identity:
+            _fail(
+                "PYBENCH_OUTPUT_INVALID",
+                "Sibling-bound model linkage changed during execution",
+                "audit",
+            )
+        sibling_descriptor_identities: list[dict[str, str]] = []
+        for sibling in grant["required_sibling_terminals"]:
+            sibling_record = by_name.get(sibling["name"])
+            sibling_write = writes.get(sibling["name"])
+            if sibling_record is None or sibling_write is None:
+                _fail(
+                    "PYBENCH_RECEIPT_MISMATCH",
+                    "Sibling-bound model output closure is incomplete",
+                    "receipt",
+                )
+            expected_axis = sibling["expected_cell_order_identity_if_cell_indexed"]
+            if expected_axis is not None:
+                cells = sibling_write.value.get("cell_id")
+                if (
+                    not isinstance(cells, list)
+                    or _identity("scworkbench.cell_order.v1", cells) != expected_axis
+                ):
+                    _fail(
+                        "PYBENCH_OUTPUT_INVALID",
+                        "Sibling output cell axis differs from the model linkage",
+                        "audit",
+                    )
+            sibling_descriptor_identities.append(
+                plain_v4d(sibling_record["descriptor"]["observed_descriptor_identity"])
+            )
+        observation: dict[str, Any] = {
+            "schema": ("scworkbench.operation_pack.contained_model_sibling_tree_observation.v1"),
+            "write_grant_identity": plain_v4d(grant["write_grant_identity"]),
+            "tree_manifest": copy.deepcopy(manifest),
+            "tree_manifest_identity": plain_v4d(manifest["manifest_identity"]),
+            "payload_manifest_identity": tree_payload_identity(manifest),
+            "model_source_linkage_identity": plain_v4d(linkage_identity),
+            "ordered_sibling_observed_descriptor_identities": sibling_descriptor_identities,
+            "model_sibling_closure_identity": grant["model_sibling_closure_identity"],
+            "loadability_status": "contained_tree_authenticated",
+        }
+        observation["observation_identity"] = _identity(
+            observation["schema"],
+            observation,
+            "contained_model_sibling_tree_observation excluding observation_identity",
+        )
+        descriptor = by_name[grant_record["name"]]["descriptor"]
+        descriptor.pop("observed_descriptor_identity", None)
+        descriptor["content_identity"] = _identity(
+            "scworkbench.model_ref.content.v1",
+            {
+                "engine": manifest["engine"],
+                "model_type": manifest["model_type"],
+                "linkage_identity": plain_v4d(linkage_identity),
+                "tree_manifest_identity": plain_v4d(manifest["manifest_identity"]),
+            },
+        )
+        descriptor["payload_manifest_identity"] = tree_payload_identity(manifest)
+        descriptor["model_linkage"] = grant_record["descriptor"]["expected_model_linkage"]
+        descriptor["model_linkage_identity"] = plain_v4d(linkage_identity)
+        descriptor["contained_model_sibling_tree"] = observation
+        descriptor["contained_payload"] = {
+            "contained": True,
+            "no_symlinks": True,
+            "payload_tree_identity": _identity(
+                "scworkbench.operation_pack.contained_payload.v2",
+                plain_v4d(manifest["manifest_identity"]),
+            ),
+        }
+        descriptor["observed_descriptor_identity"] = _identity(
+            "scworkbench.operation_pack.observed_output.v3",
+            descriptor,
+            "descriptor excluding observed_descriptor_identity",
+        )
+
 
 def _publication_observations_v4(
     request: Mapping[str, Any], outputs: list[Mapping[str, Any]]
@@ -2850,7 +2987,10 @@ def _registry_observations(request: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[str, Any]]:
     typed_inputs = {item["input_name"] for item in request.get("typed_slice_grants", [])}
-    model_inputs = {item["input_name"] for item in request.get("model_payload_grants", [])}
+    all_model_grants = list(request.get("model_payload_grants", [])) + list(
+        request.get("self_linked_model_payload_grants", [])
+    )
+    model_inputs = {item["input_name"] for item in all_model_grants}
     for name in typed_inputs:
         eager = _safe_relative(root, f"inputs/{name}/payload.json")
         if eager.exists():
@@ -2865,7 +3005,7 @@ def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[st
     ]
     values = _read_inputs(projected, root)
     input_records = {item["name"]: item["descriptor"] for item in request["inputs"]}
-    grants = {item["input_name"]: item for item in request.get("model_payload_grants", [])}
+    grants = {item["input_name"]: item for item in all_model_grants}
     for name in model_inputs:
         descriptor = input_records[name]
         grant = grants[name]
@@ -2873,11 +3013,17 @@ def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[st
             "kind": "model_ref",
             "dimensions": copy.deepcopy(descriptor["dimensions"]),
             "storage_profile": descriptor["storage_profile"],
-            "engine": grant["engine"],
-            "model_type": grant["model_type"],
-            "model_linkage_identity": grant["model_linkage_identity"],
+            "engine": grant.get("engine", grant.get("selected_model", {}).get("engine")),
+            "model_type": grant.get(
+                "model_type", grant.get("selected_model", {}).get("model_type")
+            ),
+            "model_linkage_identity": grant.get(
+                "model_linkage_identity", grant.get("model_source_linkage_identity")
+            ),
             "contained_payload_identity": grant["contained_payload_identity"],
         }
+        if "model_source_linkage" in grant:
+            values[name]["model_source_linkage"] = copy.deepcopy(grant["model_source_linkage"])
     return values
 
 
@@ -2895,7 +3041,10 @@ def _model_payload_readers(
 ) -> dict[str, ContainedModelReader]:
     return {
         grant["name"]: ContainedModelReader(_safe_relative(root, grant["relative_root"]), grant)
-        for grant in request.get("model_payload_grants", [])
+        for grant in (
+            list(request.get("model_payload_grants", []))
+            + list(request.get("self_linked_model_payload_grants", []))
+        )
     }
 
 
@@ -2924,6 +3073,7 @@ def execute_operation_pack_v4(
             fault_hook("before_input_read")
         inputs = _read_inputs_v4(request, root)
         validate_contained_model_source_axes(request, operation, inputs)
+        validate_sibling_model_source_axes(request, operation, inputs)
         registry_values = _read_registry_reads(request, operation, root)
         provenance_values = _read_provenance(request, operation, root)
         preflight = preflight_v3(operation, inputs, request["params"], request)
@@ -2946,9 +3096,10 @@ def execute_operation_pack_v4(
             list(next(iter(audit_inputs.values())).get("cell_id", [])) if audit_inputs else []
         )
         writers = V4Writers(request, root, cell_order, audit_inputs)
-        model_input_names = {
-            grant["input_name"] for grant in request.get("model_payload_grants", [])
-        }
+        all_model_grants = list(request.get("model_payload_grants", [])) + list(
+            request.get("self_linked_model_payload_grants", [])
+        )
+        model_input_names = {grant["input_name"] for grant in all_model_grants}
         readers = V4Readers(
             {name: value for name, value in inputs.items() if name not in model_input_names},
             registry_values,
@@ -2977,12 +3128,18 @@ def execute_operation_pack_v4(
                 grant["name"]: {
                     "name": grant["name"],
                     "input_name": grant["input_name"],
-                    "engine": grant["engine"],
-                    "model_type": grant["model_type"],
+                    "engine": (
+                        grant["engine"] if "engine" in grant else grant["selected_model"]["engine"]
+                    ),
+                    "model_type": (
+                        grant["model_type"]
+                        if "model_type" in grant
+                        else grant["selected_model"]["model_type"]
+                    ),
                     "call_discipline": grant["call_discipline"],
                     "primary_path": grant["tree_manifest"]["primary_path"],
                 }
-                for grant in request.get("model_payload_grants", [])
+                for grant in all_model_grants
             },
         }
         active[1].handlers[operation["qualified_name"]](
@@ -3007,9 +3164,7 @@ def execute_operation_pack_v4(
                 "Provenance readers must be consumed exactly once",
                 "execution",
             )
-        if sorted(readers.model_payload_calls) != sorted(
-            item["name"] for item in request.get("model_payload_grants", [])
-        ):
+        if sorted(readers.model_payload_calls) != sorted(item["name"] for item in all_model_grants):
             _fail(
                 "PYBENCH_CAPABILITY_MISMATCH",
                 "Contained-model readers must be consumed exactly once",
@@ -3138,6 +3293,14 @@ def execute_operation_pack_v4(
         if request.get("model_payload_grants"):
             receipt["model_payload_reads"] = model_read_observations(
                 request["model_payload_grants"],
+                {
+                    name: readers.model_payload_calls.count(name)
+                    for name in readers.model_payload_calls
+                },
+            )
+        if request.get("self_linked_model_payload_grants"):
+            receipt["self_linked_model_payload_reads"] = self_linked_model_read_observations(
+                request["self_linked_model_payload_grants"],
                 {
                     name: readers.model_payload_calls.count(name)
                     for name in readers.model_payload_calls
@@ -3401,9 +3564,20 @@ def validate_receipt_v4(
     )
     if value.get("model_payload_reads", []) != expected_model_reads:
         _fail("PYBENCH_RECEIPT_MISMATCH", "Contained-model read receipt differs", "receipt")
+    expected_self_linked_reads = self_linked_model_read_observations(
+        request.get("self_linked_model_payload_grants", []),
+        {item["name"]: 1 for item in request.get("self_linked_model_payload_grants", [])},
+    )
+    if value.get("self_linked_model_payload_reads", []) != expected_self_linked_reads:
+        _fail(
+            "PYBENCH_RECEIPT_MISMATCH",
+            "Self-linked contained-model read receipt differs",
+            "receipt",
+        )
     _validate_typed_slice_usage(request, value.get("typed_slice_usage", []))
     _validate_typed_space_usage(request, value.get("typed_space_usage", []))
     observed_map = {item["name"]: item["descriptor"] for item in observed}
+    validate_sibling_model_observations(request, observed_map)
     for grant in request["outputs"]:
         sparse = grant["descriptor"].get("sparse_membership_grant")
         if sparse is None:
@@ -3446,6 +3620,7 @@ def validate_receipt_v4(
         operation = _operation(discovery, request["operation_authentication"]["name"])
         inputs = _read_inputs_v4(request, root)
         validate_contained_model_source_axes(request, operation, inputs)
+        validate_sibling_model_source_axes(request, operation, inputs)
         for model_reader in _model_payload_readers(request, root).values():
             model_reader.revalidate()
         registry_values = _read_registry_reads(request, operation, root)
@@ -3467,7 +3642,9 @@ def validate_receipt_v4(
             )
             relative_root = grant["descriptor"].get("relative_root", default_root)
             fragment_grant = grant["descriptor"].get("matrix_fragment_grant")
-            model_grant = grant["descriptor"].get("contained_model_write_grant")
+            model_grant = grant["descriptor"].get("contained_model_write_grant") or grant[
+                "descriptor"
+            ].get("contained_model_sibling_write_grant")
             if model_grant is not None:
                 path = _safe_relative(root, relative_root + "/payload.json", must_exist=True)
                 payload = json.loads(path.read_text(encoding="utf-8"))
