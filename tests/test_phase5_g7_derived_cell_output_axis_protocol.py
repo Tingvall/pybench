@@ -62,6 +62,12 @@ G7_CASE_NAMES = {
     "g7_union_request",
     "g7_union_nonlexicographic_receipt",
     "g7_union_alternate_order_receipt",
+    "g7_effective_key_primary",
+    "g7_effective_key_null_fallback",
+    "g7_effective_key_schema_default",
+    "g7_effective_key_override",
+    "g7_effective_key_same_no_presence",
+    "g7_effective_key_same_with_presence",
 }
 
 

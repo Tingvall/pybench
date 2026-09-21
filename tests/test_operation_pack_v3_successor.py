@@ -36,10 +36,10 @@ from v3_helpers import _input_descriptor, fixture_inputs, make_request
 
 FIXTURE = Path(__file__).parent / "fixtures" / "operation-pack-v3-python-reference"
 SHARED_DIGESTS = {
-    "operation-pack-v3.schema.json": "54f935f183364b973e450d1cfce5377c2561fa005667ed85a6a1021312c8d231",
-    "operation-pack-transition-request-v3.schema.json": "b07b61e2727c537fb24f75759f6ef769a67ddc3675d7412459f0fcf18e789dc8",
-    "operation-pack-transition-receipt-v3.schema.json": "b05b35aaa9fce85791afb7799d795420825322b860187f5c0e81e23fa26f86dd",
-    "fixtures/operation-pack-v3/identities.json": "96166d005bde0be19133e3579bb66fc62d6b8521bdc52419421a1975c1184195",
+    "operation-pack-v3.schema.json": "643267f5999f80b10cd7a3687236d9c719221e703ede0db6b6f02fe07c825a37",
+    "operation-pack-transition-request-v3.schema.json": "bdcb4eb7a7ffc66fcd95fbecceb8cce5dfad5abf1abc74c61e0f49d88a483fec",
+    "operation-pack-transition-receipt-v3.schema.json": "87c7c2b7386097d0174c55200e74e02e5863d1bc15970fa5ff401175b6718ed6",
+    "fixtures/operation-pack-v3/identities.json": "0961ffcba4dd2a7bb16e806ec78a7a300faa53719fd1534e9a1fac3beee03796",
 }
 
 
@@ -575,7 +575,10 @@ def test_shared_successor_assets_and_identity_corpus_are_exact():
     )
     for case in corpus["cases"]:
         assert canonical_sha256(case["preimage"]) == case["identity"]["sha256"]
-        assert case["identity"] in case["value"].values()
+        if case["name"].startswith("g7_effective_key_"):
+            assert case["value"] == case["preimage"]
+        else:
+            assert case["identity"] in case["value"].values()
 
 
 def test_manifest_v3_is_explicit_and_v2_reader_remains_separate():
