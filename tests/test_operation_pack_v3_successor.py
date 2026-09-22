@@ -36,10 +36,10 @@ from v3_helpers import _input_descriptor, fixture_inputs, make_request
 
 FIXTURE = Path(__file__).parent / "fixtures" / "operation-pack-v3-python-reference"
 SHARED_DIGESTS = {
-    "operation-pack-v3.schema.json": "643267f5999f80b10cd7a3687236d9c719221e703ede0db6b6f02fe07c825a37",
-    "operation-pack-transition-request-v3.schema.json": "bdcb4eb7a7ffc66fcd95fbecceb8cce5dfad5abf1abc74c61e0f49d88a483fec",
-    "operation-pack-transition-receipt-v3.schema.json": "87c7c2b7386097d0174c55200e74e02e5863d1bc15970fa5ff401175b6718ed6",
-    "fixtures/operation-pack-v3/identities.json": "0961ffcba4dd2a7bb16e806ec78a7a300faa53719fd1534e9a1fac3beee03796",
+    "operation-pack-v3.schema.json": "4e1f81a9061c5f9e2e12109c3e4267fd68844cb17a7f64344f95408a41f87882",
+    "operation-pack-transition-request-v3.schema.json": "61a07e877769a9ecd280b37e022d74954c44c49e8281693fdf9fb3bb7fec7cef",
+    "operation-pack-transition-receipt-v3.schema.json": "f21fb27b91a3ffdc5f8ae3e69a96e26e3f029420cb16c2a9cb7cf65f768dcffe",
+    "fixtures/operation-pack-v3/identities.json": "577811ff5d2753ee0554ebb9d833dfbff2e1ea542fd8e424059327a372159620",
 }
 
 
@@ -575,7 +575,10 @@ def test_shared_successor_assets_and_identity_corpus_are_exact():
     )
     for case in corpus["cases"]:
         assert canonical_sha256(case["preimage"]) == case["identity"]["sha256"]
-        if case["name"].startswith("g7_effective_key_"):
+        if case["name"].startswith("g7_effective_key_") or case["name"] in {
+            "dfa_selected_axis_sidecar",
+            "dfa_model_content_identity",
+        }:
             assert case["value"] == case["preimage"]
         else:
             assert case["identity"] in case["value"].values()

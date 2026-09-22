@@ -319,6 +319,12 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "staging",
         )
     _validate_schema(value, _REQUEST_ASSET, "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    if value.get("derived_fitted_axis_grants"):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement derived fitted-axis authority",
+            "staging",
+        )
     _no_absolute_paths(value)
     _assert_identity(
         value["transition"], "transition_identity", "PYBENCH_CAPABILITY_MISMATCH", "staging"
