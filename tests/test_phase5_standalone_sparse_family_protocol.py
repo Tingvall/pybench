@@ -38,15 +38,6 @@ def _corpus() -> dict:
     return json.loads(protocol_asset("fixtures/operation-pack-v3/identities.json").read_text())
 
 
-def _baseline_request() -> dict:
-    request = next(
-        case["value"] for case in _corpus()["cases"] if case["name"] == "dfa_success_request"
-    )
-    request = copy.deepcopy(request)
-    request.pop("derived_fitted_axis_grants")
-    return request
-
-
 def test_python_manifest_sparse_policy_is_rejected_at_admission():
     manifest = json.loads(REFERENCE_MANIFEST.read_text())
     operation = next(
@@ -83,8 +74,9 @@ def test_python_manifest_sparse_policy_is_rejected_at_admission():
 
 
 def test_forged_sparse_family_grant_rejects_before_stage_access(tmp_path):
-    request = _baseline_request()
-    request["standalone_sparse_cell_family_grants"] = [{"forged": True}]
+    request = next(
+        case["value"] for case in _corpus()["cases"] if case["name"] == "sparse_success_request"
+    )
     stage = tmp_path / "uncreated-stage"
 
     with pytest.raises(OperationPackError) as caught:
