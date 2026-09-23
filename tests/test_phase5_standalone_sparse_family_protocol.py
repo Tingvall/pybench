@@ -265,3 +265,35 @@ def test_120_cell_two_sparse_80_row_keys_are_not_cartesian_padded():
     assert len(pairs) == 160
     assert len(pairs) != len(source) * len(keys)
     assert [pair["key"] for pair in pairs] == [keys[0]] * 80 + [keys[1]] * 80
+
+
+def test_g1_model_read_schema_accepts_v2_and_v3_linkage_but_rejects_mixed_evidence():
+    corpus = {case["name"]: case["value"] for case in _corpus()["cases"]}
+    grant = copy.deepcopy(corpus["self_linked_model_read_grant"])
+    root = json.loads(
+        protocol_asset("operation-pack-transition-request-v3.schema.json").read_text()
+    )
+    schema = copy.deepcopy(root["$defs"]["self_linked_contained_model_read_grant"])
+    schema["$defs"] = root["$defs"]
+    validator = Draft202012Validator(schema)
+    assert not list(validator.iter_errors(grant))
+
+    v3_linkage = copy.deepcopy(corpus["dfa_model_source_linkage_v3"])
+    grant["model_source_linkage"] = v3_linkage
+    grant["model_source_linkage_identity"] = {
+        "scheme": v3_linkage["linkage_identity"]["scheme"],
+        "sha256": v3_linkage["linkage_identity"]["sha256"],
+    }
+    grant["grant_identity"] = _identity(
+        grant["schema"],
+        {key: value for key, value in grant.items() if key != "grant_identity"},
+        "grant excluding grant_identity",
+    )
+    assert not list(validator.iter_errors(grant))
+
+    mixed = copy.deepcopy(grant)
+    mixed["model_source_linkage"]["source_snapshot_id"] = "v2-only-field"
+    assert list(validator.iter_errors(mixed))
+    missing = copy.deepcopy(grant)
+    missing["model_source_linkage"].pop("selected_axis_evidence")
+    assert list(validator.iter_errors(missing))
