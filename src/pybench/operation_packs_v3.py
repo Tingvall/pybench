@@ -874,6 +874,16 @@ def validate_manifest_v3(
             "outer_schema",
             instance_path=list(first.absolute_path),
         )
+    if manifest["backend"] == "Python" and any(
+        policy.get("policy") == "standalone_sparse_cell_family_v1"
+        for operation in manifest["operations"]
+        for policy in operation.get("dimension_policies", [])
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement standalone sparse cell-family authority",
+            "semantic_admission",
+        )
     _semantic_admission_v3(manifest)
     for operation in manifest["operations"]:
         _validate_parameter_profile(operation["params_schema"], operation["qualified_name"])

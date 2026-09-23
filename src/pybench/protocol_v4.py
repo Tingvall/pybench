@@ -318,6 +318,12 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "V4 execution requires the explicit manifest-v3/request-v3 tuple",
             "staging",
         )
+    if "standalone_sparse_cell_family_grants" in value:
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement standalone sparse cell-family authority",
+            "staging",
+        )
     _validate_schema(value, _REQUEST_ASSET, "PYBENCH_CAPABILITY_MISMATCH", "staging")
     if value.get("derived_fitted_axis_grants"):
         _fail(

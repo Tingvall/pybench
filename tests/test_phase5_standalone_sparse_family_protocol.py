@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import copy
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from pybench.operation_packs import OperationPackError, canonical_sha256
+from pybench.operation_packs_v2 import _identity, protocol_asset
+from pybench.operation_packs_v3 import validate_manifest_v3
+from pybench.protocol_v4 import execute_operation_pack_v4, validate_request_v4
+
+SPARSE_DOMAINS = {
+    "scworkbench.operation_pack.standalone_sparse_cell_family_policy.v1",
+    "scworkbench.operation_pack.sparse_family_source_axis.v1",
+    "scworkbench.operation_pack.sparse_family_g1_axis_evidence.v2",
+    "scworkbench.operation_pack.sparse_family_g1_axis_evidence.v3",
+    "scworkbench.operation_pack.sparse_family_provisional_grant.v1",
+    "scworkbench.operation_pack.sparse_family_layout_declaration.v1",
+    "scworkbench.operation_pack.sparse_family_layout_seal.v1",
+    "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
+    "scworkbench.operation_pack.observed_sparse_cell_family.v1",
+}
+REFERENCE_MANIFEST = (
+    Path(__file__).parent
+    / "fixtures"
+    / "operation-pack-v3-python-reference"
+    / "operation-pack.json"
+)
+
+
+def _corpus() -> dict:
+    return json.loads(protocol_asset("fixtures/operation-pack-v3/identities.json").read_text())
+
+
+def _baseline_request() -> dict:
+    request = next(
+        case["value"] for case in _corpus()["cases"] if case["name"] == "dfa_success_request"
+    )
+    request = copy.deepcopy(request)
+    request.pop("derived_fitted_axis_grants")
+    return request
+
+
+def test_python_manifest_sparse_policy_is_rejected_at_admission(monkeypatch):
+    manifest = json.loads(REFERENCE_MANIFEST.read_text())
+    operation = next(
+        item
+        for item in manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::all_contracts"
+    )
+    policy = {
+        "schema": "scworkbench.operation_pack.standalone_sparse_cell_family_policy.v1",
+        "output": "cell_vector_family",
+        "policy": "standalone_sparse_cell_family_v1",
+        "axis_source": {"source": "typed_space_input_v1", "input": "space"},
+        "key_order": "declared_verbatim_v1",
+        "row_order": "key_major_then_source_relative_cell_v1",
+        "per_key_coverage": "per_key_source_relative_subset_v1",
+        "missing_values": "forbidden",
+        "declaration_discipline": "exactly_once_before_write",
+        "maximum_axis_cells": 1_000_000,
+        "maximum_keys": 64,
+        "maximum_rows": 1_000_000,
+        "maximum_id_bytes": 1_024,
+        "maximum_control_bytes": 67_108_864,
+    }
+    policy["policy_identity"] = _identity(
+        policy["schema"], policy, "policy excluding policy_identity"
+    )
+    operation.setdefault("dimension_policies", []).append(policy)
+
+    monkeypatch.setattr("pybench.operation_packs_v3._schema_errors", lambda *_: [])
+    with pytest.raises(OperationPackError) as caught:
+        validate_manifest_v3(manifest)
+
+    assert caught.value.code == "OPERATION_PACK_PROTOCOL_INCOMPATIBLE"
+    assert caught.value.details["phase"] == "semantic_admission"
+
+
+def test_forged_sparse_family_grant_rejects_before_stage_access(tmp_path):
+    request = _baseline_request()
+    request["standalone_sparse_cell_family_grants"] = [{"forged": True}]
+    stage = tmp_path / "uncreated-stage"
+
+    with pytest.raises(OperationPackError) as caught:
+        execute_operation_pack_v4(request, object(), stage)  # type: ignore[arg-type]
+
+    assert caught.value.code == "OPERATION_PACK_PROTOCOL_INCOMPATIBLE"
+    assert caught.value.details["phase"] == "staging"
+    assert not stage.exists()
+
+    with pytest.raises(OperationPackError) as caught:
+        validate_request_v4(request, object())  # type: ignore[arg-type]
+    assert caught.value.code == "OPERATION_PACK_PROTOCOL_INCOMPATIBLE"
+
+
+def test_structured_pair_identity_distinguishes_separator_collision_and_key_order():
+    first = [{"key": "a\x1cb", "cell_id": "c"}]
+    second = [{"key": "a", "cell_id": "b\x1cc"}]
+    assert "\x1c".join(first[0].values()) == "\x1c".join(second[0].values())
+    assert canonical_sha256(first) != canonical_sha256(second)
+
+    key_major = [{"key": "L2", "cell_id": "c1"}, {"key": "L1", "cell_id": "c2"}]
+    assert canonical_sha256(key_major) != canonical_sha256(list(reversed(key_major)))
+
+
+def test_sparse_family_identity_stages_match_in_a_separate_python_process():
+    cases = {
+        case["name"]: case
+        for case in _corpus()["cases"]
+        if case["identity"]["scheme"] in SPARSE_DOMAINS
+        or "standalone_sparse_cell_family_grants" in case["preimage"]
+        or "sparse_cell_family_observations" in case["preimage"]
+    }
+    if not cases:
+        pytest.skip("authoritative sparse cell-family identity corpus is pending")
+    observed_domains = {case["identity"]["scheme"] for case in cases.values()}
+    assert observed_domains == SPARSE_DOMAINS | {
+        "scworkbench.operation_pack.transition_request.v3",
+        "scworkbench.operation_pack.transition_receipt.v3",
+    }
+    assert any(
+        "standalone_sparse_cell_family_grants" in case["preimage"] for case in cases.values()
+    )
+    assert any("sparse_cell_family_observations" in case["preimage"] for case in cases.values())
+    for case in cases.values():
+        expected = case["identity"]
+        assert canonical_sha256(case["preimage"]) == expected["sha256"]
+        assert _identity(expected["scheme"], case["preimage"], expected.get("scope")) == expected
+
+    script = """
+import json
+import sys
+from pathlib import Path
+from pybench.operation_packs import canonical_sha256
+
+corpus = json.loads(Path(sys.argv[1]).read_text())
+names = set(json.loads(sys.argv[2]))
+print(json.dumps({
+    case["name"]: canonical_sha256(case["preimage"])
+    for case in corpus["cases"] if case["name"] in names
+}, sort_keys=True))
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(protocol_asset("fixtures/operation-pack-v3/identities.json")),
+            json.dumps(sorted(cases)),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == {
+        name: case["identity"]["sha256"] for name, case in cases.items()
+    }
