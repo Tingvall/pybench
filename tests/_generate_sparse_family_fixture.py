@@ -256,6 +256,27 @@ def main() -> None:
             "value": pairs,
         }
     )
+    swapped_pairs = pairs[2:] + pairs[:2]
+    cases.append(
+        {
+            "name": "sparse_swapped_key_pair_order",
+            "preimage": swapped_pairs,
+            "identity": identity(PREFIX + "sparse_family_pair_order.v1", swapped_pairs),
+            "value": swapped_pairs,
+        }
+    )
+    for name, pair in (
+        ("sparse_separator_pair_left", [{"key": "a\u001cb", "cell_id": "c"}]),
+        ("sparse_separator_pair_right", [{"key": "a", "cell_id": "b\u001cc"}]),
+    ):
+        cases.append(
+            {
+                "name": name,
+                "preimage": pair,
+                "identity": identity(PREFIX + "sparse_family_pair_order.v1", pair),
+                "value": pair,
+            }
+        )
     cell_order_ids = [identity("scworkbench.cell_order.v1", group["cell_ids"]) for group in per_key]
     seal = {
         "schema": PREFIX + "sparse_family_layout_seal.v1",
@@ -428,6 +449,55 @@ def main() -> None:
                 "value": value,
                 "expected": "schema_reject",
                 "expected_code": "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            }
+        )
+
+    wrong_policy_digest = copy.deepcopy(policy)
+    wrong_policy_digest["policy_identity"]["sha256"] = "0" * 64
+    contradictory_receipt = copy.deepcopy(observation)
+    contradictory_receipt["observed_keys"] = list(reversed(keys))
+    contradictory_receipt["observation_identity"] = identity(
+        observation["schema"],
+        {k: v for k, v in contradictory_receipt.items() if k != "observation_identity"},
+        "observation excluding observation_identity",
+    )
+    swapped_declaration = copy.deepcopy(declaration)
+    swapped_declaration["ordered_keys"] = list(reversed(keys))
+    swapped_declaration["declaration_identity"] = identity(
+        declaration["schema"],
+        {k: v for k, v in swapped_declaration.items() if k != "declaration_identity"},
+        "declaration excluding declaration_identity",
+    )
+    for name, schema_file, definition, value in (
+        (
+            "sparse_policy_self_hash_wrong",
+            "operation-pack-v3.schema.json",
+            "dimension_policy",
+            wrong_policy_digest,
+        ),
+        (
+            "sparse_declaration_keys_swapped_self_rehashed",
+            "operation-pack-transition-request-v3.schema.json",
+            "sparse_family_layout_declaration",
+            swapped_declaration,
+        ),
+        (
+            "sparse_receipt_keys_swapped_self_rehashed",
+            "operation-pack-transition-receipt-v3.schema.json",
+            "sparse_cell_family_observation",
+            contradictory_receipt,
+        ),
+    ):
+        negatives.append(
+            {
+                "name": name,
+                "schema_file": schema_file,
+                "definition": definition,
+                "value": value,
+                "expected": "semantic_reject",
+                "expected_code": "PYBENCH_RECEIPT_MISMATCH"
+                if "receipt" in name
+                else "PYBENCH_CAPABILITY_MISMATCH",
             }
         )
 

@@ -117,7 +117,7 @@ def test_sparse_family_identity_stages_match_in_a_separate_python_process():
         or "standalone_sparse_cell_family_grants" in case["preimage"]
         or "sparse_cell_family_observations" in case["preimage"]
     }
-    assert len(cases) == 14
+    assert len(cases) == 17
     observed_domains = {case["identity"]["scheme"] for case in cases.values()}
     assert observed_domains == SPARSE_DOMAINS | {
         "scworkbench.operation_pack.transition_request.v3",
@@ -217,10 +217,59 @@ def test_sparse_family_negative_schema_corpus_rejects():
             "operation-pack-transition-receipt-v3.schema.json",
         )
     }
-    negatives = [case for case in _corpus()["negative_cases"] if case["name"].startswith("sparse_")]
+    negatives = [
+        case
+        for case in _corpus()["negative_cases"]
+        if case["name"].startswith("sparse_") and case["expected"] == "schema_reject"
+    ]
     assert len(negatives) == 5
     for case in negatives:
         root = roots[case["schema_file"]]
         schema = copy.deepcopy(root["$defs"][case["definition"]])
         schema["$defs"] = root["$defs"]
         assert list(Draft202012Validator(schema).iter_errors(case["value"])), case["name"]
+
+
+def test_sparse_family_structured_pairs_and_self_rehashed_negatives_are_distinct():
+    cases = {case["name"]: case for case in _corpus()["cases"]}
+    assert (
+        cases["sparse_structured_pair_order"]["identity"]
+        != cases["sparse_swapped_key_pair_order"]["identity"]
+    )
+    assert (
+        cases["sparse_separator_pair_left"]["identity"]
+        != cases["sparse_separator_pair_right"]["identity"]
+    )
+    negatives = {
+        case["name"]: case
+        for case in _corpus()["negative_cases"]
+        if case["name"].startswith("sparse_") and case["expected"] == "semantic_reject"
+    }
+    assert len(negatives) == 3
+    policy = cases["sparse_manifest_policy"]["value"]
+    assert (
+        negatives["sparse_policy_self_hash_wrong"]["value"]["policy_identity"]
+        != policy["policy_identity"]
+    )
+    declaration = cases["sparse_layout_declaration"]["value"]
+    swapped = negatives["sparse_declaration_keys_swapped_self_rehashed"]["value"]
+    assert canonical_sha256(swapped["ordered_keys"]) != canonical_sha256(
+        declaration["ordered_keys"]
+    )
+    assert swapped["per_key_cells"] == declaration["per_key_cells"]
+    observation = cases["sparse_observed_output"]["value"]
+    attack = negatives["sparse_receipt_keys_swapped_self_rehashed"]["value"]
+    assert (
+        canonical_sha256({k: v for k, v in attack.items() if k != "observation_identity"})
+        == (attack["observation_identity"]["sha256"])
+    )
+    assert attack["observed_keys"] != observation["seal"]["ordered_keys"]
+
+
+def test_120_cell_two_sparse_80_row_keys_are_not_cartesian_padded():
+    source = [f"cell_{index}" for index in range(1, 121)]
+    keys = ["lineage_z", "lineage_a"]
+    pairs = [{"key": key, "cell_id": cell} for key in keys for cell in source[:80]]
+    assert len(pairs) == 160
+    assert len(pairs) != len(source) * len(keys)
+    assert [pair["key"] for pair in pairs] == [keys[0]] * 80 + [keys[1]] * 80
