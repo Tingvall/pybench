@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from pybench.operation_packs import OperationPackError, canonical_sha256
 from pybench.operation_packs_v2 import _identity, protocol_asset
@@ -20,6 +21,7 @@ SPARSE_DOMAINS = {
     "scworkbench.operation_pack.sparse_family_g1_axis_evidence.v3",
     "scworkbench.operation_pack.sparse_family_provisional_grant.v1",
     "scworkbench.operation_pack.sparse_family_layout_declaration.v1",
+    "scworkbench.operation_pack.sparse_family_pair_order.v1",
     "scworkbench.operation_pack.sparse_family_layout_seal.v1",
     "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
     "scworkbench.operation_pack.observed_sparse_cell_family.v1",
@@ -45,7 +47,7 @@ def _baseline_request() -> dict:
     return request
 
 
-def test_python_manifest_sparse_policy_is_rejected_at_admission(monkeypatch):
+def test_python_manifest_sparse_policy_is_rejected_at_admission():
     manifest = json.loads(REFERENCE_MANIFEST.read_text())
     operation = next(
         item
@@ -73,7 +75,6 @@ def test_python_manifest_sparse_policy_is_rejected_at_admission(monkeypatch):
     )
     operation.setdefault("dimension_policies", []).append(policy)
 
-    monkeypatch.setattr("pybench.operation_packs_v3._schema_errors", lambda *_: [])
     with pytest.raises(OperationPackError) as caught:
         validate_manifest_v3(manifest)
 
@@ -116,8 +117,7 @@ def test_sparse_family_identity_stages_match_in_a_separate_python_process():
         or "standalone_sparse_cell_family_grants" in case["preimage"]
         or "sparse_cell_family_observations" in case["preimage"]
     }
-    if not cases:
-        pytest.skip("authoritative sparse cell-family identity corpus is pending")
+    assert len(cases) == 14
     observed_domains = {case["identity"]["scheme"] for case in cases.values()}
     assert observed_domains == SPARSE_DOMAINS | {
         "scworkbench.operation_pack.transition_request.v3",
@@ -160,3 +160,67 @@ print(json.dumps({
     assert json.loads(result.stdout) == {
         name: case["identity"]["sha256"] for name, case in cases.items()
     }
+
+
+def test_sparse_family_shared_schemas_and_positive_records_are_closed():
+    roots = {
+        name: json.loads(protocol_asset(name).read_text())
+        for name in (
+            "operation-pack-v3.schema.json",
+            "operation-pack-transition-request-v3.schema.json",
+            "operation-pack-transition-receipt-v3.schema.json",
+        )
+    }
+    for root in roots.values():
+        Draft202012Validator.check_schema(root)
+    cases = {case["name"]: case["value"] for case in _corpus()["cases"]}
+
+    def validate_def(file: str, definition: str, value: object) -> None:
+        schema = copy.deepcopy(roots[file]["$defs"][definition])
+        schema["$defs"] = roots[file]["$defs"]
+        assert not list(Draft202012Validator(schema).iter_errors(value))
+
+    manifest_file = "operation-pack-v3.schema.json"
+    request_file = "operation-pack-transition-request-v3.schema.json"
+    receipt_file = "operation-pack-transition-receipt-v3.schema.json"
+    validate_def(manifest_file, "dimension_policy", cases["sparse_manifest_policy"])
+    for name, definition in (
+        ("sparse_typed_source_axis", "sparse_family_source_axis"),
+        ("sparse_g1_axis_evidence_v2", "sparse_family_g1_axis_evidence"),
+        ("sparse_g1_axis_evidence_v3", "sparse_family_g1_axis_evidence"),
+        ("sparse_g1_source_axis_v2", "sparse_family_source_axis"),
+        ("sparse_g1_source_axis_v3", "sparse_family_source_axis"),
+        ("sparse_provisional_grant", "standalone_sparse_cell_family_grant"),
+        ("sparse_layout_declaration", "sparse_family_layout_declaration"),
+    ):
+        validate_def(request_file, definition, cases[name])
+    for name, definition in (
+        ("sparse_layout_seal", "sparse_cell_family_layout_seal"),
+        ("sparse_sealed_writer_grant", "sparse_cell_family_sealed_output_grant"),
+        ("sparse_observed_output", "sparse_cell_family_observation"),
+    ):
+        validate_def(receipt_file, definition, cases[name])
+    assert not list(
+        Draft202012Validator(roots[request_file]).iter_errors(cases["sparse_success_request"])
+    )
+    assert not list(
+        Draft202012Validator(roots[receipt_file]).iter_errors(cases["sparse_success_receipt"])
+    )
+
+
+def test_sparse_family_negative_schema_corpus_rejects():
+    roots = {
+        name: json.loads(protocol_asset(name).read_text())
+        for name in (
+            "operation-pack-v3.schema.json",
+            "operation-pack-transition-request-v3.schema.json",
+            "operation-pack-transition-receipt-v3.schema.json",
+        )
+    }
+    negatives = [case for case in _corpus()["negative_cases"] if case["name"].startswith("sparse_")]
+    assert len(negatives) == 5
+    for case in negatives:
+        root = roots[case["schema_file"]]
+        schema = copy.deepcopy(root["$defs"][case["definition"]])
+        schema["$defs"] = root["$defs"]
+        assert list(Draft202012Validator(schema).iter_errors(case["value"])), case["name"]

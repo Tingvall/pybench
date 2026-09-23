@@ -106,7 +106,7 @@ def test_derived_fitted_axis_identity_corpus_is_closed_and_reproduced_by_python(
     cases = _cases()
     dfa_cases = {name: case for name, case in cases.items() if name.startswith("dfa_")}
     assert set(dfa_cases) == DFA_CASE_NAMES
-    assert len(cases) == 142
+    assert len([name for name in cases if not name.startswith("sparse_")]) == 142
     for case in dfa_cases.values():
         expected = case["identity"]
         assert canonical_sha256(case["preimage"]) == expected["sha256"]
@@ -115,7 +115,7 @@ def test_derived_fitted_axis_identity_corpus_is_closed_and_reproduced_by_python(
     legacy = [
         {"name": case["name"], "identity": case["identity"]}
         for case in _corpus()["cases"]
-        if not case["name"].startswith("dfa_")
+        if not case["name"].startswith(("dfa_", "sparse_"))
     ]
     assert len(legacy) == 119
     assert hashlib.sha256(canonical_json(legacy).encode()).hexdigest() == (
