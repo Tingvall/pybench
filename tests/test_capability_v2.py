@@ -197,7 +197,18 @@ def _protocol_inventory(root: Path) -> dict[str, str]:
 
 def test_schema_and_all_fixtures_are_byte_identical_to_forge():
     forge_protocol = scworkbench_protocol_directory(REPO / "protocol")
-    _assert_protocol_inventories_match(REPO / "protocol", forge_protocol)
+    local = _protocol_inventory(REPO / "protocol")
+    external = _protocol_inventory(forge_protocol)
+    # Python's runtime-only v4 schema is not a cross-language protocol asset.
+    python_runtime_schema = "pybench-op-v4-python-runtime.schema.json"
+    assert set(local) - set(external) == {python_runtime_schema}
+    assert local[python_runtime_schema] == (
+        "b2ae886b2c3095159f9bb07de6a826f4e14498481600b6e2bb9656cd65637857"
+    )
+    assert len(external) == 31
+    assert {name: digest for name, digest in local.items() if name != python_runtime_schema} == (
+        external
+    )
     assert (
         hashlib.sha256((REPO / "protocol/pybench-op-v2.schema.json").read_bytes()).hexdigest()
         == "d5e80b58e4f18b37d0e906e7dac127fd17fbb88ea56dd83926406691303b655b"
