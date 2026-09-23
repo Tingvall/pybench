@@ -21193,24 +21193,30 @@
         "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
         "sha256": "c8cd80214bc8f651622c6fb4bc2d2661fb2ab774ffd0d0c1975d5ebf47789155"
       },
-      "value": [
-        {
-          "key": "zeta|alpha",
-          "cell_id": "cell_2"
-        },
-        {
-          "key": "zeta|alpha",
-          "cell_id": "cell_1"
-        },
-        {
-          "key": "alpha",
-          "cell_id": "cell_10"
-        },
-        {
-          "key": "alpha",
-          "cell_id": "x|y"
+      "value": {
+        "pairs": [
+          {
+            "key": "zeta|alpha",
+            "cell_id": "cell_2"
+          },
+          {
+            "key": "zeta|alpha",
+            "cell_id": "cell_1"
+          },
+          {
+            "key": "alpha",
+            "cell_id": "cell_10"
+          },
+          {
+            "key": "alpha",
+            "cell_id": "x|y"
+          }
+        ],
+        "pair_order_identity": {
+          "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
+          "sha256": "c8cd80214bc8f651622c6fb4bc2d2661fb2ab774ffd0d0c1975d5ebf47789155"
         }
-      ]
+      }
     },
     {
       "name": "sparse_swapped_key_pair_order",
@@ -21236,24 +21242,30 @@
         "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
         "sha256": "a34b69a84200a0409cfcb0ca22907a99889e4f780b2350501b43618238159661"
       },
-      "value": [
-        {
-          "key": "alpha",
-          "cell_id": "cell_10"
-        },
-        {
-          "key": "alpha",
-          "cell_id": "x|y"
-        },
-        {
-          "key": "zeta|alpha",
-          "cell_id": "cell_2"
-        },
-        {
-          "key": "zeta|alpha",
-          "cell_id": "cell_1"
+      "value": {
+        "pairs": [
+          {
+            "key": "alpha",
+            "cell_id": "cell_10"
+          },
+          {
+            "key": "alpha",
+            "cell_id": "x|y"
+          },
+          {
+            "key": "zeta|alpha",
+            "cell_id": "cell_2"
+          },
+          {
+            "key": "zeta|alpha",
+            "cell_id": "cell_1"
+          }
+        ],
+        "pair_order_identity": {
+          "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
+          "sha256": "a34b69a84200a0409cfcb0ca22907a99889e4f780b2350501b43618238159661"
         }
-      ]
+      }
     },
     {
       "name": "sparse_separator_pair_left",
@@ -21267,12 +21279,18 @@
         "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
         "sha256": "3c0429e443be9605a489bec6611016ef17b70d64de9fa06219ea69416278cbef"
       },
-      "value": [
-        {
-          "key": "a\u001cb",
-          "cell_id": "c"
+      "value": {
+        "pairs": [
+          {
+            "key": "a\u001cb",
+            "cell_id": "c"
+          }
+        ],
+        "pair_order_identity": {
+          "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
+          "sha256": "3c0429e443be9605a489bec6611016ef17b70d64de9fa06219ea69416278cbef"
         }
-      ]
+      }
     },
     {
       "name": "sparse_separator_pair_right",
@@ -21286,12 +21304,18 @@
         "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
         "sha256": "67834e0277d0c39b8c544ccfae1152b148e5ad7667730acd7bd759a280eaaa55"
       },
-      "value": [
-        {
-          "key": "a",
-          "cell_id": "b\u001cc"
+      "value": {
+        "pairs": [
+          {
+            "key": "a",
+            "cell_id": "b\u001cc"
+          }
+        ],
+        "pair_order_identity": {
+          "scheme": "scworkbench.operation_pack.sparse_family_pair_order.v1",
+          "sha256": "67834e0277d0c39b8c544ccfae1152b148e5ad7667730acd7bd759a280eaaa55"
         }
-      ]
+      }
     },
     {
       "name": "sparse_layout_seal",
@@ -21388,7 +21412,7 @@
         "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
         "base_grant_identity": {
           "scheme": "scworkbench.operation_pack.output_grant.v3",
-          "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+          "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
         },
         "layout_seal_identity": {
           "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -21407,14 +21431,14 @@
       },
       "identity": {
         "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-        "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+        "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
         "scope": "sealed output grant excluding grant_identity"
       },
       "value": {
         "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
         "base_grant_identity": {
           "scheme": "scworkbench.operation_pack.output_grant.v3",
-          "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+          "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
         },
         "layout_seal_identity": {
           "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -21432,7 +21456,7 @@
         },
         "grant_identity": {
           "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-          "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+          "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
           "scope": "sealed output grant excluding grant_identity"
         }
       }
@@ -22579,7 +22603,7 @@
           "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
           "base_grant_identity": {
             "scheme": "scworkbench.operation_pack.output_grant.v3",
-            "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+            "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
           },
           "layout_seal_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -22597,7 +22621,7 @@
           },
           "grant_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-            "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+            "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
             "scope": "sealed output grant excluding grant_identity"
           }
         },
@@ -22644,7 +22668,7 @@
       },
       "identity": {
         "scheme": "scworkbench.operation_pack.observed_sparse_cell_family.v1",
-        "sha256": "d89042571a6c0213d99be8f1f29041e3029265e427d6e61a06fda95c6dc07843",
+        "sha256": "1f083993841c58a36f7b22e0d4ab6a5c4b76c75b95bf996087ec36e217152716",
         "scope": "observation excluding observation_identity"
       },
       "value": {
@@ -22734,7 +22758,7 @@
           "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
           "base_grant_identity": {
             "scheme": "scworkbench.operation_pack.output_grant.v3",
-            "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+            "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
           },
           "layout_seal_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -22752,7 +22776,7 @@
           },
           "grant_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-            "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+            "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
             "scope": "sealed output grant excluding grant_identity"
           }
         },
@@ -22798,7 +22822,7 @@
         "validation_status": "passed",
         "observation_identity": {
           "scheme": "scworkbench.operation_pack.observed_sparse_cell_family.v1",
-          "sha256": "d89042571a6c0213d99be8f1f29041e3029265e427d6e61a06fda95c6dc07843",
+          "sha256": "1f083993841c58a36f7b22e0d4ab6a5c4b76c75b95bf996087ec36e217152716",
           "scope": "observation excluding observation_identity"
         }
       }
@@ -23256,7 +23280,7 @@
               "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
               "base_grant_identity": {
                 "scheme": "scworkbench.operation_pack.output_grant.v3",
-                "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+                "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
               },
               "layout_seal_identity": {
                 "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -23274,7 +23298,7 @@
               },
               "grant_identity": {
                 "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-                "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+                "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
                 "scope": "sealed output grant excluding grant_identity"
               }
             },
@@ -23320,7 +23344,7 @@
             "validation_status": "passed",
             "observation_identity": {
               "scheme": "scworkbench.operation_pack.observed_sparse_cell_family.v1",
-              "sha256": "d89042571a6c0213d99be8f1f29041e3029265e427d6e61a06fda95c6dc07843",
+              "sha256": "1f083993841c58a36f7b22e0d4ab6a5c4b76c75b95bf996087ec36e217152716",
               "scope": "observation excluding observation_identity"
             }
           }
@@ -23328,7 +23352,7 @@
       },
       "identity": {
         "scheme": "scworkbench.operation_pack.transition_receipt.v3",
-        "sha256": "ac957c1bc612bc7ce93dd79e610e79bbe0555b0583ef62d700db409f680dfc4a",
+        "sha256": "7fba504c764f1450c8a2027652ded05d32f1dcc5522e4192520eadccc5f38511",
         "scope": "receipt excluding receipt_identity"
       },
       "value": {
@@ -23696,7 +23720,7 @@
         },
         "receipt_identity": {
           "scheme": "scworkbench.operation_pack.transition_receipt.v3",
-          "sha256": "ac957c1bc612bc7ce93dd79e610e79bbe0555b0583ef62d700db409f680dfc4a",
+          "sha256": "7fba504c764f1450c8a2027652ded05d32f1dcc5522e4192520eadccc5f38511",
           "scope": "receipt excluding receipt_identity"
         },
         "sparse_cell_family_observations": [
@@ -23787,7 +23811,7 @@
               "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
               "base_grant_identity": {
                 "scheme": "scworkbench.operation_pack.output_grant.v3",
-                "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+                "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
               },
               "layout_seal_identity": {
                 "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -23805,7 +23829,7 @@
               },
               "grant_identity": {
                 "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-                "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+                "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
                 "scope": "sealed output grant excluding grant_identity"
               }
             },
@@ -23851,7 +23875,7 @@
             "validation_status": "passed",
             "observation_identity": {
               "scheme": "scworkbench.operation_pack.observed_sparse_cell_family.v1",
-              "sha256": "d89042571a6c0213d99be8f1f29041e3029265e427d6e61a06fda95c6dc07843",
+              "sha256": "1f083993841c58a36f7b22e0d4ab6a5c4b76c75b95bf996087ec36e217152716",
               "scope": "observation excluding observation_identity"
             }
           }
@@ -29440,7 +29464,7 @@
           "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
           "base_grant_identity": {
             "scheme": "scworkbench.operation_pack.output_grant.v3",
-            "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+            "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
           },
           "layout_seal_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -29458,7 +29482,7 @@
           },
           "grant_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-            "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+            "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
             "scope": "sealed output grant excluding grant_identity"
           }
         },
@@ -29504,7 +29528,7 @@
         "validation_status": "passed",
         "observation_identity": {
           "scheme": "scworkbench.operation_pack.observed_sparse_cell_family.v1",
-          "sha256": "d89042571a6c0213d99be8f1f29041e3029265e427d6e61a06fda95c6dc07843",
+          "sha256": "1f083993841c58a36f7b22e0d4ab6a5c4b76c75b95bf996087ec36e217152716",
           "scope": "observation excluding observation_identity"
         }
       },
@@ -29674,7 +29698,7 @@
           "schema": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
           "base_grant_identity": {
             "scheme": "scworkbench.operation_pack.output_grant.v3",
-            "sha256": "72b0e6c664dc6f9f24cb67b5753398fdc8c344457b1a444fa3e47df545fb180e"
+            "sha256": "ea65218c3aa90492fe1cbe57712030f0e893584dcbc5fb9d06746882bdbe6c1f"
           },
           "layout_seal_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_layout_seal.v1",
@@ -29692,7 +29716,7 @@
           },
           "grant_identity": {
             "scheme": "scworkbench.operation_pack.sparse_family_sealed_output_grant.v1",
-            "sha256": "ae18ca0206b5fa719c7984b4be06f2d7d9f8396dc7cd954b7aa27bc9e8b3e769",
+            "sha256": "18a8149474ae71ec8c6e093c829915fe4c9c99ff2f5127a88df005375fff1a4e",
             "scope": "sealed output grant excluding grant_identity"
           }
         },
@@ -29738,7 +29762,7 @@
         "validation_status": "passed",
         "observation_identity": {
           "scheme": "scworkbench.operation_pack.observed_sparse_cell_family.v1",
-          "sha256": "4c93f07cf17cb21eea32ec1d09674be53621ebd34ac450fbc21d6d87b4a7b05a",
+          "sha256": "c7983f4ccba2361b8fc78a29e0d87705aa3e0e74696e8858c367cc570e0a7780",
           "scope": "observation excluding observation_identity"
         }
       },

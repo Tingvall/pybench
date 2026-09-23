@@ -253,7 +253,7 @@ def main() -> None:
             "name": "sparse_structured_pair_order",
             "preimage": pairs,
             "identity": pair_identity,
-            "value": pairs,
+            "value": {"pairs": pairs, "pair_order_identity": pair_identity},
         }
     )
     swapped_pairs = pairs[2:] + pairs[:2]
@@ -262,7 +262,12 @@ def main() -> None:
             "name": "sparse_swapped_key_pair_order",
             "preimage": swapped_pairs,
             "identity": identity(PREFIX + "sparse_family_pair_order.v1", swapped_pairs),
-            "value": swapped_pairs,
+            "value": {
+                "pairs": swapped_pairs,
+                "pair_order_identity": identity(
+                    PREFIX + "sparse_family_pair_order.v1", swapped_pairs
+                ),
+            },
         }
     )
     for name, pair in (
@@ -274,7 +279,10 @@ def main() -> None:
                 "name": name,
                 "preimage": pair,
                 "identity": identity(PREFIX + "sparse_family_pair_order.v1", pair),
-                "value": pair,
+                "value": {
+                    "pairs": pair,
+                    "pair_order_identity": identity(PREFIX + "sparse_family_pair_order.v1", pair),
+                },
             }
         )
     cell_order_ids = [identity("scworkbench.cell_order.v1", group["cell_ids"]) for group in per_key]
@@ -299,7 +307,7 @@ def main() -> None:
     )
     sealed = {
         "schema": PREFIX + "sparse_family_sealed_output_grant.v1",
-        "base_grant_identity": reference(descriptor["grant_identity"]),
+        "base_grant_identity": base_grant_identity,
         "layout_seal_identity": reference(seal["seal_identity"]),
         "output_name": "sparse_family",
         "kind": "cell_vector_family",
