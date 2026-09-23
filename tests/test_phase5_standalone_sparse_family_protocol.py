@@ -297,3 +297,24 @@ def test_g1_model_read_schema_accepts_v2_and_v3_linkage_but_rejects_mixed_eviden
     missing = copy.deepcopy(grant)
     missing["model_source_linkage"].pop("selected_axis_evidence")
     assert list(validator.iter_errors(missing))
+
+
+def test_g1_sibling_write_schema_accepts_v2_and_v3_linkage_but_rejects_mixed_evidence():
+    corpus = {case["name"]: case["value"] for case in _corpus()["cases"]}
+    root = json.loads(
+        protocol_asset("operation-pack-transition-request-v3.schema.json").read_text()
+    )
+    schema = copy.deepcopy(root["$defs"]["contained_model_sibling_write_grant"])
+    schema["$defs"] = root["$defs"]
+    validator = Draft202012Validator(schema)
+    grant = copy.deepcopy(corpus["contained_model_sibling_write_grant"])
+    assert not list(validator.iter_errors(grant))
+
+    grant["model_source_linkage"] = copy.deepcopy(corpus["dfa_model_source_linkage_v3"])
+    assert not list(validator.iter_errors(grant))
+    mixed = copy.deepcopy(grant)
+    mixed["model_source_linkage"]["source_snapshot_id"] = "v2-only-field"
+    assert list(validator.iter_errors(mixed))
+    missing = copy.deepcopy(grant)
+    missing["model_source_linkage"].pop("selected_axis_evidence")
+    assert list(validator.iter_errors(missing))

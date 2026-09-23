@@ -37,7 +37,7 @@ from v3_helpers import _input_descriptor, fixture_inputs, make_request
 FIXTURE = Path(__file__).parent / "fixtures" / "operation-pack-v3-python-reference"
 SHARED_DIGESTS = {
     "operation-pack-v3.schema.json": "ab58455a70e51e4efc23e4956ac71b708d89ed536a26991d8db0f462c2f4489e",
-    "operation-pack-transition-request-v3.schema.json": "99bee737731a02fbd485851664f04d9b0a649ce13652cd4ee65597f730605103",
+    "operation-pack-transition-request-v3.schema.json": "e9aae008ef0405b448b236e4ec283bf09fd2604108b638c126e1eddf5cbd5edd",
     "operation-pack-transition-receipt-v3.schema.json": "7107c55294d119eedeba2a6d85a5fa32e497a8db4e3d24073a85fe649cd7b196",
     "fixtures/operation-pack-v3/identities.json": "27f0e7317298815b82dc7ab4d2b7f4967549a8f90663bf5d3f337d1e5bca9793",
 }

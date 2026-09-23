@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from pybench.operation_packs import OperationPackError
 from pybench.operation_packs_v2 import _identity, protocol_asset
@@ -206,6 +207,57 @@ def _self_linked_request(discovery, stage: Path, *, reader_calls: int = 1) -> di
     return request
 
 
+def _v3_self_linked_request(discovery, stage: Path) -> dict:
+    request = _self_linked_request(discovery, stage)
+    corpus = json.loads(protocol_asset("fixtures/operation-pack-v3/identities.json").read_text())
+    linkage = copy.deepcopy(
+        next(
+            case["value"]
+            for case in corpus["cases"]
+            if case["name"] == "dfa_model_source_linkage_v3"
+        )
+    )
+    linkage["engine"] = "synthetic"
+    linkage["model_type"] = "synthetic_trajectory"
+    linkage["source_space_id"] = "fit-space"
+    linkage.pop("linkage_identity")
+    linkage["linkage_identity"] = _identity(
+        linkage["schema"], linkage, "linkage excluding linkage_identity"
+    )
+    grant = request["self_linked_model_payload_grants"][0]
+    grant["model_source_linkage"] = linkage
+    grant["model_source_linkage_identity"] = _plain(linkage["linkage_identity"])
+    descriptor = request["inputs"][0]["descriptor"]
+    content_identity = _identity(
+        "scworkbench.model_ref.content.v1",
+        {
+            "engine": linkage["engine"],
+            "model_type": linkage["model_type"],
+            "linkage_identity": linkage["linkage_identity"],
+            "tree_manifest_identity": _plain(grant["tree_manifest"]["manifest_identity"]),
+        },
+    )
+    descriptor["model_linkage_identity"] = grant["model_source_linkage_identity"]
+    descriptor["content_identity"] = content_identity
+    descriptor.pop("descriptor_identity")
+    descriptor["descriptor_identity"] = _identity(
+        "scworkbench.operation_pack.input_descriptor.v2",
+        descriptor,
+        "descriptor excluding descriptor_identity",
+    )
+    grant["input_descriptor_identity"] = _plain(descriptor["descriptor_identity"])
+    grant["model_content_identity"] = content_identity
+    grant.pop("grant_identity")
+    grant["grant_identity"] = _identity(
+        SELF_LINKED_GRANT_SCHEMA, grant, "grant excluding grant_identity"
+    )
+    capability = request["execution_capability"]
+    capability["reader_grants"][0]["grant_identity"] = grant["grant_identity"]
+    capability["self_linked_model_payload_grant_identities"] = [_plain(grant["grant_identity"])]
+    _refresh_request(request)
+    return request
+
+
 def _sibling_request(discovery, stage: Path, *, omit_terminal: str = "none") -> dict:
     dims = [2, 1]
     request = _request_v4(
@@ -343,6 +395,36 @@ def test_self_linked_model_executes_and_records_complete_observation(active_v3, 
     assert receipt["self_linked_model_payload_reads"][0]["use_count"] == 1
     assert receipt["self_linked_model_payload_reads"][0]["integrity_status"] == "unchanged"
     assert validate_receipt_v4(receipt, request, active_v3, tmp_path) == receipt
+
+
+def test_v3_g1_model_read_is_schema_valid_but_unsupported_before_stage_mutation(
+    installed_v3, tmp_path
+):
+    request = _v3_self_linked_request(installed_v3, tmp_path)
+    schema = json.loads(
+        protocol_asset("operation-pack-transition-request-v3.schema.json").read_text()
+    )
+    assert not list(Draft202012Validator(schema).iter_errors(request))
+    before = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    for call in (
+        lambda: validate_request_v4(request, installed_v3),
+        lambda: execute_operation_pack_v4(request, installed_v3, tmp_path),
+    ):
+        with pytest.raises(OperationPackError) as caught:
+            call()
+        assert caught.value.code == "OPERATION_PACK_PROTOCOL_INCOMPATIBLE"
+        assert caught.value.details["phase"] == "staging"
+        assert "derived fitted-axis model-read authority" in str(caught.value)
+    after = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
 
 
 @pytest.mark.parametrize("reader_calls", [0, 2])

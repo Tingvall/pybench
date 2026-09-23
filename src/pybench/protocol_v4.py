@@ -325,6 +325,16 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "staging",
         )
     _validate_schema(value, _REQUEST_ASSET, "PYBENCH_CAPABILITY_MISMATCH", "staging")
+    if any(
+        grant["model_source_linkage"].get("schema")
+        == "scworkbench.operation_pack.model_source_linkage.v3"
+        for grant in value.get("self_linked_model_payload_grants", [])
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement derived fitted-axis model-read authority",
+            "staging",
+        )
     if value.get("derived_fitted_axis_grants"):
         _fail(
             "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
