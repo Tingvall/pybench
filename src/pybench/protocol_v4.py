@@ -324,6 +324,12 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "Python execution does not implement standalone sparse cell-family authority",
             "staging",
         )
+    if "sealed_relation_family_grants" in value:
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement sealed relation-family authority",
+            "staging",
+        )
     _validate_schema(value, _REQUEST_ASSET, "PYBENCH_CAPABILITY_MISMATCH", "staging")
     if any(
         grant["model_source_linkage"].get("schema")
