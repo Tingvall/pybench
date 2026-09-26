@@ -99,6 +99,12 @@ def test_phase6_shared_schemas_and_canonical_identity_fixture():
         "#/$defs/matrix_model_source_linkage_v1",
     }
     grant = fixture["contained_matrix_model_sibling_write_grant"]
+    paired_id = grant["paired_space_output"]["allocated_id"]
+    assert fixture["model_source_linkage"]["paired_fitted_space_id"] == paired_id
+    assert grant["model_source_linkage"]["paired_fitted_space_id"] == paired_id
+    assert (
+        fixture["matrix_model_sibling_closure_observation"]["paired_fitted_space_id"] == paired_id
+    )
     closure_preimage = {
         "model_output": grant["output"],
         "model_grant_identity": _identity(
@@ -135,6 +141,32 @@ def test_phase6_unknown_fields_and_changed_snapshot_fail_closed():
             linkage["linkage_identity"]["scope"],
         )
         != linkage["linkage_identity"]
+    )
+    linkage = copy.deepcopy(fixture["model_source_linkage"])
+    linkage["paired_fitted_space_id"] = "space_foreign"
+    assert (
+        _identity(
+            linkage["linkage_identity"]["scheme"],
+            {key: child for key, child in linkage.items() if key != "linkage_identity"},
+            linkage["linkage_identity"]["scope"],
+        )
+        != linkage["linkage_identity"]
+    )
+    del linkage["paired_fitted_space_id"]
+    assert list(
+        Draft202012Validator(_definition(schema, "matrix_model_source_linkage_v1")).iter_errors(
+            linkage
+        )
+    )
+    observation = copy.deepcopy(fixture["matrix_model_sibling_closure_observation"])
+    observation["paired_fitted_space_id"] = "space_foreign"
+    assert (
+        _identity(
+            observation["observation_identity"]["scheme"],
+            {key: child for key, child in observation.items() if key != "observation_identity"},
+            observation["observation_identity"]["scope"],
+        )
+        != observation["observation_identity"]
     )
     grant = copy.deepcopy(fixture["contained_matrix_model_sibling_write_grant"])
     grant["source_bundle_path"] = "/forbidden"
