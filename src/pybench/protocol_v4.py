@@ -330,6 +330,17 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "Python execution does not implement sealed relation-family authority",
             "staging",
         )
+    if isinstance(value.get("outputs"), list) and any(
+        isinstance(item, Mapping)
+        and isinstance(item.get("descriptor"), Mapping)
+        and "contained_matrix_model_sibling_write_grant" in item["descriptor"]
+        for item in value["outputs"]
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement matrix-trained contained-model authority",
+            "staging",
+        )
     _validate_schema(value, _REQUEST_ASSET, "PYBENCH_CAPABILITY_MISMATCH", "staging")
     if any(
         grant["model_source_linkage"].get("schema")

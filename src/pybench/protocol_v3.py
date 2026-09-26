@@ -115,6 +115,17 @@ def validate_request_v3(request: Mapping[str, Any], discovery: PackDiscoveryV2) 
             "V3 execution rejects non-v3 process transport",
             "staging",
         )
+    if isinstance(value.get("outputs"), list) and any(
+        isinstance(item, Mapping)
+        and isinstance(item.get("descriptor"), Mapping)
+        and "contained_matrix_model_sibling_write_grant" in item["descriptor"]
+        for item in value["outputs"]
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement matrix-trained contained-model authority",
+            "staging",
+        )
     _validate_schema(value, _REQUEST_ASSET, "PYBENCH_CAPABILITY_MISMATCH", "staging")
     _no_absolute_paths(value)
     _assert_self_identity(
