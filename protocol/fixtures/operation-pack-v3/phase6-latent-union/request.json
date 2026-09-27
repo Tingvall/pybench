@@ -5,9 +5,9 @@
   "pack_abi_version": "3",
   "canonical_json_scheme": "scworkbench.operation_pack.canonical_json.v1",
   "transition": {
-    "transition_id": "transition_hicn3nswr2mcwupr",
-    "session_id": "session_vu4rfk5nvsou",
-    "run_id": "run_d8d839qc8h79",
+    "transition_id": "transition_4arb9jvaix7lyrh8",
+    "session_id": "session_iui0if07k5ew",
+    "run_id": "run_f6q31v049ads",
     "checkpoint_generation": "ephemeral",
     "source_state_identity": {
       "scheme": "scworkbench.scientific_state.v1",
@@ -16,30 +16,30 @@
     "transition_identity": {
       "scheme": "scworkbench.operation_pack.transition.v2",
       "scope": "transition excluding transition_identity",
-      "sha256": "cf4eb535ffeb2923c46be0053f846e868039fe3a343261e89fb77c523afd40c4"
+      "sha256": "e6717ef97cf19f8032ed18a83043ddc2cc0e71078765641767882e1dc146094d"
     }
   },
   "operation_authentication": {
     "name": "scwblatent::model_bound_latent_union",
     "pack_identity": {
       "scheme": "scworkbench.operation_pack.pack.v3",
-      "sha256": "554e0f7a9f9dccd3b8a639d7aea3c0a7ac817c754a128a66863a50b8d97d6843"
+      "sha256": "c9c81e772a4c2da26afb711cf6cc9f10ed12151143d2f71a2ab49b52f6ee2f0f"
     },
     "manifest_identity": {
       "scheme": "scworkbench.operation_pack.manifest.v3",
-      "sha256": "addfcff662195493570de3dd53f3930b1ed7d2688c6a4d492a040ec7ead7cc44"
+      "sha256": "d10449db641765c1e112a301f4ad744ba1078c1f5b49ed9257c231c1149ab3be"
     },
     "manifest_source_identity": {
       "scheme": "scworkbench.operation_pack.manifest_source.bytes.v1",
-      "sha256": "b2784f0fff3aa559dbc80c649a8f228a06b9cf7cc4a0999870c32e64d7bc9612"
+      "sha256": "ee2bab97a9b94d0f516699145337ed9953d0f0c10c5dfd5f01c63ba847c56f3e"
     },
     "distribution_identity": {
       "scheme": "scworkbench.operation_pack.content.v1",
-      "sha256": "a97bac001383a92499aab944b1f304e249b9052011db7d9a3a184afd4b8f0423"
+      "sha256": "5fdbc620c6aac851f9388d375b9306e646f3f0ecd560d0f9829cb29f3ac7feda"
     },
     "operation_definition_identity": {
       "scheme": "scworkbench.operation_pack.definition.v3",
-      "sha256": "5fe5c14a64fb70bd2ecfc7b5be7de13674192ec09e6bc7352441094332eb255e"
+      "sha256": "1ed769b77455df46269ba2a0e8fe45c86f033cab5839c62863407036c52e3e8b"
     },
     "entry_point": {
       "value": "scwbLatent::register_operation_pack",
@@ -94,7 +94,7 @@
         },
         "ancestry_identity": {
           "scheme": "scworkbench.provenance.ancestry.v1",
-          "sha256": "78484eb0696922fa482a0a924495b723acbcb012f2859699d9bef615ef50958c"
+          "sha256": "61eac90b9f704806861cdc7b7adbbba3db60347b9511e2f773d3e69f1f8413e3"
         },
         "payload_manifest_identity": {
           "scheme": "scworkbench.operation_pack.payload_manifest.v2",
@@ -111,7 +111,7 @@
         "descriptor_identity": {
           "scheme": "scworkbench.operation_pack.input_descriptor.v2",
           "scope": "descriptor excluding descriptor_identity",
-          "sha256": "e769773f9bbb6808498e22287f21bc81e448d511344188fdb97168daadfc8f8a"
+          "sha256": "1e5d04e6ff482891f8b983a2c56276f26753777503656ba3b390d53e0261af28"
         }
       }
     },
@@ -222,14 +222,14 @@
     }
   ],
   "params": {
-    "space_id_out": "joint_latent",
+    "space_id_out": "historical_joint",
     "chunk_size": 4,
     "overwrite": false
   },
   "outputs": [
     {
       "name": "space",
-      "allocated_id": "joint_latent",
+      "allocated_id": "historical_joint",
       "descriptor": {
         "category": "materialization",
         "kind": "space",
@@ -281,14 +281,14 @@
             "union_summary"
           ],
           "target_kind": "space",
-          "target_id": "joint_latent",
+          "target_id": "historical_joint",
           "mode": "add",
           "conflict_policy": "require_absent_v1",
           "preimage": {
             "state": "absent",
             "registry_absence_identity": {
               "scheme": "scworkbench.operation_pack.registry_absence.v1",
-              "sha256": "56cf179e06f7135ac25d78ef9c009cda8c9fcc91a54ee44fd860d5df95c0c01c"
+              "sha256": "7d49b34d73720bdc902c1ce8a55d9c30600faf942957dbb1350f3577773c80a9"
             },
             "transition_source_state_identity": {
               "scheme": "scworkbench.scientific_state.v1",
@@ -298,19 +298,19 @@
           "publication_grant_identity": {
             "scheme": "scworkbench.operation_pack.materialization_publication_grant.v1",
             "scope": "grant excluding publication_grant_identity",
-            "sha256": "6767d1efe2d0cfcb47c3ec6dd81ff3ecd3f7faf4483d33f0f660c5272209648e"
+            "sha256": "9aa27b3ff4c185bad25a07c268af2989f8f487dbe2d7cc992b8ba4ec4edb35da"
           }
         },
         "grant_identity": {
           "scheme": "scworkbench.operation_pack.output_grant.v3",
           "scope": "descriptor excluding grant_identity",
-          "sha256": "49578269f6a7f10f65ce139dcd4bed0f671a8c8dbbbdf4f40c183e4c31263cf6"
+          "sha256": "8932f49a0e165287e4f8a34148f6f5bd3a9273fbd08ed6786a00d7cc39f8361a"
         }
       }
     },
     {
       "name": "union_summary",
-      "allocated_id": "model_bound_union_summary_id_pbgb0l5m8uuc",
+      "allocated_id": "model_bound_union_summary_id_pt5guf6ltoya",
       "descriptor": {
         "category": "terminal_artifact",
         "kind": "obs_table",
@@ -342,15 +342,15 @@
     }
   ],
   "execution_capability": {
-    "capability_id": "capability_2zk3wgoch2b0y516",
+    "capability_id": "capability_62i51mtv5mt1q08y",
     "mode": "private_staging_write",
     "transition_identity": {
       "scheme": "scworkbench.operation_pack.transition.v2",
       "scope": "transition excluding transition_identity",
-      "sha256": "cf4eb535ffeb2923c46be0053f846e868039fe3a343261e89fb77c523afd40c4"
+      "sha256": "e6717ef97cf19f8032ed18a83043ddc2cc0e71078765641767882e1dc146094d"
     },
-    "session_id": "session_vu4rfk5nvsou",
-    "run_id": "run_d8d839qc8h79",
+    "session_id": "session_iui0if07k5ew",
+    "run_id": "run_f6q31v049ads",
     "checkpoint_generation": "ephemeral",
     "source_state_identity": {
       "scheme": "scworkbench.scientific_state.v1",
@@ -358,24 +358,24 @@
     },
     "staging_root_identity": {
       "scheme": "scworkbench.operation_pack.staging_root.v1",
-      "sha256": "356e315fcb8db0caf4a85d90da35d764725d01a873dc85963a670dbdbbed2dd8"
+      "sha256": "377aab899d1edd58e0211cb12a3f2bd83f6dccb0d5638d2a94cf4ff98382a5df"
     },
-    "lease_id": "lease_wxkwtjxgm6w9y5wa",
+    "lease_id": "lease_x2eypkefb3j2hlqd",
     "pack_identity": {
       "scheme": "scworkbench.operation_pack.pack.v3",
-      "sha256": "554e0f7a9f9dccd3b8a639d7aea3c0a7ac817c754a128a66863a50b8d97d6843"
+      "sha256": "c9c81e772a4c2da26afb711cf6cc9f10ed12151143d2f71a2ab49b52f6ee2f0f"
     },
     "distribution_identity": {
       "scheme": "scworkbench.operation_pack.content.v1",
-      "sha256": "a97bac001383a92499aab944b1f304e249b9052011db7d9a3a184afd4b8f0423"
+      "sha256": "5fdbc620c6aac851f9388d375b9306e646f3f0ecd560d0f9829cb29f3ac7feda"
     },
     "manifest_source_identity": {
       "scheme": "scworkbench.operation_pack.manifest_source.bytes.v1",
-      "sha256": "b2784f0fff3aa559dbc80c649a8f228a06b9cf7cc4a0999870c32e64d7bc9612"
+      "sha256": "ee2bab97a9b94d0f516699145337ed9953d0f0c10c5dfd5f01c63ba847c56f3e"
     },
     "operation_definition_identity": {
       "scheme": "scworkbench.operation_pack.definition.v3",
-      "sha256": "5fe5c14a64fb70bd2ecfc7b5be7de13674192ec09e6bc7352441094332eb255e"
+      "sha256": "1ed769b77455df46269ba2a0e8fe45c86f033cab5839c62863407036c52e3e8b"
     },
     "entry_point_identity": {
       "scheme": "scworkbench.operation_pack.entry_point.v2",
@@ -405,7 +405,7 @@
         "grant_identity": {
           "scheme": "scworkbench.operation_pack.producer_lineage_grant.v1",
           "scope": "grant excluding grant_identity",
-          "sha256": "31a2bec81ce40c0d1382d2685eda95f39a23c6acf97972674f3ec0638668aaad"
+          "sha256": "873260dc447aacfa7dd99c383d6a1972b640cda297287bbfe198b1bfb751f91c"
         }
       },
       {
@@ -414,7 +414,7 @@
         "grant_identity": {
           "scheme": "scworkbench.operation_pack.self_linked_contained_model_read_grant.v1",
           "scope": "grant excluding grant_identity",
-          "sha256": "3bb3b84e89eaf2d1467f529cfea2d357c178d6d96892b6c7ab0a1aac677ad630"
+          "sha256": "9697b757f43d87cfe1869118111ad64e0de6c3dfc7f87cefd26d4067185b31d8"
         }
       },
       {
@@ -443,7 +443,7 @@
         "grant_identity": {
           "scheme": "scworkbench.operation_pack.output_grant.v3",
           "scope": "descriptor excluding grant_identity",
-          "sha256": "49578269f6a7f10f65ce139dcd4bed0f671a8c8dbbbdf4f40c183e4c31263cf6"
+          "sha256": "8932f49a0e165287e4f8a34148f6f5bd3a9273fbd08ed6786a00d7cc39f8361a"
         }
       },
       {
@@ -470,25 +470,25 @@
     "producer_lineage_grant_identities": [
       {
         "scheme": "scworkbench.operation_pack.producer_lineage_grant.v1",
-        "sha256": "31a2bec81ce40c0d1382d2685eda95f39a23c6acf97972674f3ec0638668aaad"
+        "sha256": "873260dc447aacfa7dd99c383d6a1972b640cda297287bbfe198b1bfb751f91c"
       }
     ],
     "self_linked_model_payload_grant_identities": [
       {
         "scheme": "scworkbench.operation_pack.self_linked_contained_model_read_grant.v1",
-        "sha256": "3bb3b84e89eaf2d1467f529cfea2d357c178d6d96892b6c7ab0a1aac677ad630"
+        "sha256": "9697b757f43d87cfe1869118111ad64e0de6c3dfc7f87cefd26d4067185b31d8"
       }
     ],
     "derived_cell_output_axis_grant_identities": [
       {
         "scheme": "scworkbench.operation_pack.authenticated_derived_cell_output_axis_grant.v1",
-        "sha256": "7f5a3298faec2d892a7b44fde19645150a0722681e56f996027a0a0a429ca1ae"
+        "sha256": "8fba86677939100e85009919b8b361c99874536e9782c9fc9c89d7461748c823"
       }
     ],
     "capability_identity": {
       "scheme": "scworkbench.operation_pack.capability.v3",
       "scope": "capability excluding capability_identity",
-      "sha256": "df4daaf3cb8e4c2a6ccfc3e82a545408c25054f2d0e9a8a36b7dd604ca4945ba"
+      "sha256": "76ab98dbbdf547f7aff24a9292a5de417a3e8bf82a651452f4762242a707ae72"
     }
   },
   "typed_space_grants": [
@@ -711,7 +711,7 @@
       "model": {
         "input_descriptor_identity": {
           "scheme": "scworkbench.operation_pack.input_descriptor.v2",
-          "sha256": "e769773f9bbb6808498e22287f21bc81e448d511344188fdb97168daadfc8f8a"
+          "sha256": "1e5d04e6ff482891f8b983a2c56276f26753777503656ba3b390d53e0261af28"
         },
         "artifact_id": "model_ref_20260927_125424_lhfvh9sh",
         "content_identity": {
@@ -738,7 +738,7 @@
       "grant_identity": {
         "scheme": "scworkbench.operation_pack.producer_lineage_grant.v1",
         "scope": "grant excluding grant_identity",
-        "sha256": "31a2bec81ce40c0d1382d2685eda95f39a23c6acf97972674f3ec0638668aaad"
+        "sha256": "873260dc447aacfa7dd99c383d6a1972b640cda297287bbfe198b1bfb751f91c"
       }
     }
   ],
@@ -750,7 +750,7 @@
       "reader": "read_self_linked_contained_model_payload",
       "declaration_identity": {
         "scheme": "scworkbench.operation_pack.self_linked_contained_model_read.v1",
-        "sha256": "e54150dddece10b0e88d786bc30ff8c01ae4d953324257a56c55cc1c4c081ca5"
+        "sha256": "9fd99713f571817a8f4f89c76180dddec50bf4976f54737ef7d0f5bf0c3c9904"
       },
       "selected_model": {
         "engine": "peakvi",
@@ -758,7 +758,7 @@
       },
       "input_descriptor_identity": {
         "scheme": "scworkbench.operation_pack.input_descriptor.v2",
-        "sha256": "e769773f9bbb6808498e22287f21bc81e448d511344188fdb97168daadfc8f8a"
+        "sha256": "1e5d04e6ff482891f8b983a2c56276f26753777503656ba3b390d53e0261af28"
       },
       "model_content_identity": {
         "scheme": "scworkbench.model_ref.content.v1",
@@ -840,7 +840,7 @@
       "grant_identity": {
         "scheme": "scworkbench.operation_pack.self_linked_contained_model_read_grant.v1",
         "scope": "grant excluding grant_identity",
-        "sha256": "3bb3b84e89eaf2d1467f529cfea2d357c178d6d96892b6c7ab0a1aac677ad630"
+        "sha256": "9697b757f43d87cfe1869118111ad64e0de6c3dfc7f87cefd26d4067185b31d8"
       }
     }
   ],
@@ -947,11 +947,11 @@
         "linked_outputs": [
           {
             "name": "space",
-            "allocated_id": "joint_latent",
+            "allocated_id": "historical_joint",
             "kind": "space",
             "ordinary_output_grant_identity": {
               "scheme": "scworkbench.operation_pack.output_grant.v3",
-              "sha256": "49578269f6a7f10f65ce139dcd4bed0f671a8c8dbbbdf4f40c183e4c31263cf6"
+              "sha256": "8932f49a0e165287e4f8a34148f6f5bd3a9273fbd08ed6786a00d7cc39f8361a"
             },
             "shape": "one_per_cell_space_v1",
             "row_order": "sealed_cell_axis_order_v1",
@@ -969,7 +969,7 @@
         "linked_output_closure_identity": {
           "scheme": "scworkbench.operation_pack.derived_cell_linked_output_closure.v1",
           "scope": "linked output closure excluding linked_output_closure_identity",
-          "sha256": "8081dfc1ee399e2d3efc655032bdefba9437706b0939c4787e92f4f3e7e182f5"
+          "sha256": "528369de106b68b036050624848336cfa49eb9facef4346dbbd273ece1fce1b9"
         }
       },
       "limits": {
@@ -984,13 +984,13 @@
       "grant_identity": {
         "scheme": "scworkbench.operation_pack.authenticated_derived_cell_output_axis_grant.v1",
         "scope": "grant excluding grant_identity",
-        "sha256": "7f5a3298faec2d892a7b44fde19645150a0722681e56f996027a0a0a429ca1ae"
+        "sha256": "8fba86677939100e85009919b8b361c99874536e9782c9fc9c89d7461748c823"
       }
     }
   ],
   "request_identity": {
     "scheme": "scworkbench.operation_pack.transition_request.v3",
     "scope": "request excluding request_identity",
-    "sha256": "4f778f4fdb0e0ca3253a7fed424e3daffc53f60f808aa83647ab3a1e738199c3"
+    "sha256": "954c8bba2f714321afe158c4918f7ba75e9c939cbe577b9d5b2dbdd96bb68bc5"
   }
 }
