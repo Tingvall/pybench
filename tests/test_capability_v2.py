@@ -205,7 +205,7 @@ def test_schema_and_all_fixtures_are_byte_identical_to_forge():
     assert local[python_runtime_schema] == (
         "b2ae886b2c3095159f9bb07de6a826f4e14498481600b6e2bb9656cd65637857"
     )
-    assert len(external) == 31
+    assert len(external) == 34
     assert {name: digest for name, digest in local.items() if name != python_runtime_schema} == (
         external
     )
