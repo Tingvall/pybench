@@ -356,6 +356,36 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
             "Python execution does not implement sealed relation-family authority",
             "staging",
         )
+    if (
+        value.get("producer_lineage_grants")
+        or any(
+            grant.get("selector_parameter") is None or "full_source_cell_axis" in grant
+            for grant in value.get("typed_space_grants", [])
+        )
+        or any(
+            any(
+                axis.get("source_mode") == "static_typed_space_input_axis_v1"
+                for axis in grant.get("source_axes", [])
+            )
+            or any(
+                link.get("shape") == "one_per_cell_space_v1"
+                for link in grant.get("linked_output_closure", {}).get("linked_outputs", [])
+            )
+            for grant in value.get("derived_cell_output_axis_grants", [])
+        )
+        or any(
+            isinstance(output, Mapping)
+            and isinstance(output.get("descriptor"), Mapping)
+            and output["descriptor"].get("derived_cell_output_axis_policy", {}).get("shape")
+            == "one_per_cell_space_v1"
+            for output in value.get("outputs", [])
+        )
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement producer lineage, derived cell-axis space output, or full typed-space axes",
+            "staging",
+        )
     if isinstance(value.get("outputs"), list) and any(
         isinstance(item, Mapping)
         and isinstance(item.get("descriptor"), Mapping)
@@ -3568,6 +3598,19 @@ def validate_receipt_v4(
         or value.get("process_protocol_version") != PROCESS_PROTOCOL_V4
     ):
         _fail("OPERATION_PACK_PROTOCOL_INCOMPATIBLE", "Receipt protocol tuple differs", "receipt")
+    if value.get("producer_lineage_reads") or any(
+        isinstance(item, Mapping)
+        and isinstance(item.get("descriptor"), Mapping)
+        and isinstance(item["descriptor"].get("sealed_output_cardinality_grant"), Mapping)
+        and item["descriptor"]["sealed_output_cardinality_grant"].get("shape")
+        == "one_per_cell_space_v1"
+        for item in value.get("outputs", [])
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python receipt audit does not implement producer lineage or sealed linked-space authority",
+            "receipt",
+        )
     _validate_schema(value, _RECEIPT_ASSET, "PYBENCH_RECEIPT_MISMATCH", "receipt")
     _no_absolute_paths(value)
     _assert_identity(value, "receipt_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")

@@ -92,6 +92,7 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
             types = [types] if isinstance(types, str) else types
             schema["type"] = [item for item in types if item != "string"]
         operation.pop("provenance_reads", None)
+        operation.pop("producer_lineage_reads", None)
         operation.pop("typed_slice_reads", None)
         operation.pop("typed_space_reads", None)
         operation.pop("cell_selector_axes", None)
@@ -352,17 +353,85 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
             )
         for read in space_reads.values():
             source = inputs.get(read["input"])
-            selection_parameter = read["selection"]["parameter"]
+            selection = read["selection"]
             chunk_schema = params.get(read["chunk_size_parameter"])
             if (
                 source is None
                 or source["kind"] != "space"
-                or selection_parameter not in selector_parameters
+                or (
+                    selection["policy"] == "parameter_cell_selector_v1"
+                    and selection["parameter"] not in selector_parameters
+                )
                 or not _has_type(chunk_schema, "integer")
             ):
                 _fail(
                     "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
                     f"Operation {opname!r} has an incompatible typed-space reader",
+                    "semantic_admission",
+                )
+        lineage_reads = operation.get("producer_lineage_reads", [])
+        lineage_names = [item["name"] for item in lineage_reads]
+        if len(lineage_names) != len(set(lineage_names)) or set(lineage_names) & (
+            set(inputs)
+            | set(space_reads)
+            | set(slice_reads)
+            | {item["name"] for item in operation.get("registry_reads", [])}
+            | {item["name"] for item in operation.get("provenance_reads", [])}
+            | {item["name"] for item in operation.get("contained_model_reads", [])}
+            | {item["name"] for item in operation.get("self_linked_contained_model_reads", [])}
+        ):
+            _fail(
+                "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                f"Operation {opname!r} has colliding producer-lineage readers",
+                "semantic_admission",
+            )
+        for read in lineage_reads:
+            expected = {
+                "query_space_input": "space",
+                "summary_input": "obs_table",
+                "model_input": "model_ref",
+                "fitted_space_input": "space",
+            }
+            if any(
+                inputs.get(read[field], {}).get("kind") != kind for field, kind in expected.items()
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an unresolved producer-lineage input",
+                    "semantic_admission",
+                )
+        for axis in operation.get("derived_cell_output_axes", []):
+            source = axis["source"]
+            if source["mode"] != "static_typed_space_union_v1":
+                if any(link["shape"] == "one_per_cell_space_v1" for link in axis["linked_outputs"]):
+                    _fail(
+                        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                        f"Operation {opname!r} links a space without typed-space union sources",
+                        "semantic_admission",
+                    )
+                continue
+            source_reads = source["typed_space_reads"]
+            if (
+                any(
+                    read not in space_reads
+                    or space_reads[read]["selection"]["policy"] != "full_input_axis_v1"
+                    for read in source_reads
+                )
+                or not any(
+                    link["shape"] == "one_per_cell_space_v1" for link in axis["linked_outputs"]
+                )
+                or any(
+                    link["shape"] == "one_per_cell_space_v1"
+                    and (
+                        outputs.get(link["name"], {}).get("kind") != "space"
+                        or link["dimension_source"]["read"] not in source_reads
+                    )
+                    for link in axis["linked_outputs"]
+                )
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an unresolved static typed-space union",
                     "semantic_admission",
                 )
         for policy in operation.get("dimension_policies", []):
@@ -892,6 +961,27 @@ def validate_manifest_v3(
         _fail(
             "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
             "Python execution does not implement sealed relation-family authority",
+            "semantic_admission",
+        )
+    if manifest["backend"] == "Python" and any(
+        operation.get("producer_lineage_reads")
+        or any(
+            read.get("selection", {}).get("policy") == "full_input_axis_v1"
+            for read in operation.get("typed_space_reads", [])
+        )
+        or any(
+            grant.get("source", {}).get("mode") == "static_typed_space_union_v1"
+            or any(
+                link.get("shape") == "one_per_cell_space_v1"
+                for link in grant.get("linked_outputs", [])
+            )
+            for grant in operation.get("derived_cell_output_axes", [])
+        )
+        for operation in manifest["operations"]
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement full typed-space axes, producer lineage, or linked space union authority",
             "semantic_admission",
         )
     _semantic_admission_v3(manifest)

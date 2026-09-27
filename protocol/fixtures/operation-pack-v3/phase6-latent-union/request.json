@@ -1,0 +1,996 @@
+{
+  "schema": "scworkbench.operation_pack.transition_request.v3",
+  "message_type": "request",
+  "process_protocol_version": "pybench-op-v4",
+  "pack_abi_version": "3",
+  "canonical_json_scheme": "scworkbench.operation_pack.canonical_json.v1",
+  "transition": {
+    "transition_id": "transition_hicn3nswr2mcwupr",
+    "session_id": "session_vu4rfk5nvsou",
+    "run_id": "run_d8d839qc8h79",
+    "checkpoint_generation": "ephemeral",
+    "source_state_identity": {
+      "scheme": "scworkbench.scientific_state.v1",
+      "sha256": "382d4181b56bc84ec8f2a39ffc7927239dc5c1e8a6e7fded89418876b0cc4546"
+    },
+    "transition_identity": {
+      "scheme": "scworkbench.operation_pack.transition.v2",
+      "scope": "transition excluding transition_identity",
+      "sha256": "cf4eb535ffeb2923c46be0053f846e868039fe3a343261e89fb77c523afd40c4"
+    }
+  },
+  "operation_authentication": {
+    "name": "scwblatent::model_bound_latent_union",
+    "pack_identity": {
+      "scheme": "scworkbench.operation_pack.pack.v3",
+      "sha256": "554e0f7a9f9dccd3b8a639d7aea3c0a7ac817c754a128a66863a50b8d97d6843"
+    },
+    "manifest_identity": {
+      "scheme": "scworkbench.operation_pack.manifest.v3",
+      "sha256": "addfcff662195493570de3dd53f3930b1ed7d2688c6a4d492a040ec7ead7cc44"
+    },
+    "manifest_source_identity": {
+      "scheme": "scworkbench.operation_pack.manifest_source.bytes.v1",
+      "sha256": "b2784f0fff3aa559dbc80c649a8f228a06b9cf7cc4a0999870c32e64d7bc9612"
+    },
+    "distribution_identity": {
+      "scheme": "scworkbench.operation_pack.content.v1",
+      "sha256": "a97bac001383a92499aab944b1f304e249b9052011db7d9a3a184afd4b8f0423"
+    },
+    "operation_definition_identity": {
+      "scheme": "scworkbench.operation_pack.definition.v3",
+      "sha256": "5fe5c14a64fb70bd2ecfc7b5be7de13674192ec09e6bc7352441094332eb255e"
+    },
+    "entry_point": {
+      "value": "scwbLatent::register_operation_pack",
+      "identity": {
+        "scheme": "scworkbench.operation_pack.entry_point.v2",
+        "sha256": "7db6de0fa7e77d9f1f9752f62f1fb8ec0650cbf81de877015497b2724e512ed2"
+      }
+    }
+  },
+  "engine_contract": {
+    "implementation": "scworkbench",
+    "implementation_version": "0.1.0",
+    "scientific_state_scheme": "scworkbench.scientific_state.v1",
+    "scientific_state_schema_identity": {
+      "scheme": "scworkbench.scientific_state.schema.v1",
+      "sha256": "adbf20a2abd5c067d69c3384874170645f2131961481142a27805a39704a7963"
+    },
+    "reader_api": "scworkbench.operation_pack.typed_readers.v2",
+    "writer_api": "scworkbench.operation_pack.staged_writers.v2"
+  },
+  "dependency_resolution": {
+    "declared_requirement_set_identity": {
+      "scheme": "scworkbench.operation_pack.dependencies.v2",
+      "sha256": "9bfd12b465577cae7f73db043bf13923975f0376060880e192b742d233bef874"
+    },
+    "selected_requirement_set_identity": {
+      "scheme": "scworkbench.operation_pack.dependencies.v2",
+      "sha256": "9bfd12b465577cae7f73db043bf13923975f0376060880e192b742d233bef874"
+    },
+    "dynamic_resolutions": [],
+    "preflight_report_identity": {
+      "scheme": "scworkbench.operation_pack.preflight.v2",
+      "sha256": "10e361a70c44679c9492e44610216204d5e15a9881977c06f787a5b9211f964c"
+    },
+    "network_policy": "deny"
+  },
+  "inputs": [
+    {
+      "name": "model",
+      "reference": "model_ref:model",
+      "descriptor": {
+        "kind": "model_ref",
+        "storage_profile": "model_ref_contained_tree_v1",
+        "reader": "read_model_ref",
+        "dimensions": [
+          1
+        ],
+        "alignment": "model_linked",
+        "content_identity": {
+          "scheme": "scworkbench.model_ref.content.v1",
+          "sha256": "2cf1c34fa5ab290883171e514c196c9ffca2fd76c3e2b54ed4f7dfdb10341d0a"
+        },
+        "ancestry_identity": {
+          "scheme": "scworkbench.provenance.ancestry.v1",
+          "sha256": "78484eb0696922fa482a0a924495b723acbcb012f2859699d9bef615ef50958c"
+        },
+        "payload_manifest_identity": {
+          "scheme": "scworkbench.operation_pack.payload_manifest.v2",
+          "sha256": "f1b909a72513f06b7c7ecb044042c4c1b208c19fe74fa61b5b4b8cc00dfe41f0"
+        },
+        "model_linkage_identity": {
+          "scheme": "scworkbench.operation_pack.matrix_model_source_linkage.v1",
+          "sha256": "8373e3aecfa381ebc64d5229a54fba09b6527090a7190f53094526692d59a388"
+        },
+        "contained_payload_identity": {
+          "scheme": "scworkbench.operation_pack.contained_payload.v2",
+          "sha256": "08aff1dcb009a62654ad869ac29eacdd34f1fcd646a507c39bd949691f4acef0"
+        },
+        "descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "scope": "descriptor excluding descriptor_identity",
+          "sha256": "e769773f9bbb6808498e22287f21bc81e448d511344188fdb97168daadfc8f8a"
+        }
+      }
+    },
+    {
+      "name": "projection_summary",
+      "reference": "obs_table:projection_summary",
+      "descriptor": {
+        "kind": "obs_table",
+        "storage_profile": "terminal_primitive_v1",
+        "reader": "read_terminal_primitive",
+        "dimensions": [
+          1,
+          7
+        ],
+        "alignment": "none",
+        "content_identity": {
+          "scheme": "scworkbench.obs_table.content.v1",
+          "sha256": "e275ad216abb28cee347fc5d3bcf9ff1b3ca1039f53f35719962014129fe870f"
+        },
+        "ancestry_identity": {
+          "scheme": "scworkbench.provenance.ancestry.v1",
+          "sha256": "b9cc81795c14147ca0a5d5aad36e3ab39f666b322faf57c4f75f550f7801f74a"
+        },
+        "payload_manifest_identity": {
+          "scheme": "scworkbench.payload.manifest.v2",
+          "sha256": "b9cc81795c14147ca0a5d5aad36e3ab39f666b322faf57c4f75f550f7801f74a"
+        },
+        "semantic_metadata_identity": {
+          "scheme": "scworkbench.operation_pack.semantic_metadata.v2",
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "scope": "descriptor excluding descriptor_identity",
+          "sha256": "2e5aa0e72e23f7584594038427ab35ce1d9c6de29727b1a461103296254187f5"
+        }
+      }
+    },
+    {
+      "name": "query_space",
+      "reference": "space:query_space",
+      "descriptor": {
+        "kind": "space",
+        "storage_profile": "space_dense_v1",
+        "reader": "read_space",
+        "dimensions": [
+          8,
+          2
+        ],
+        "alignment": "cell_ordered",
+        "content_identity": {
+          "scheme": "scworkbench.space.content.v1",
+          "sha256": "401430c10419ccf2c516935b6729a6974391c47f9338161a38da2d45f97be7db"
+        },
+        "ancestry_identity": {
+          "scheme": "scworkbench.provenance.ancestry.v1",
+          "sha256": "f3e4b4ce924945b9d08e49dde43afa2a827122a80420ca4cf660820035d0b6e3"
+        },
+        "payload_manifest_identity": {
+          "scheme": "scworkbench.payload.manifest.v2",
+          "sha256": "f3e4b4ce924945b9d08e49dde43afa2a827122a80420ca4cf660820035d0b6e3"
+        },
+        "cell_order_identity": {
+          "scheme": "scworkbench.cell_order.v1",
+          "sha256": "fbf46e3395f7df48a3869c7da8c1c85176e5dafc7d79f1c6ee5803743a85242e"
+        },
+        "descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "scope": "descriptor excluding descriptor_identity",
+          "sha256": "092b0fd22bb680620baf4d48fb9316b63ba443ce31bece47fc5dbeaa5e1193ca"
+        }
+      }
+    },
+    {
+      "name": "reference_space",
+      "reference": "space:reference_space",
+      "descriptor": {
+        "kind": "space",
+        "storage_profile": "space_dense_v1",
+        "reader": "read_space",
+        "dimensions": [
+          24,
+          2
+        ],
+        "alignment": "cell_ordered",
+        "content_identity": {
+          "scheme": "scworkbench.space.content.v1",
+          "sha256": "a6b439844e3e0a4d2848b0e7f407ac48ee8f65a21c3a4a971765f78fe14a327a"
+        },
+        "ancestry_identity": {
+          "scheme": "scworkbench.provenance.ancestry.v1",
+          "sha256": "07b63975f7c6ef97fb85329281420d93fa28bf0f976abd292502612027835425"
+        },
+        "payload_manifest_identity": {
+          "scheme": "scworkbench.payload.manifest.v2",
+          "sha256": "07b63975f7c6ef97fb85329281420d93fa28bf0f976abd292502612027835425"
+        },
+        "cell_order_identity": {
+          "scheme": "scworkbench.cell_order.v1",
+          "sha256": "1c51e124e00c665731d0a702c6a6bf496026da87fa781320b3ef414a3947d37a"
+        },
+        "descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "scope": "descriptor excluding descriptor_identity",
+          "sha256": "60fb4ddd8f9e66e5bdeb2fdfc8366379f29cb35c7d260832dfd5dc10d03449f2"
+        }
+      }
+    }
+  ],
+  "params": {
+    "space_id_out": "joint_latent",
+    "chunk_size": 4,
+    "overwrite": false
+  },
+  "outputs": [
+    {
+      "name": "space",
+      "allocated_id": "joint_latent",
+      "descriptor": {
+        "category": "materialization",
+        "kind": "space",
+        "storage_profile": "space_file_backed_hdf5_v1",
+        "writer": "write_space",
+        "expected_dimensions": [
+          0,
+          0
+        ],
+        "expected_alignment": "cell_ordered",
+        "expected_ancestry_identity": {
+          "scheme": "scworkbench.provenance.ancestry.v1",
+          "sha256": "3f75916ef5a1a461c8ac5e250eeca8bc7376ef947658e000b2c78ff09dd04db1"
+        },
+        "expected_model_linkage": {
+          "mode": "none"
+        },
+        "semantic_constraints": {
+          "finite_values": true,
+          "minimum_dimensions": 1
+        },
+        "relative_root": "outputs/space",
+        "expected_cell_order_identity": null,
+        "derived_cell_output_axis_policy": {
+          "schema": "scworkbench.operation_pack.derived_cell_linked_output_policy.v1",
+          "manifest_declaration_identity": {
+            "scheme": "scworkbench.operation_pack.derived_cell_output_axis.v1",
+            "sha256": "9e4ed8def0843f7abc64e136d24eea5cc7a7a628731be568232428b519028c63"
+          },
+          "derived_axis_name": "union_cells",
+          "shape": "one_per_cell_space_v1",
+          "row_order": "sealed_cell_axis_order_v1",
+          "missing_values": "forbidden",
+          "resolved_key_axis_policy_identity_or_null": null,
+          "resolved_key_axis": null,
+          "resolved_keys": null,
+          "dimension_source": {
+            "mode": "typed_space_read_v1",
+            "read": "reference_chunks"
+          },
+          "dimension_count": 2
+        },
+        "publication_grant": {
+          "schema": "scworkbench.operation_pack.materialization_publication_grant.v1",
+          "output": "space",
+          "promotion_group": "union",
+          "closure_outputs": [
+            "space",
+            "union_summary"
+          ],
+          "target_kind": "space",
+          "target_id": "joint_latent",
+          "mode": "add",
+          "conflict_policy": "require_absent_v1",
+          "preimage": {
+            "state": "absent",
+            "registry_absence_identity": {
+              "scheme": "scworkbench.operation_pack.registry_absence.v1",
+              "sha256": "56cf179e06f7135ac25d78ef9c009cda8c9fcc91a54ee44fd860d5df95c0c01c"
+            },
+            "transition_source_state_identity": {
+              "scheme": "scworkbench.scientific_state.v1",
+              "sha256": "382d4181b56bc84ec8f2a39ffc7927239dc5c1e8a6e7fded89418876b0cc4546"
+            }
+          },
+          "publication_grant_identity": {
+            "scheme": "scworkbench.operation_pack.materialization_publication_grant.v1",
+            "scope": "grant excluding publication_grant_identity",
+            "sha256": "6767d1efe2d0cfcb47c3ec6dd81ff3ecd3f7faf4483d33f0f660c5272209648e"
+          }
+        },
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.output_grant.v3",
+          "scope": "descriptor excluding grant_identity",
+          "sha256": "49578269f6a7f10f65ce139dcd4bed0f671a8c8dbbbdf4f40c183e4c31263cf6"
+        }
+      }
+    },
+    {
+      "name": "union_summary",
+      "allocated_id": "model_bound_union_summary_id_pbgb0l5m8uuc",
+      "descriptor": {
+        "category": "terminal_artifact",
+        "kind": "obs_table",
+        "storage_profile": "terminal_primitive_v1",
+        "writer": "write_terminal_primitive",
+        "expected_dimensions": [
+          0,
+          0
+        ],
+        "expected_alignment": "none",
+        "expected_ancestry_identity": {
+          "scheme": "scworkbench.provenance.ancestry.v1",
+          "sha256": "ee1a15087332c6af071d37040b1dec7338c3a1b0893c9f2fe2d46b7b3b29ce9d"
+        },
+        "expected_model_linkage": {
+          "mode": "none"
+        },
+        "semantic_constraints": {
+          "table_type": "model_bound_latent_union_summary",
+          "row_order": "canonical"
+        },
+        "relative_root": "outputs/union_summary",
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.output_grant.v3",
+          "scope": "descriptor excluding grant_identity",
+          "sha256": "83d961a87d0e5ad4f81aa493a8ffc1be647e53e6226bb01cc42d07c32e70d058"
+        }
+      }
+    }
+  ],
+  "execution_capability": {
+    "capability_id": "capability_2zk3wgoch2b0y516",
+    "mode": "private_staging_write",
+    "transition_identity": {
+      "scheme": "scworkbench.operation_pack.transition.v2",
+      "scope": "transition excluding transition_identity",
+      "sha256": "cf4eb535ffeb2923c46be0053f846e868039fe3a343261e89fb77c523afd40c4"
+    },
+    "session_id": "session_vu4rfk5nvsou",
+    "run_id": "run_d8d839qc8h79",
+    "checkpoint_generation": "ephemeral",
+    "source_state_identity": {
+      "scheme": "scworkbench.scientific_state.v1",
+      "sha256": "382d4181b56bc84ec8f2a39ffc7927239dc5c1e8a6e7fded89418876b0cc4546"
+    },
+    "staging_root_identity": {
+      "scheme": "scworkbench.operation_pack.staging_root.v1",
+      "sha256": "356e315fcb8db0caf4a85d90da35d764725d01a873dc85963a670dbdbbed2dd8"
+    },
+    "lease_id": "lease_wxkwtjxgm6w9y5wa",
+    "pack_identity": {
+      "scheme": "scworkbench.operation_pack.pack.v3",
+      "sha256": "554e0f7a9f9dccd3b8a639d7aea3c0a7ac817c754a128a66863a50b8d97d6843"
+    },
+    "distribution_identity": {
+      "scheme": "scworkbench.operation_pack.content.v1",
+      "sha256": "a97bac001383a92499aab944b1f304e249b9052011db7d9a3a184afd4b8f0423"
+    },
+    "manifest_source_identity": {
+      "scheme": "scworkbench.operation_pack.manifest_source.bytes.v1",
+      "sha256": "b2784f0fff3aa559dbc80c649a8f228a06b9cf7cc4a0999870c32e64d7bc9612"
+    },
+    "operation_definition_identity": {
+      "scheme": "scworkbench.operation_pack.definition.v3",
+      "sha256": "5fe5c14a64fb70bd2ecfc7b5be7de13674192ec09e6bc7352441094332eb255e"
+    },
+    "entry_point_identity": {
+      "scheme": "scworkbench.operation_pack.entry_point.v2",
+      "sha256": "7db6de0fa7e77d9f1f9752f62f1fb8ec0650cbf81de877015497b2724e512ed2"
+    },
+    "selected_requirement_set_identity": {
+      "scheme": "scworkbench.operation_pack.dependencies.v2",
+      "sha256": "9bfd12b465577cae7f73db043bf13923975f0376060880e192b742d233bef874"
+    },
+    "preflight_report_identity": {
+      "scheme": "scworkbench.operation_pack.preflight.v2",
+      "sha256": "10e361a70c44679c9492e44610216204d5e15a9881977c06f787a5b9211f964c"
+    },
+    "reader_grants": [
+      {
+        "input_name": "projection_summary",
+        "reader": "read_terminal_primitive",
+        "descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "scope": "descriptor excluding descriptor_identity",
+          "sha256": "2e5aa0e72e23f7584594038427ab35ce1d9c6de29727b1a461103296254187f5"
+        }
+      },
+      {
+        "producer_lineage_read_name": "projection_lineage",
+        "reader": "read_producer_transition_lineage",
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.producer_lineage_grant.v1",
+          "scope": "grant excluding grant_identity",
+          "sha256": "31a2bec81ce40c0d1382d2685eda95f39a23c6acf97972674f3ec0638668aaad"
+        }
+      },
+      {
+        "self_linked_model_payload_name": "fitted_model",
+        "reader": "read_self_linked_contained_model_payload",
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.self_linked_contained_model_read_grant.v1",
+          "scope": "grant excluding grant_identity",
+          "sha256": "3bb3b84e89eaf2d1467f529cfea2d357c178d6d96892b6c7ab0a1aac677ad630"
+        }
+      },
+      {
+        "typed_space_name": "reference_chunks",
+        "reader": "read_typed_space",
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+          "scope": "grant excluding grant_identity",
+          "sha256": "beeb500b87860ea45af51b5537b5d065f9023a61ea4fbf1d4288c1deeed98d9b"
+        }
+      },
+      {
+        "typed_space_name": "query_chunks",
+        "reader": "read_typed_space",
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+          "scope": "grant excluding grant_identity",
+          "sha256": "4aebcf052262cafc43c78920a7546e80f88761fe8e4f65a2f6feff4b1a5d9603"
+        }
+      }
+    ],
+    "writer_grants": [
+      {
+        "output_name": "space",
+        "writer": "write_space",
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.output_grant.v3",
+          "scope": "descriptor excluding grant_identity",
+          "sha256": "49578269f6a7f10f65ce139dcd4bed0f671a8c8dbbbdf4f40c183e4c31263cf6"
+        }
+      },
+      {
+        "output_name": "union_summary",
+        "writer": "write_terminal_primitive",
+        "grant_identity": {
+          "scheme": "scworkbench.operation_pack.output_grant.v3",
+          "scope": "descriptor excluding grant_identity",
+          "sha256": "83d961a87d0e5ad4f81aa493a8ffc1be647e53e6226bb01cc42d07c32e70d058"
+        }
+      }
+    ],
+    "single_use": true,
+    "typed_space_grant_identities": [
+      {
+        "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+        "sha256": "beeb500b87860ea45af51b5537b5d065f9023a61ea4fbf1d4288c1deeed98d9b"
+      },
+      {
+        "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+        "sha256": "4aebcf052262cafc43c78920a7546e80f88761fe8e4f65a2f6feff4b1a5d9603"
+      }
+    ],
+    "producer_lineage_grant_identities": [
+      {
+        "scheme": "scworkbench.operation_pack.producer_lineage_grant.v1",
+        "sha256": "31a2bec81ce40c0d1382d2685eda95f39a23c6acf97972674f3ec0638668aaad"
+      }
+    ],
+    "self_linked_model_payload_grant_identities": [
+      {
+        "scheme": "scworkbench.operation_pack.self_linked_contained_model_read_grant.v1",
+        "sha256": "3bb3b84e89eaf2d1467f529cfea2d357c178d6d96892b6c7ab0a1aac677ad630"
+      }
+    ],
+    "derived_cell_output_axis_grant_identities": [
+      {
+        "scheme": "scworkbench.operation_pack.authenticated_derived_cell_output_axis_grant.v1",
+        "sha256": "7f5a3298faec2d892a7b44fde19645150a0722681e56f996027a0a0a429ca1ae"
+      }
+    ],
+    "capability_identity": {
+      "scheme": "scworkbench.operation_pack.capability.v3",
+      "scope": "capability excluding capability_identity",
+      "sha256": "df4daaf3cb8e4c2a6ccfc3e82a545408c25054f2d0e9a8a36b7dd604ca4945ba"
+    }
+  },
+  "typed_space_grants": [
+    {
+      "schema": "scworkbench.operation_pack.typed_space_grant.v1",
+      "name": "reference_chunks",
+      "input_name": "reference_space",
+      "reader": "read_typed_space",
+      "kind": "space",
+      "role": "candidate",
+      "selector_parameter": null,
+      "source_reference": {
+        "input_name": "reference_space",
+        "space_id": "peakvi_space_id_73b7zrlmkbv6",
+        "input_descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "sha256": "60fb4ddd8f9e66e5bdeb2fdfc8366379f29cb35c7d260832dfd5dc10d03449f2"
+        },
+        "input_content_identity": {
+          "scheme": "scworkbench.space.content.v1",
+          "sha256": "a6b439844e3e0a4d2848b0e7f407ac48ee8f65a21c3a4a971765f78fe14a327a"
+        },
+        "selected_content_identity": {
+          "scheme": "scworkbench.operation_pack.space_slice.content.v1",
+          "sha256": "222fc497760a0af12c0861706299e04f47c335eacd42ffae36f344f5fe12695d"
+        },
+        "transition_source_state_identity": {
+          "scheme": "scworkbench.scientific_state.v1",
+          "sha256": "382d4181b56bc84ec8f2a39ffc7927239dc5c1e8a6e7fded89418876b0cc4546"
+        },
+        "source_reference_identity": {
+          "scheme": "scworkbench.operation_pack.typed_space_source_reference.v1",
+          "scope": "source reference excluding source_reference_identity",
+          "sha256": "ca42014ea9f877e780e825a46aa593dccc84833ad353fa7f22206fa320261547"
+        }
+      },
+      "cells_axis": {
+        "axis": "cells",
+        "count": 24,
+        "order_identity": {
+          "scheme": "scworkbench.cell_order.v1",
+          "sha256": "1c51e124e00c665731d0a702c6a6bf496026da87fa781320b3ef414a3947d37a"
+        },
+        "axis_manifest_identity": {
+          "scheme": "scworkbench.operation_pack.typed_slice_axis_manifest.v1",
+          "scope": "axis manifest excluding manifest_identity",
+          "sha256": "98b7ee8a7974c2d2c7831d6f32a79e6ffd7240dd0b15d2815e9f2674ad72c861"
+        },
+        "relative_path": "typed_slice_axes/reference_chunks/cells.json",
+        "payload_manifest_identity": {
+          "scheme": "scworkbench.operation_pack.payload_manifest.v2",
+          "scope": "registry read payload manifest",
+          "sha256": "5c7102caebe4678b7aec7dce6cac578605068b6eb7f75e1abdc48290398170d5"
+        }
+      },
+      "dimension_count": 2,
+      "requested_chunk_size": 4,
+      "call_discipline": "ordered_partition_exactly_once",
+      "max_rows": 4,
+      "max_columns": 2,
+      "max_elements": 8,
+      "full_source_cell_axis": {
+        "ordered_cell_ids": [
+          "ref_1",
+          "ref_2",
+          "ref_3",
+          "ref_4",
+          "ref_5",
+          "ref_6",
+          "ref_7",
+          "ref_8",
+          "ref_9",
+          "ref_10",
+          "ref_11",
+          "ref_12",
+          "ref_13",
+          "ref_14",
+          "ref_15",
+          "ref_16",
+          "ref_17",
+          "ref_18",
+          "ref_19",
+          "ref_20",
+          "ref_21",
+          "ref_22",
+          "ref_23",
+          "ref_24"
+        ],
+        "cell_count": 24,
+        "cell_order_identity": {
+          "scheme": "scworkbench.cell_order.v1",
+          "sha256": "1c51e124e00c665731d0a702c6a6bf496026da87fa781320b3ef414a3947d37a"
+        }
+      },
+      "grant_identity": {
+        "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+        "scope": "grant excluding grant_identity",
+        "sha256": "beeb500b87860ea45af51b5537b5d065f9023a61ea4fbf1d4288c1deeed98d9b"
+      }
+    },
+    {
+      "schema": "scworkbench.operation_pack.typed_space_grant.v1",
+      "name": "query_chunks",
+      "input_name": "query_space",
+      "reader": "read_typed_space",
+      "kind": "space",
+      "role": "query",
+      "selector_parameter": null,
+      "source_reference": {
+        "input_name": "query_space",
+        "space_id": "peakvi_query",
+        "input_descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "sha256": "092b0fd22bb680620baf4d48fb9316b63ba443ce31bece47fc5dbeaa5e1193ca"
+        },
+        "input_content_identity": {
+          "scheme": "scworkbench.space.content.v1",
+          "sha256": "401430c10419ccf2c516935b6729a6974391c47f9338161a38da2d45f97be7db"
+        },
+        "selected_content_identity": {
+          "scheme": "scworkbench.operation_pack.space_slice.content.v1",
+          "sha256": "9413e4199b4d322e8a7d7ce10c2fbd7937f36b3bddcb3d21050928d859f0a910"
+        },
+        "transition_source_state_identity": {
+          "scheme": "scworkbench.scientific_state.v1",
+          "sha256": "382d4181b56bc84ec8f2a39ffc7927239dc5c1e8a6e7fded89418876b0cc4546"
+        },
+        "source_reference_identity": {
+          "scheme": "scworkbench.operation_pack.typed_space_source_reference.v1",
+          "scope": "source reference excluding source_reference_identity",
+          "sha256": "6a0133c58693a9c30b8923f965799215b363d8213cd9c4d2287dbabf22b89d0e"
+        }
+      },
+      "cells_axis": {
+        "axis": "cells",
+        "count": 8,
+        "order_identity": {
+          "scheme": "scworkbench.cell_order.v1",
+          "sha256": "fbf46e3395f7df48a3869c7da8c1c85176e5dafc7d79f1c6ee5803743a85242e"
+        },
+        "axis_manifest_identity": {
+          "scheme": "scworkbench.operation_pack.typed_slice_axis_manifest.v1",
+          "scope": "axis manifest excluding manifest_identity",
+          "sha256": "06918814b70b7de7368e1760bc787fb7cddbec1ba9416b9851ab4bb4d7df70bc"
+        },
+        "relative_path": "typed_slice_axes/query_chunks/cells.json",
+        "payload_manifest_identity": {
+          "scheme": "scworkbench.operation_pack.payload_manifest.v2",
+          "scope": "registry read payload manifest",
+          "sha256": "c9fbcfff279f377a67305237cd34763796b1edd8036d1959fb88ff5d041c25e9"
+        }
+      },
+      "dimension_count": 2,
+      "requested_chunk_size": 4,
+      "call_discipline": "ordered_partition_exactly_once",
+      "max_rows": 4,
+      "max_columns": 2,
+      "max_elements": 8,
+      "full_source_cell_axis": {
+        "ordered_cell_ids": [
+          "query_1",
+          "query_2",
+          "query_3",
+          "query_4",
+          "query_5",
+          "query_6",
+          "query_7",
+          "query_8"
+        ],
+        "cell_count": 8,
+        "cell_order_identity": {
+          "scheme": "scworkbench.cell_order.v1",
+          "sha256": "fbf46e3395f7df48a3869c7da8c1c85176e5dafc7d79f1c6ee5803743a85242e"
+        }
+      },
+      "grant_identity": {
+        "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+        "scope": "grant excluding grant_identity",
+        "sha256": "4aebcf052262cafc43c78920a7546e80f88761fe8e4f65a2f6feff4b1a5d9603"
+      }
+    }
+  ],
+  "producer_lineage_grants": [
+    {
+      "schema": "scworkbench.operation_pack.producer_lineage_grant.v1",
+      "name": "projection_lineage",
+      "reader": "read_producer_transition_lineage",
+      "source_mode": "retained_producer_v1",
+      "source_snapshot_id": "prov_20260927_125441_dgxtfjxi",
+      "source_run_id": "run_5pnvg45lydia",
+      "source_op_name": "scwblatent::peakvi_project",
+      "source_run_identity": {
+        "scheme": "scworkbench.integrity.run.framed-utf8.sha256.v2",
+        "sha256": "4360903b3b3791c488e786968b589cc454f1edc9294a67085cb989f369d8618f"
+      },
+      "query_space": {
+        "input_descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "sha256": "092b0fd22bb680620baf4d48fb9316b63ba443ce31bece47fc5dbeaa5e1193ca"
+        },
+        "space_id": "peakvi_query",
+        "content_identity": {
+          "scheme": "scworkbench.content.dense-space-hdf5.sha256.v1",
+          "sha256": "b0e69e3b010f23df42d2ae02198112fb8299f8bdf2a4eb2ae0e6d690749042d4"
+        },
+        "source_output_name": "space"
+      },
+      "projection_summary": {
+        "input_descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "sha256": "2e5aa0e72e23f7584594038427ab35ce1d9c6de29727b1a461103296254187f5"
+        },
+        "artifact_id": "obs_table_20260927_125440_42n59oaw",
+        "content_identity": {
+          "scheme": "scworkbench.obs_table.content.v1",
+          "sha256": "e275ad216abb28cee347fc5d3bcf9ff1b3ca1039f53f35719962014129fe870f"
+        },
+        "source_output_name": "projection_summary"
+      },
+      "model": {
+        "input_descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "sha256": "e769773f9bbb6808498e22287f21bc81e448d511344188fdb97168daadfc8f8a"
+        },
+        "artifact_id": "model_ref_20260927_125424_lhfvh9sh",
+        "content_identity": {
+          "scheme": "scworkbench.model_ref.content.v1",
+          "sha256": "2cf1c34fa5ab290883171e514c196c9ffca2fd76c3e2b54ed4f7dfdb10341d0a"
+        },
+        "fitted_space_id": "peakvi_space_id_73b7zrlmkbv6"
+      },
+      "fitted_space": {
+        "input_descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "sha256": "60fb4ddd8f9e66e5bdeb2fdfc8366379f29cb35c7d260832dfd5dc10d03449f2"
+        },
+        "space_id": "peakvi_space_id_73b7zrlmkbv6",
+        "content_identity": {
+          "scheme": "scworkbench.space.content.v1",
+          "sha256": "a6b439844e3e0a4d2848b0e7f407ac48ee8f65a21c3a4a971765f78fe14a327a"
+        }
+      },
+      "source_state_identity": {
+        "scheme": "scworkbench.scientific_state.v1",
+        "sha256": "382d4181b56bc84ec8f2a39ffc7927239dc5c1e8a6e7fded89418876b0cc4546"
+      },
+      "grant_identity": {
+        "scheme": "scworkbench.operation_pack.producer_lineage_grant.v1",
+        "scope": "grant excluding grant_identity",
+        "sha256": "31a2bec81ce40c0d1382d2685eda95f39a23c6acf97972674f3ec0638668aaad"
+      }
+    }
+  ],
+  "self_linked_model_payload_grants": [
+    {
+      "schema": "scworkbench.operation_pack.self_linked_contained_model_read_grant.v1",
+      "name": "fitted_model",
+      "input_name": "model",
+      "reader": "read_self_linked_contained_model_payload",
+      "declaration_identity": {
+        "scheme": "scworkbench.operation_pack.self_linked_contained_model_read.v1",
+        "sha256": "e54150dddece10b0e88d786bc30ff8c01ae4d953324257a56c55cc1c4c081ca5"
+      },
+      "selected_model": {
+        "engine": "peakvi",
+        "model_type": "peakvi"
+      },
+      "input_descriptor_identity": {
+        "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+        "sha256": "e769773f9bbb6808498e22287f21bc81e448d511344188fdb97168daadfc8f8a"
+      },
+      "model_content_identity": {
+        "scheme": "scworkbench.model_ref.content.v1",
+        "sha256": "2cf1c34fa5ab290883171e514c196c9ffca2fd76c3e2b54ed4f7dfdb10341d0a"
+      },
+      "model_source_linkage": {
+        "schema": "scworkbench.operation_pack.matrix_model_source_linkage.v1",
+        "engine": "peakvi",
+        "model_type": "peakvi",
+        "source_matrix_id": "ATAC_reference",
+        "source_matrix_content_identity": {
+          "scheme": "scworkbench.content.matrix.fragment-tree.v2",
+          "sha256": "ec62a28ff0d19f5975460b9de715e56fc7b84d61fd580b280bb8b620f270769a"
+        },
+        "source_matrix_descriptor_identity": {
+          "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+          "sha256": "121058e7b33400db9cb8b29939bf6d44f1002a79dfe7cbe54db4ae7b352f55eb"
+        },
+        "feature_order_identity": {
+          "scheme": "scworkbench.feature_order.v1",
+          "sha256": "3aaaff913a7b750f5a8eecddbd34f56bb7001a2eaa6a6cfc908c87a81e584559"
+        },
+        "fitted_cell_order_identity": {
+          "scheme": "scworkbench.cell_order.v1",
+          "sha256": "1c51e124e00c665731d0a702c6a6bf496026da87fa781320b3ef414a3947d37a"
+        },
+        "paired_fitted_space_id": "peakvi_space_id_73b7zrlmkbv6",
+        "latent_dimension_count": 2,
+        "source_matrix_snapshot_id": "ec62a28ff0d19f5975460b9de715e56fc7b84d61fd580b280bb8b620f270769a",
+        "transition_source_state_identity": {
+          "scheme": "scworkbench.scientific_state.v1",
+          "sha256": "d8cbf564839cdf1123c9fec7c8260f53b0d426b7c76846e7fba5efb553697b4a"
+        },
+        "linkage_identity": {
+          "scheme": "scworkbench.operation_pack.matrix_model_source_linkage.v1",
+          "scope": "linkage excluding linkage_identity",
+          "sha256": "8373e3aecfa381ebc64d5229a54fba09b6527090a7190f53094526692d59a388"
+        }
+      },
+      "model_source_linkage_identity": {
+        "scheme": "scworkbench.operation_pack.matrix_model_source_linkage.v1",
+        "sha256": "8373e3aecfa381ebc64d5229a54fba09b6527090a7190f53094526692d59a388"
+      },
+      "contained_payload_identity": {
+        "scheme": "scworkbench.operation_pack.contained_payload.v2",
+        "sha256": "08aff1dcb009a62654ad869ac29eacdd34f1fcd646a507c39bd949691f4acef0"
+      },
+      "payload_manifest_identity": {
+        "scheme": "scworkbench.operation_pack.payload_manifest.v2",
+        "sha256": "f1b909a72513f06b7c7ecb044042c4c1b208c19fe74fa61b5b4b8cc00dfe41f0"
+      },
+      "tree_manifest": {
+        "schema": "scworkbench.operation_pack.contained_model_tree_manifest.v1",
+        "engine": "peakvi",
+        "model_type": "peakvi",
+        "primary_path": "model.pt",
+        "file_count": 1,
+        "total_size": 21516,
+        "entries": [
+          {
+            "path": "model.pt",
+            "size": 21516,
+            "sha256": "0dca0a803210d4fa74cb4b6439c6ddb5a09eb7617045346829173087749b5a5a"
+          }
+        ],
+        "manifest_identity": {
+          "scheme": "scworkbench.operation_pack.contained_model_tree_manifest.v1",
+          "scope": "manifest excluding manifest_identity",
+          "sha256": "6a2d5e621cfcc6024df4e5d8ec665b6b048dbc31b52d91784900d42086d3485a"
+        }
+      },
+      "limits": {
+        "maximum_file_count": 32,
+        "maximum_total_bytes": 1073741824
+      },
+      "relative_root": "model_payload_reads/fitted_model/tree",
+      "access": "verified_private_copy_read_only_v1",
+      "call_discipline": "exactly_once",
+      "grant_identity": {
+        "scheme": "scworkbench.operation_pack.self_linked_contained_model_read_grant.v1",
+        "scope": "grant excluding grant_identity",
+        "sha256": "3bb3b84e89eaf2d1467f529cfea2d357c178d6d96892b6c7ab0a1aac677ad630"
+      }
+    }
+  ],
+  "derived_cell_output_axis_grants": [
+    {
+      "schema": "scworkbench.operation_pack.authenticated_derived_cell_output_axis_grant.v1",
+      "name": "union_cells",
+      "derivation_mode": "declared_ordered_unique_union_v1",
+      "manifest_declaration_identity": {
+        "scheme": "scworkbench.operation_pack.derived_cell_output_axis.v1",
+        "sha256": "9e4ed8def0843f7abc64e136d24eea5cc7a7a628731be568232428b519028c63"
+      },
+      "source_axes": [
+        {
+          "source_mode": "static_typed_space_input_axis_v1",
+          "input_name": "reference_space",
+          "input_descriptor_identity": {
+            "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+            "sha256": "60fb4ddd8f9e66e5bdeb2fdfc8366379f29cb35c7d260832dfd5dc10d03449f2"
+          },
+          "primitive_kind": "space",
+          "projection": "space_cell_axis_v1",
+          "source_axis_selector_identity": null,
+          "source_cell_count": 24,
+          "source_cell_order_identity": {
+            "scheme": "scworkbench.cell_order.v1",
+            "sha256": "1c51e124e00c665731d0a702c6a6bf496026da87fa781320b3ef414a3947d37a"
+          },
+          "resolved_ordinal": 1,
+          "typed_space_read_name": "reference_chunks",
+          "typed_space_grant_identity": {
+            "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+            "sha256": "beeb500b87860ea45af51b5537b5d065f9023a61ea4fbf1d4288c1deeed98d9b"
+          },
+          "input_content_identity": {
+            "scheme": "scworkbench.space.content.v1",
+            "sha256": "a6b439844e3e0a4d2848b0e7f407ac48ee8f65a21c3a4a971765f78fe14a327a"
+          },
+          "source_dimension_count": 2,
+          "source_axis_reference_identity": {
+            "scheme": "scworkbench.operation_pack.derived_cell_source_axis_reference.v1",
+            "scope": "derived cell source axis reference excluding source_axis_reference_identity",
+            "sha256": "7fc24f945ffc35e8c5f20a04ba12a30f31dac51c289b30e057457dd68f78a531"
+          }
+        },
+        {
+          "source_mode": "static_typed_space_input_axis_v1",
+          "input_name": "query_space",
+          "input_descriptor_identity": {
+            "scheme": "scworkbench.operation_pack.input_descriptor.v2",
+            "sha256": "092b0fd22bb680620baf4d48fb9316b63ba443ce31bece47fc5dbeaa5e1193ca"
+          },
+          "primitive_kind": "space",
+          "projection": "space_cell_axis_v1",
+          "source_axis_selector_identity": null,
+          "source_cell_count": 8,
+          "source_cell_order_identity": {
+            "scheme": "scworkbench.cell_order.v1",
+            "sha256": "fbf46e3395f7df48a3869c7da8c1c85176e5dafc7d79f1c6ee5803743a85242e"
+          },
+          "resolved_ordinal": 2,
+          "typed_space_read_name": "query_chunks",
+          "typed_space_grant_identity": {
+            "scheme": "scworkbench.operation_pack.typed_space_grant.v1",
+            "sha256": "4aebcf052262cafc43c78920a7546e80f88761fe8e4f65a2f6feff4b1a5d9603"
+          },
+          "input_content_identity": {
+            "scheme": "scworkbench.space.content.v1",
+            "sha256": "401430c10419ccf2c516935b6729a6974391c47f9338161a38da2d45f97be7db"
+          },
+          "source_dimension_count": 2,
+          "source_axis_reference_identity": {
+            "scheme": "scworkbench.operation_pack.derived_cell_source_axis_reference.v1",
+            "scope": "derived cell source axis reference excluding source_axis_reference_identity",
+            "sha256": "4a8459ec4ec7956be427c89e6442a008dc52f0096ad84aa8a9d562ab92e570d7"
+          }
+        }
+      ],
+      "source_axis_aggregate": {
+        "derivation_mode": "declared_ordered_unique_union_v1",
+        "source_axis_count": 2,
+        "source_membership_count": 32,
+        "ordered_source_axis_reference_identities": [
+          {
+            "scheme": "scworkbench.operation_pack.derived_cell_source_axis_reference.v1",
+            "sha256": "7fc24f945ffc35e8c5f20a04ba12a30f31dac51c289b30e057457dd68f78a531"
+          },
+          {
+            "scheme": "scworkbench.operation_pack.derived_cell_source_axis_reference.v1",
+            "sha256": "4a8459ec4ec7956be427c89e6442a008dc52f0096ad84aa8a9d562ab92e570d7"
+          }
+        ],
+        "source_axis_aggregate_identity": {
+          "scheme": "scworkbench.operation_pack.derived_cell_source_axis_aggregate.v1",
+          "scope": "derived cell source axis aggregate excluding source_axis_aggregate_identity",
+          "sha256": "43e54977509124a62612318a2df142c415d9f030c58c2821918df1aebef568e7"
+        }
+      },
+      "linked_output_closure": {
+        "manifest_declaration_identity": {
+          "scheme": "scworkbench.operation_pack.derived_cell_output_axis.v1",
+          "sha256": "9e4ed8def0843f7abc64e136d24eea5cc7a7a628731be568232428b519028c63"
+        },
+        "linked_outputs": [
+          {
+            "name": "space",
+            "allocated_id": "joint_latent",
+            "kind": "space",
+            "ordinary_output_grant_identity": {
+              "scheme": "scworkbench.operation_pack.output_grant.v3",
+              "sha256": "49578269f6a7f10f65ce139dcd4bed0f671a8c8dbbbdf4f40c183e4c31263cf6"
+            },
+            "shape": "one_per_cell_space_v1",
+            "row_order": "sealed_cell_axis_order_v1",
+            "missing_values": "forbidden",
+            "resolved_key_axis_policy_identity_or_null": null,
+            "promotion_group": "union",
+            "dimension_source": {
+              "mode": "typed_space_read_v1",
+              "read": "reference_chunks"
+            },
+            "dimension_count": 2
+          }
+        ],
+        "closure_policy": "all_linked_outputs_and_axis_observation_required_v1",
+        "linked_output_closure_identity": {
+          "scheme": "scworkbench.operation_pack.derived_cell_linked_output_closure.v1",
+          "scope": "linked output closure excluding linked_output_closure_identity",
+          "sha256": "8081dfc1ee399e2d3efc655032bdefba9437706b0939c4787e92f4f3e7e182f5"
+        }
+      },
+      "limits": {
+        "minimum_cells": 1,
+        "maximum_cells": 10000000,
+        "maximum_source_axes": 2,
+        "maximum_source_memberships": 20000000,
+        "maximum_linked_outputs": 1
+      },
+      "call_discipline": "declare_once_seal_before_linked_output_v1",
+      "closure_policy": "all_linked_outputs_and_axis_observation_required_v1",
+      "grant_identity": {
+        "scheme": "scworkbench.operation_pack.authenticated_derived_cell_output_axis_grant.v1",
+        "scope": "grant excluding grant_identity",
+        "sha256": "7f5a3298faec2d892a7b44fde19645150a0722681e56f996027a0a0a429ca1ae"
+      }
+    }
+  ],
+  "request_identity": {
+    "scheme": "scworkbench.operation_pack.transition_request.v3",
+    "scope": "request excluding request_identity",
+    "sha256": "4f778f4fdb0e0ca3253a7fed424e3daffc53f60f808aa83647ab3a1e738199c3"
+  }
+}

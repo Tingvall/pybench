@@ -50,23 +50,16 @@ def _subschema(name: str, *path: str) -> Draft202012Validator:
 
 
 def _manifest_effective_key_validator() -> Draft202012Validator:
-    return _subschema(
-        MANIFEST_SCHEMA,
-        "$defs",
-        "operation",
-        "properties",
-        "derived_cell_output_axes",
-        "items",
-        "properties",
-        "linked_outputs",
-        "items",
-        "oneOf",
-        1,
-        "properties",
-        "key_axis",
-        "oneOf",
-        4,
-    )
+    root = _schema(MANIFEST_SCHEMA)
+    links = root["$defs"]["operation"]["properties"]["derived_cell_output_axes"]["items"][
+        "properties"
+    ]["linked_outputs"]["items"]["oneOf"]
+    keyed = [branch for branch in links if "key_axis" in branch["properties"]]
+    assert len(keyed) == 1
+    value = copy.deepcopy(keyed[0]["properties"]["key_axis"]["oneOf"][4])
+    value["$schema"] = root["$schema"]
+    value["$defs"] = root["$defs"]
+    return Draft202012Validator(value)
 
 
 def _request_resolution_validator() -> Draft202012Validator:
