@@ -138,6 +138,12 @@ def _validate_typed_slice_grants(
     request: Mapping[str, Any], operation: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
     declarations = operation.get("typed_slice_reads", [])
+    if any(item.get("value_policy") == "nonnegative_integer_v1" for item in declarations):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement nonnegative-integer typed-slice authority",
+            "staging",
+        )
     grants = request.get("typed_slice_grants", [])
     if [item["name"] for item in grants] != [item["name"] for item in declarations]:
         _fail(
@@ -316,6 +322,26 @@ def validate_request_v4(request: Mapping[str, Any], discovery: PackDiscoveryV3) 
         _fail(
             "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
             "V4 execution requires the explicit manifest-v3/request-v3 tuple",
+            "staging",
+        )
+    if isinstance(value.get("registry_reads"), list) and any(
+        isinstance(item, Mapping)
+        and isinstance(item.get("descriptor"), Mapping)
+        and item["descriptor"].get("kind") == "ordered_cell_metadata"
+        for item in value.get("registry_reads", [])
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement ordered cell-metadata authority",
+            "staging",
+        )
+    if isinstance(value.get("typed_slice_grants"), list) and any(
+        isinstance(item, Mapping) and item.get("value_policy") == "nonnegative_integer_v1"
+        for item in value.get("typed_slice_grants", [])
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement nonnegative-integer typed-slice authority",
             "staging",
         )
     if "standalone_sparse_cell_family_grants" in value:
