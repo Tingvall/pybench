@@ -16,7 +16,7 @@ from pybench.protocol_v4 import execute_operation_pack_v4, validate_receipt_v4, 
 from test_phase4e_sparse_knn_protocol import _fixture as phase4e_fixture
 
 FIXTURE_ROOT = Path(__file__).parents[1] / "protocol" / "fixtures" / "operation-pack-v3"
-UNION_FIXTURE = FIXTURE_ROOT / "phase6-latent-union"
+UNION_FIXTURE = Path(__file__).parent / "fixtures" / "phase6_latent_union"
 REFERENCE_MANIFEST = (
     Path(__file__).parent
     / "fixtures"
