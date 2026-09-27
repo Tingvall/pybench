@@ -43,8 +43,8 @@ SHARED_DIGESTS = {
     "fixtures/operation-pack-v3/relation-family-identities.json": "5f94004cc229cc5f02c4b7a9401f5c91a0cb9346469d48499b46809c9a919860",
     "fixtures/operation-pack-v3/phase6-matrix-model-identities.json": "83a35075b04dc31ffc999e0f10e5d613974d09ab821d29a7cdbf0f165c34a355",
     "fixtures/operation-pack-v3/phase6-ordered-cell-metadata-identities.json": "7317a0a9baea791c3cac688e9528342a4d2d1691a2840add53dde2ffe623b37e",
-    "fixtures/operation-pack-v3/phase6-latent-union/request.json": "c6ce8908a1ec748a551dd03d8fd4c48ffd061bb073a4d85669fb8c9a9fab2b2d",
-    "fixtures/operation-pack-v3/phase6-latent-union/receipt.json": "8db0b003ebf9a7087aaa35574d50df7a8d4ae698240c485d7288b95fb51a796e",
+    "fixtures/operation-pack-v3/phase6-latent-union/request.json": "c61b1d9afc7180a7510acc08aca6af8ff8a6440162ea4a73c8b6299504b9663b",
+    "fixtures/operation-pack-v3/phase6-latent-union/receipt.json": "41919a49dfb7f65ba6f79c7d447db1cd33e98addd70bb0d0c6bedc5e41a0503a",
 }
 
 

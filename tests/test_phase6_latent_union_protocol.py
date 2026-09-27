@@ -58,10 +58,10 @@ def test_phase6_real_retained_union_request_receipt_byte_and_identity_parity():
     request_path = UNION_FIXTURE / "request.json"
     receipt_path = UNION_FIXTURE / "receipt.json"
     assert hashlib.sha256(request_path.read_bytes()).hexdigest() == (
-        "c6ce8908a1ec748a551dd03d8fd4c48ffd061bb073a4d85669fb8c9a9fab2b2d"
+        "c61b1d9afc7180a7510acc08aca6af8ff8a6440162ea4a73c8b6299504b9663b"
     )
     assert hashlib.sha256(receipt_path.read_bytes()).hexdigest() == (
-        "8db0b003ebf9a7087aaa35574d50df7a8d4ae698240c485d7288b95fb51a796e"
+        "41919a49dfb7f65ba6f79c7d447db1cd33e98addd70bb0d0c6bedc5e41a0503a"
     )
     request = json.loads(request_path.read_text())
     receipt = json.loads(receipt_path.read_text())
