@@ -36,12 +36,13 @@ from v3_helpers import _input_descriptor, fixture_inputs, make_request
 
 FIXTURE = Path(__file__).parent / "fixtures" / "operation-pack-v3-python-reference"
 SHARED_DIGESTS = {
-    "operation-pack-v3.schema.json": "3f06cc79680488f71d07a0691a44637731c6b8f11afe1ed63200433e054b3734",
-    "operation-pack-transition-request-v3.schema.json": "d46ebe83e00c3c1add2fc7518025242d14b1defa57e174c7304b7a536c0e61b6",
-    "operation-pack-transition-receipt-v3.schema.json": "f35fb54c87f4671e67da4d2841b4659b2a1304310d89d5453b21059b2bacd538",
+    "operation-pack-v3.schema.json": "8444a66511a33108a68491484cea87ef921d5f673ef3030615c4fd7b5352a8b4",
+    "operation-pack-transition-request-v3.schema.json": "7d35dbcf8aa75440305f634530ad933c1e8e06968509fca5743c8583599b911c",
+    "operation-pack-transition-receipt-v3.schema.json": "67bd53400f3d672a181c5f3a9878fd54a4eb790a9861bd7dca5f155d29851dc2",
     "fixtures/operation-pack-v3/identities.json": "27f0e7317298815b82dc7ab4d2b7f4967549a8f90663bf5d3f337d1e5bca9793",
     "fixtures/operation-pack-v3/relation-family-identities.json": "5f94004cc229cc5f02c4b7a9401f5c91a0cb9346469d48499b46809c9a919860",
     "fixtures/operation-pack-v3/phase6-matrix-model-identities.json": "83a35075b04dc31ffc999e0f10e5d613974d09ab821d29a7cdbf0f165c34a355",
+    "fixtures/operation-pack-v3/phase6-ordered-cell-metadata-identities.json": "7317a0a9baea791c3cac688e9528342a4d2d1691a2840add53dde2ffe623b37e",
 }
 
 
