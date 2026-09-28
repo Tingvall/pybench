@@ -127,6 +127,11 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         ]
         if not operation["registry_reads"]:
             operation.pop("registry_reads")
+        operation["dependencies"] = [
+            dependency
+            for dependency in operation["dependencies"]
+            if dependency["kind"] != "dynamic_matrix_registry_package"
+        ]
         policies = operation.get("dimension_policies", [])
         operation["dimension_policies"] = [
             policy for policy in policies if policy.get("policy") in {"data_dependent_table_v1"}
@@ -302,7 +307,14 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         new_reads = [
             read
             for read in all_registry_reads
-            if read["kind"] in {"session_cell_axis", "matrix_feature_annotations"}
+            if read["kind"]
+            in {
+                "session_cell_axis",
+                "matrix_feature_annotations",
+                "genomic_matrix_source",
+                "motif_library",
+                "motif_match_set",
+            }
         ]
         new_names = [read["name"] for read in new_reads]
         if len(new_names) != len(set(new_names)):
@@ -314,17 +326,97 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         for read in new_reads:
             if read["kind"] == "session_cell_axis":
                 valid = read["reader"] == "read_session_cell_axis"
-            else:
+            elif read["kind"] == "matrix_feature_annotations":
                 source = inputs.get(read["matrix_input"])
                 valid = (
                     read["reader"] == "read_matrix_feature_annotations"
                     and source is not None
                     and source["kind"] == "matrix"
                 )
+            elif read["kind"] == "genomic_matrix_source":
+                source = inputs.get(read["matrix_input"])
+                valid = (
+                    read["reader"] == "read_genomic_matrix_source"
+                    and source is not None
+                    and source["kind"] == "matrix"
+                    and source["alignment"] == "cell_and_feature_ordered"
+                )
+            elif read["kind"] == "motif_library":
+                valid = read["reader"] == "read_motif_library" and _has_type(
+                    params.get(read["library_parameter"]), "string"
+                )
+            else:
+                valid = read["reader"] == "read_motif_match_set" and _has_type(
+                    params.get(read["match_set_parameter"]), "string"
+                )
             if not valid:
                 _fail(
                     "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
                     f"Operation {opname!r} has an invalid authenticated core snapshot declaration",
+                    "semantic_admission",
+                )
+
+        for dependency in operation["dependencies"]:
+            if dependency["kind"] != "dynamic_matrix_registry_package":
+                continue
+            source = inputs.get(dependency["matrix_input"])
+            registry = next(
+                (
+                    read
+                    for read in all_registry_reads
+                    if read["name"] == dependency["registry_read"]
+                ),
+                None,
+            )
+            if (
+                source is None
+                or source["kind"] != "matrix"
+                or registry is None
+                or registry["kind"] != "genomic_matrix_source"
+                or registry["matrix_input"] != dependency["matrix_input"]
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an unbound dynamic matrix provider",
+                    "semantic_admission",
+                )
+
+        runtime_policies = [
+            policy
+            for policy in dimension_policies
+            if policy["policy"] == "runtime_ordered_cell_family_v1"
+        ]
+        if runtime_policies:
+            family_names = [policy["output"] for policy in runtime_policies]
+            groups = {policy["group"] for policy in runtime_policies}
+            sources = {policy["source_read"] for policy in runtime_policies}
+            limits = {
+                (policy["maximum_keys"], policy["maximum_rows"]) for policy in runtime_policies
+            }
+            source_read = next(
+                (read for read in all_registry_reads if read["name"] in sources),
+                None,
+            )
+            if (
+                len(runtime_policies) != 2
+                or len(set(family_names)) != 2
+                or len(groups) != 1
+                or len(sources) != 1
+                or len(limits) != 1
+                or source_read is None
+                or source_read["kind"] != "genomic_matrix_source"
+                or len(outputs) != 3
+                or sum(output["kind"] == "obs_table" for output in outputs.values()) != 1
+                or any(
+                    outputs.get(name, {}).get("kind") != "cell_vector_family"
+                    or outputs[name].get("value_kind", "continuous") != "continuous"
+                    or not outputs[name]["required"]
+                    for name in family_names
+                )
+            ):
+                _fail(
+                    "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                    f"Operation {opname!r} has an incompatible runtime-family key declaration",
                     "semantic_admission",
                 )
 
@@ -961,6 +1053,26 @@ def validate_manifest_v3(
         _fail(
             "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
             "Python execution does not implement sealed relation-family authority",
+            "semantic_admission",
+        )
+    if manifest["backend"] == "Python" and any(
+        any(
+            read.get("kind") in {"genomic_matrix_source", "motif_library", "motif_match_set"}
+            for read in operation.get("registry_reads", [])
+        )
+        or any(
+            dependency.get("kind") == "dynamic_matrix_registry_package"
+            for dependency in operation["dependencies"]
+        )
+        or any(
+            policy.get("policy") == "runtime_ordered_cell_family_v1"
+            for policy in operation.get("dimension_policies", [])
+        )
+        for operation in manifest["operations"]
+    ):
+        _fail(
+            "OPERATION_PACK_PROTOCOL_INCOMPATIBLE",
+            "Python execution does not implement genomic registry or runtime cell-family authority",
             "semantic_admission",
         )
     if manifest["backend"] == "Python" and any(
