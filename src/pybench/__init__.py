@@ -6,6 +6,7 @@ from .bundle import (
     open_bundle,
     resolve_bundle_path,
 )
+from .operation_pack_sdk import scaffold_operation_pack
 from .operation_packs import (
     CellVector,
     OperationPackContext,
@@ -69,6 +70,7 @@ __all__ = [
     "discover_operation_pack_v3",
     "operation_pack_handlers_v3",
     "validate_manifest_v3",
+    "scaffold_operation_pack",
     "execute_operation_pack_v4",
     "partition_axis",
     "validate_python_runtime_sidecar_v4",
