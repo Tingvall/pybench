@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import importlib
 import json
 import os
@@ -12,6 +14,7 @@ import threading
 
 import pytest
 
+from pybench import operation_pack_sdk as sdk
 from pybench.operation_pack_sdk import matrix_cell_sum_manifest, scaffold_operation_pack
 from pybench.operation_packs_v2 import _identity
 from pybench.operation_packs_v3 import (
@@ -277,6 +280,124 @@ def test_scaffold_collision_traversal_and_generation_failure_are_atomic(tmp_path
             tmp_path / "new", "sdk-sums", "sdksums", author="A", email="a@b.org"
         )
     assert sorted(p.name for p in tmp_path.iterdir()) == ["existing"]
+
+
+def _competing_destination(path, kind):
+    if kind in {"empty_directory", "nonempty_directory"}:
+        path.mkdir(mode=0o750)
+        if kind == "nonempty_directory":
+            (path / "keep").write_text("preserve")
+    elif kind == "file":
+        path.write_text("preserve")
+    else:
+        path.symlink_to("missing-target" if kind == "dangling_symlink" else "target")
+    os.utime(path, ns=(1_000_000_000, 2_000_000_000), follow_symlinks=False)
+    return path.lstat()
+
+
+def _assert_competitor_unchanged(path, kind, before):
+    after = path.lstat()
+    for attribute in ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"):
+        assert getattr(after, attribute) == getattr(before, attribute)
+    if kind == "empty_directory":
+        assert list(path.iterdir()) == []
+    elif kind == "nonempty_directory":
+        assert [p.name for p in path.iterdir()] == ["keep"]
+        assert (path / "keep").read_text() == "preserve"
+    elif kind == "file":
+        assert path.read_text() == "preserve"
+    else:
+        assert os.readlink(path) == ("missing-target" if kind == "dangling_symlink" else "target")
+
+
+@pytest.mark.parametrize(
+    "kind", ["empty_directory", "nonempty_directory", "file", "symlink", "dangling_symlink"]
+)
+@pytest.mark.parametrize("at_publication", [False, True])
+def test_scaffold_preserves_existing_and_racing_destinations(
+    tmp_path, monkeypatch, kind, at_publication
+):
+    destination = tmp_path / "competing destination with spaces"
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep").write_text("target preserved")
+    target_before = target.stat()
+    observed = []
+    actual_publish = sdk._rename_directory_noreplace
+
+    def forbidden_replacing_rename(*args, **kwargs):
+        raise AssertionError("replacing rename must never be used")
+
+    monkeypatch.setattr(os, "rename", forbidden_replacing_rename)
+    if at_publication:
+
+        def compete_then_publish(source, path):
+            assert not path.exists() and not path.is_symlink()
+            assert (source / "operation-pack.json").is_file()
+            observed.append(_competing_destination(path, kind))
+            # Delegate the unmodified production helper and actual libc primitive.
+            actual_publish(source, path)
+
+        monkeypatch.setattr(sdk, "_rename_directory_noreplace", compete_then_publish)
+    else:
+        observed.append(_competing_destination(destination, kind))
+    with pytest.raises(FileExistsError if at_publication else ValueError):
+        scaffold_operation_pack(destination, "sdk-sums", "sdksums", author="A", email="a@b.org")
+    assert len(observed) == 1
+    _assert_competitor_unchanged(destination, kind, observed[0])
+    assert target.stat() == target_before
+    assert (target / "keep").read_text() == "target preserved"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [destination.name, "target"]
+
+
+@pytest.mark.parametrize("unavailable", ["platform", "libc_load", "entry_point"])
+def test_scaffold_unavailable_atomic_publication_fails_closed(tmp_path, monkeypatch, unavailable):
+    if unavailable == "platform":
+        monkeypatch.setattr(sdk.sys, "platform", "unsupported")
+    elif unavailable == "libc_load":
+
+        def unavailable_libc(*args, **kwargs):
+            raise OSError("libc unavailable")
+
+        monkeypatch.setattr(sdk.ctypes, "CDLL", unavailable_libc)
+    else:
+        monkeypatch.setattr(sdk.ctypes, "CDLL", lambda *args, **kwargs: object())
+    with pytest.raises(RuntimeError, match="requires Linux renameat2 RENAME_NOREPLACE"):
+        scaffold_operation_pack(
+            tmp_path / "new", "sdk-sums", "sdksums", author="A", email="a@b.org"
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("error", [errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP])
+def test_scaffold_unsupported_noreplace_fails_closed(tmp_path, monkeypatch, error):
+    calls = []
+
+    class UnsupportedRename:
+        def __call__(self, source_fd, source, destination_fd, destination, flags):
+            calls.append((source_fd, source, destination_fd, destination, flags))
+            ctypes.set_errno(error)
+            return -1
+
+    class Libc:
+        renameat2 = UnsupportedRename()
+
+    monkeypatch.setattr(sdk.ctypes, "CDLL", lambda *args, **kwargs: Libc())
+
+    def forbidden_replacing_rename(*args, **kwargs):
+        raise AssertionError("unsupported no-replace must never fall back")
+
+    monkeypatch.setattr(os, "rename", forbidden_replacing_rename)
+    with pytest.raises(RuntimeError, match="kernel or filesystem does not support"):
+        scaffold_operation_pack(
+            tmp_path / "new", "sdk-sums", "sdksums", author="A", email="a@b.org"
+        )
+    assert len(calls) == 1
+    source_fd, source, destination_fd, destination, flags = calls[0]
+    assert source_fd == destination_fd == -100 and flags == 1
+    assert os.fsdecode(source).startswith(str(tmp_path / ".pybench-sdk-"))
+    assert os.fsdecode(destination) == str(tmp_path / "new")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_sdk_manifest_keeps_frozen_protocol_and_simple_authority():

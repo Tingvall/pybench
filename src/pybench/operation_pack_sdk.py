@@ -6,10 +6,14 @@ remain in the existing operation-pack discovery and protocol-v4 implementation.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import json
 import keyword
+import os
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -17,6 +21,34 @@ from .operation_packs_v2 import _RESERVED_NAMESPACES
 from .operation_packs_v3 import validate_manifest_v3
 
 SDK_VERSION = "1"
+
+
+def _rename_directory_noreplace(source: Path, destination: Path) -> None:
+    """Publish using Linux renameat2; never fall back to replacing rename."""
+    unavailable = "Atomic scaffold publication requires Linux renameat2 RENAME_NOREPLACE"
+    if sys.platform != "linux":
+        raise RuntimeError(f"{unavailable}; this operating system is unsupported")
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        renameat2 = libc.renameat2
+    except (AttributeError, OSError) as exc:
+        raise RuntimeError(f"{unavailable}; libc entry point is unavailable") from exc
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    # AT_FDCWD = -100, RENAME_NOREPLACE = 1. Both paths are absolute siblings.
+    if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+        error = ctypes.get_errno()
+        if error in {errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP}:
+            raise RuntimeError(
+                f"{unavailable}; kernel or filesystem does not support it"
+            ) from OSError(error, os.strerror(error))
+        raise OSError(error, os.strerror(error), str(destination))
 
 
 def matrix_cell_sum_manifest(distribution: str, namespace: str) -> dict:
@@ -203,6 +235,8 @@ def scaffold_operation_pack(
     ``namespace`` is also the importable module name. ``distribution`` is the
     package-manager name. Metadata is explicit; this helper installs nothing.
     Only the existing simple matrix_cell_sum ABI-v3 profile is generated.
+    Publication requires Linux libc/kernel/filesystem support for renameat2
+    RENAME_NOREPLACE; unavailable support fails closed without a rename fallback.
     """
     if (
         not isinstance(namespace, str)
@@ -325,7 +359,7 @@ memory for a different algorithm. Advanced R-only capabilities are not supported
 by this scaffold. Hashes authenticate bytes; trusted Python code is not sandboxed.
 Scientific validation, numerical stability and resource requirements belong to you.
 ''')
-        temporary.rename(parent / destination.name)
+        _rename_directory_noreplace(temporary, parent / destination.name)
     except BaseException:
         shutil.rmtree(temporary)
         raise

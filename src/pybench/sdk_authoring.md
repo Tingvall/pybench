@@ -6,8 +6,12 @@ be new, its parent must exist, and namespace must be a lowercase Python module
 identifier outside the reserved engine namespaces. The generated MIT project is
 one ABI-v3 Python operation using exactly `pybench-op-v4`. Generation validates
 its plain manifest through `validate_manifest_v3` and installs or activates
-nothing. Explicit author metadata is required. Existing destinations are refused;
-failed generation removes only its private temporary project.
+nothing. Explicit author metadata is required. Existing destinations are refused
+atomically, including competitors created during generation. Publication requires
+Linux libc, kernel and filesystem support for `renameat2(RENAME_NOREPLACE)`; if
+unavailable, generation fails closed and removes only its private staging directory.
+There is no replacing-rename fallback. Failed generation likewise removes only
+its private temporary project.
 
 ```python
 from pybench import scaffold_operation_pack
