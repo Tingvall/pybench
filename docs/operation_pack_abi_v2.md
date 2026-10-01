@@ -5,6 +5,10 @@ scworkbench operation-pack ABI v2. It does not announce an official scientific
 pack. scworkbench remains authoritative for schemas, scientific state,
 allocation, publication, promotion, provenance, and replay decisions.
 
+For new ABI-v3 packs, start with the installed `pybench/sdk_authoring.md` guide
+and `pybench-operation-pack-sdk`; v3 execution uses `pybench-op-v4`. The official
+Statistics pack uses the R ABI-v2 runtime, not this Python reference runtime.
+
 ## Discovery and activation
 
 A Python v2 distribution packages exactly one `operation-pack.json` and exactly

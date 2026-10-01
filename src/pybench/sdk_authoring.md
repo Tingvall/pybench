@@ -1,5 +1,11 @@
 # Python operation-pack SDK v1
 
+SDK version, pack ABI version, and execution protocol version are different:
+this SDK scaffolds ABI-v3 packs executed through `pybench-op-v4`. Existing
+ABI-v1/v2 manifests are not upgraded by changing a version label. Scientific
+method tests belong to the pack; engine authority and broker tests remain in
+PyBench/scworkbench, with separately invoked installed-pack composites.
+
 The installed public helper is `pybench.scaffold_operation_pack(path,
 distribution, namespace, *, author, email) -> pathlib.Path`. The destination must
 be new, its parent must exist, and namespace must be a lowercase Python module
@@ -102,3 +108,22 @@ input block, not total algorithm memory: this example retains one value per cell
 Scientific validity, floating-point error, resources and native dependencies are
 the author's responsibility. Installation is not activation; activation is not
 scientific qualification; pack-free inspection is not pack-free replay.
+
+## Authoring and Release Sequence
+
+1. Generate the simple reference and run its method tests unchanged.
+2. Declare supported primitive profiles, parameters/defaults, dependencies,
+   grants, required terminals, retention, and complete publication closure.
+3. Implement only the calculation through supplied callbacks; do not copy
+   storage access, request construction, identity hashing, or receipts.
+4. Add scientific oracles and malformed-input/schedule/fault cases, then test
+   installed registered execution through the R engine's SDK lifecycle.
+5. Record source and installed identities, numeric exits, discovered/executed
+   cases, skips and limitations before distribution.
+
+Use focused checks while developing; run a coordinated final qualification of
+the frozen tuple rather than unrelated full suites after every prose change.
+An absent callback or rejected policy is a capability gap, not permission to
+provide a fabricated grant. Conflicting installed dependency versions may
+require separate environments/processes; unloading code does not retroactively
+change a retained run's runtime evidence.

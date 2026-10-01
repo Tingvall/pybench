@@ -2,6 +2,35 @@
 
 Python runtime for `scworkbench` bundles.
 
+## Current Pack-Authoring Route
+
+New Python operation packs use the bounded ABI-v3 SDK and `pybench-op-v4`.
+Start with the installed [authoring guide](src/pybench/sdk_authoring.md), not
+the historical bridge described below. The simple author model is declare
+typed inputs/outputs, read issued primitives, compute, and write primitives;
+the R engine owns source validation, lineage, receipts, and atomic publication.
+
+```python
+from importlib.resources import files
+print(files("pybench").joinpath("sdk_authoring.md").read_text())
+```
+
+Scaffolding is inert: it installs and activates nothing. Linux atomic
+no-replace support is required; unsupported publication fails closed. Installed
+pack code and serialized models are trusted, not sandboxed. Check the guide's
+policy-level support table: shared schemas do not establish executable Python
+support for advanced R grants.
+
+The seven-pack standard profile consists of R packs. Their private Python
+computation is not Python-pack activation. A bundle recipient can inspect
+promoted output without a pack, but execution/replay needs the compatible
+activated pack and runtime. Package versions alone do not identify the exact
+installed instance.
+
+The older bridge and pack versions remain explicit compatibility contracts;
+they are not templates to copy into a new SDK pack. ABI-v2 packs use
+`pybench-op-v3`; ABI-v3 Python packs use `pybench-op-v4`.
+
 Purpose:
 - read bundle data directly (SQLite + payload files)
 - run Python-native methods (for example `palantir`, `scvi-tools`)
@@ -11,7 +40,7 @@ Purpose:
 `pybench` does **not** own the run registry or provenance. The R engine remains
 the authority and audits every isolated Python transition before publication.
 
-## Operation protocol v2
+## Historical Engine Bridge: Operation Protocol v2
 
 Writable operation protocol v1 is disabled. `pybench-op-v2` requires an
 explicit execution capability bound to one session, preallocated run, source
@@ -55,7 +84,7 @@ and receipt APIs; it replaces only scientific model computation.
 
 ## Bundle path and model trust contract
 
-PyBench enforces the engine-owned `scworkbench-bundle-path-v1` contract. Every
+PyBench enforces the engine-owned `scworkbench-bundle-path-v1` contract.
 Every `pybench-op-v2` request must contain this exact record:
 
 ```json
@@ -211,7 +240,11 @@ archive, extracted source, wheel, and sdist for `.git` members, personal
 absolute paths, credentials, private keys, and undeclared payloads before an
 artifact is accepted.
 
-## Python operation packs
+## Existing ABI-v1/v2 Python Pack Contracts
+
+This section documents earlier runtime seams. New ABI-v3 authoring uses the
+SDK guide linked above and `pybench-op-v4`; do not substitute these older CLI
+commands for that contract.
 
 PyBench implements the Python-owned operation-pack v1 runtime seam. Installation
 is inert. Discovery and activation are explicit trust decisions:
@@ -279,8 +312,10 @@ without the pack; replay and continuation retain scworkbench's
 `OPERATION_PACK_REQUIRED` behavior until the exact compatible pack is installed
 and explicitly activated.
 
-Operation-pack ABI v2 is a separate, synthetic-reference-only developer
-contract. Python v2 packs declare one exact entry point in
+Operation-pack ABI v2 is an earlier supported contract with a synthetic Python
+reference implementation. The standard profile's Statistics pack uses the R
+ABI-v2 runtime; this is not Python scientific-pack qualification. Python v2
+packs declare one exact entry point in
 `scworkbench.operation_packs.v2`; installation and discovery remain inert, and
 activation is explicit and process-local. ABI v2 executes only through
 `pybench-op-v3`:
@@ -324,15 +359,14 @@ Missing metrics are normal for runtimes that do not retain a requested metric;
 converted to a finite scalar. Existing summaries remain valid and simply do
 not contain the added fields.
 
-## Planned modules
+## Authoring Boundary
 
-- `pybench.bundle`: bundle handle / open-close
-- `pybench.getters`: core read getters (cells, meta, spaces, sets, native matrices)
-- `pybench.artifacts_payload`: payload writers for primitive artifacts
-- `pybench.receipts`: success/error run receipts
-- `pybench.schema`: bundle contract checks
-
-See `docs/pybench_api_inventory_draft.md` in `scworkbench` for the current API inventory draft.
+Use the installed SDK guide and generator for new Python packs. Handlers consume
+issued typed readers and produce primitives through issued writers. Discovery
+and execution authenticate the installed distribution; core owns committed
+state and publication. Do not infer support for an advanced R grant from shared
+schema parity: the SDK capability matrix records executable Python coverage
+and fail-closed unsupported paths.
 
 ## License
 
