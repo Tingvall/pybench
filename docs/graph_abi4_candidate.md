@@ -115,3 +115,12 @@ ceilings. The private writer enforces part rows/decoded bytes, staged bytes,
 spill bytes, node/edge/incidence counts and attribute-field count. A complete
 R publication gate must separately enforce published/WAL budgets and rollback
 on any source mismatch, invalid receipt, undeclared mutation or fault.
+In this candidate, Python's staged-byte counter covers `graph.parts.ndjson`
+lines, while its spill check samples the scratch SQLite file after each part
+commit. Descriptor overhead and transient SQLite journal/temp growth are not
+hard-capped by those two Python counters; core must independently audit the
+complete staged closure and enforce its admitted storage budget. The writer
+uses a fixed 1 MiB SQLite cache and bounded partitions, but
+`max_memory_bytes` is a measured process-RSS qualification target, not an OS
+limit on arbitrary trusted pack code. `max_published_bytes` and
+`max_wal_bytes` are core publication budgets, not Python writer guarantees.
