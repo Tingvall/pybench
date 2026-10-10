@@ -317,8 +317,7 @@ def validate_request_v4(
 ) -> dict[str, Any]:
     value = copy.deepcopy(dict(request))
     expected_request_schema = (
-        "scworkbench.operation_pack.transition_request.v4"
-        if _graph_abi4 else REQUEST_SCHEMA_V4
+        "scworkbench.operation_pack.transition_request.v4" if _graph_abi4 else REQUEST_SCHEMA_V4
     )
     expected_abi = "4" if _graph_abi4 else "3"
     expected_process = "pybench-op-v5" if _graph_abi4 else PROCESS_PROTOCOL_V4
@@ -408,7 +407,8 @@ def validate_request_v4(
     _validate_schema(
         value,
         "operation-pack-transition-request-v4.schema.json" if _graph_abi4 else _REQUEST_ASSET,
-        "PYBENCH_CAPABILITY_MISMATCH", "staging",
+        "PYBENCH_CAPABILITY_MISMATCH",
+        "staging",
     )
     if any(
         grant["model_source_linkage"].get("schema")
@@ -515,18 +515,18 @@ def validate_request_v4(
         from .graph_transport import validate_graph_write_grant
 
         graph_inputs = {
-            item["name"]: item for item in value["inputs"]
-            if item["descriptor"]["kind"] == "graph"
+            item["name"]: item for item in value["inputs"] if item["descriptor"]["kind"] == "graph"
         }
         graph_outputs = {
-            item["name"]: item for item in value["outputs"]
-            if item["descriptor"]["kind"] == "graph"
+            item["name"]: item for item in value["outputs"] if item["descriptor"]["kind"] == "graph"
         }
         read_grants = {item["input_name"]: item for item in value.get("graph_read_grants", [])}
         write_grants = {item["output_name"]: item for item in value.get("graph_write_grants", [])}
         if set(read_grants) != set(graph_inputs) or set(write_grants) != set(graph_outputs):
             _fail("PYBENCH_CAPABILITY_MISMATCH", "Graph grant closure differs", "staging")
-        if len(read_grants) != len(value.get("graph_read_grants", [])) or len(write_grants) != len(value.get("graph_write_grants", [])):
+        if len(read_grants) != len(value.get("graph_read_grants", [])) or len(write_grants) != len(
+            value.get("graph_write_grants", [])
+        ):
             _fail("PYBENCH_CAPABILITY_MISMATCH", "Duplicate graph grant", "staging")
         for input_name, item in graph_inputs.items():
             grant = read_grants[input_name]
@@ -542,7 +542,11 @@ def validate_request_v4(
                 ("component_counts", "component_counts"),
             ):
                 if grant[grant_field] != descriptor[descriptor_field]:
-                    _fail("PYBENCH_INPUT_IDENTITY_MISMATCH", "Graph read grant differs from input", "resolution")
+                    _fail(
+                        "PYBENCH_INPUT_IDENTITY_MISMATCH",
+                        "Graph read grant differs from input",
+                        "resolution",
+                    )
             if descriptor["graph_read_grant_identity"] != grant["grant_identity"]:
                 _fail("PYBENCH_CAPABILITY_MISMATCH", "Graph reader identity differs", "staging")
         input_kinds = {item["name"]: item["descriptor"]["kind"] for item in value["inputs"]}
@@ -557,8 +561,10 @@ def validate_request_v4(
             )
             for authority in grant["authorized_source_axes"]:
                 source_input = authority["input_name"]
-                if source_input in graph_inputs and authority["source_binding_id"] not in (
-                    read_grants[source_input]["selected_binding_ids"]
+                if (
+                    source_input in graph_inputs
+                    and authority["source_binding_id"]
+                    not in (read_grants[source_input]["selected_binding_ids"])
                 ):
                     _fail(
                         "PYBENCH_CAPABILITY_MISMATCH",
@@ -570,7 +576,11 @@ def validate_request_v4(
                 or descriptor["binding_policy"] != grant["binding_policy"]
                 or descriptor["resource_budgets"] != grant["resource_budgets"]
             ):
-                _fail("PYBENCH_CAPABILITY_MISMATCH", "Graph writer grant differs from output", "staging")
+                _fail(
+                    "PYBENCH_CAPABILITY_MISMATCH",
+                    "Graph writer grant differs from output",
+                    "staging",
+                )
     _assert_identity(
         value["execution_capability"],
         "capability_identity",
@@ -1047,16 +1057,21 @@ def validate_request_v4(
             continue
         descriptor = item["descriptor"]
         if _graph_abi4 and descriptor["kind"] == "graph":
-            expected_readers.append({
-                "input_name": item["name"], "reader": "read_graph_parts",
-                "grant_identity": read_grants[item["name"]]["grant_identity"],
-            })
+            expected_readers.append(
+                {
+                    "input_name": item["name"],
+                    "reader": "read_graph_parts",
+                    "grant_identity": read_grants[item["name"]]["grant_identity"],
+                }
+            )
         else:
-            expected_readers.append({
-                "input_name": item["name"],
-                "reader": descriptor["reader"],
-                "descriptor_identity": descriptor["descriptor_identity"],
-            })
+            expected_readers.append(
+                {
+                    "input_name": item["name"],
+                    "reader": descriptor["reader"],
+                    "descriptor_identity": descriptor["descriptor_identity"],
+                }
+            )
     expected_readers += [
         {
             "registry_read_name": item["name"],
@@ -2766,15 +2781,19 @@ def _python_runtime_sidecar_v4(
 
 
 def validate_python_runtime_sidecar_v4(
-    sidecar: Mapping[str, Any], request: Mapping[str, Any], discovery: PackDiscoveryV3,
-    *, _graph_abi4: bool = False,
+    sidecar: Mapping[str, Any],
+    request: Mapping[str, Any],
+    discovery: PackDiscoveryV3,
+    *,
+    _graph_abi4: bool = False,
 ) -> dict[str, Any]:
     request = validate_request_v4(request, discovery, _graph_abi4=_graph_abi4)
     value = copy.deepcopy(dict(sidecar))
     _validate_schema(
         value,
         "pybench-op-v5-python-runtime.schema.json"
-        if _graph_abi4 else "pybench-op-v4-python-runtime.schema.json",
+        if _graph_abi4
+        else "pybench-op-v4-python-runtime.schema.json",
         "PYBENCH_RUNTIME_ATTESTATION_MISMATCH",
         "runtime_attestation",
     )
@@ -3199,8 +3218,7 @@ def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[st
     )
     model_inputs = {item["input_name"] for item in all_model_grants}
     graph_inputs = {
-        item["name"] for item in request["inputs"]
-        if item["descriptor"]["kind"] == "graph"
+        item["name"] for item in request["inputs"] if item["descriptor"]["kind"] == "graph"
     }
     for name in typed_inputs:
         eager = _safe_relative(root, f"inputs/{name}/payload.json")
@@ -3212,7 +3230,8 @@ def _read_inputs_v4(request: Mapping[str, Any], root: Path) -> dict[str, dict[st
             )
     projected = copy.deepcopy(dict(request))
     projected["inputs"] = [
-        item for item in request["inputs"]
+        item
+        for item in request["inputs"]
         if item["name"] not in typed_inputs | model_inputs | graph_inputs
     ]
     values = _read_inputs(projected, root)
@@ -3309,7 +3328,8 @@ def execute_operation_pack_v4(
 
             graph_clients = {
                 grant["input_name"]: GraphBrokerClient(
-                    grant, root,
+                    grant,
+                    root,
                     transition_identity=request["transition"]["transition_identity"],
                 )
                 for grant in request.get("graph_read_grants", [])
@@ -3347,7 +3367,8 @@ def execute_operation_pack_v4(
         }
         if _graph_abi4:
             readers = V5Readers(
-                reader_values, graph_clients,
+                reader_values,
+                graph_clients,
                 registry_values=registry_values,
                 provenance_values=provenance_values,
                 typed_slice_clients=slice_clients,
@@ -3355,8 +3376,11 @@ def execute_operation_pack_v4(
             )
         else:
             readers = V4Readers(
-                reader_values, registry_values, provenance_values,
-                slice_clients, model_readers,
+                reader_values,
+                registry_values,
+                provenance_values,
+                slice_clients,
+                model_readers,
             )
         if fault_hook:
             fault_hook("before_dispatch")
@@ -3398,8 +3422,7 @@ def execute_operation_pack_v4(
 
             context["graph_source_axes"] = {
                 grant["output_name"]: [
-                    graph_source_axis_projection(axis)
-                    for axis in grant["authorized_source_axes"]
+                    graph_source_axis_projection(axis) for axis in grant["authorized_source_axes"]
                 ]
                 for grant in request.get("graph_write_grants", [])
             }
@@ -3467,9 +3490,7 @@ def execute_operation_pack_v4(
             if _graph_abi4 and grant["descriptor"]["kind"] == "graph":
                 from .protocol_v5 import observed_graph_descriptor
 
-                descriptor = observed_graph_descriptor(
-                    write.semantic_metadata["graph_observation"]
-                )
+                descriptor = observed_graph_descriptor(write.semantic_metadata["graph_observation"])
             else:
                 descriptor = _observed_descriptor_v4(
                     grant,
@@ -3544,7 +3565,8 @@ def execute_operation_pack_v4(
         receipt: dict[str, Any] = {
             "schema": (
                 "scworkbench.operation_pack.transition_receipt.v4"
-                if _graph_abi4 else RECEIPT_SCHEMA_V4
+                if _graph_abi4
+                else RECEIPT_SCHEMA_V4
             ),
             "message_type": "receipt",
             "process_protocol_version": "pybench-op-v5" if _graph_abi4 else PROCESS_PROTOCOL_V4,
@@ -3595,9 +3617,7 @@ def execute_operation_pack_v4(
         )
         validate_receipt_v4(receipt, request, discovery, root, _graph_abi4=_graph_abi4)
         sidecar = _python_runtime_sidecar_v4(discovery, request)
-        validate_python_runtime_sidecar_v4(
-            sidecar, request, discovery, _graph_abi4=_graph_abi4
-        )
+        validate_python_runtime_sidecar_v4(sidecar, request, discovery, _graph_abi4=_graph_abi4)
         return receipt, sidecar
     except BaseException:
         if writers is not None:
@@ -3783,20 +3803,19 @@ def validate_receipt_v4(
     request: Mapping[str, Any],
     discovery: PackDiscoveryV3,
     stage_root: str | os.PathLike[str] | None = None,
-    *, _graph_abi4: bool = False,
+    *,
+    _graph_abi4: bool = False,
 ) -> dict[str, Any]:
     request = validate_request_v4(request, discovery, _graph_abi4=_graph_abi4)
     value = copy.deepcopy(dict(receipt))
     expected_receipt_schema = (
-        "scworkbench.operation_pack.transition_receipt.v4"
-        if _graph_abi4 else RECEIPT_SCHEMA_V4
+        "scworkbench.operation_pack.transition_receipt.v4" if _graph_abi4 else RECEIPT_SCHEMA_V4
     )
     if (
         value.get("schema") != expected_receipt_schema
         or value.get("pack_abi_version") != ("4" if _graph_abi4 else "3")
-        or value.get("process_protocol_version") != (
-            "pybench-op-v5" if _graph_abi4 else PROCESS_PROTOCOL_V4
-        )
+        or value.get("process_protocol_version")
+        != ("pybench-op-v5" if _graph_abi4 else PROCESS_PROTOCOL_V4)
     ):
         _fail("OPERATION_PACK_PROTOCOL_INCOMPATIBLE", "Receipt protocol tuple differs", "receipt")
     if value.get("producer_lineage_reads") or any(
@@ -3815,7 +3834,8 @@ def validate_receipt_v4(
     _validate_schema(
         value,
         "operation-pack-transition-receipt-v4.schema.json" if _graph_abi4 else _RECEIPT_ASSET,
-        "PYBENCH_RECEIPT_MISMATCH", "receipt",
+        "PYBENCH_RECEIPT_MISMATCH",
+        "receipt",
     )
     _no_absolute_paths(value)
     _assert_identity(value, "receipt_identity", "PYBENCH_RECEIPT_MISMATCH", "receipt")
@@ -3901,11 +3921,16 @@ def validate_receipt_v4(
             _fail("PYBENCH_RECEIPT_MISMATCH", "Graph read usage closure differs", "receipt")
         for usage, grant in zip(read_usage, read_grants, strict=True):
             for field in (
-                "grant_identity", "content_identity", "binding_identity",
-                "descriptor_identity", "selected_binding_ids",
+                "grant_identity",
+                "content_identity",
+                "binding_identity",
+                "descriptor_identity",
+                "selected_binding_ids",
             ):
                 if usage[field] != grant[field]:
-                    _fail("PYBENCH_RECEIPT_MISMATCH", "Graph read usage differs from grant", "receipt")
+                    _fail(
+                        "PYBENCH_RECEIPT_MISMATCH", "Graph read usage differs from grant", "receipt"
+                    )
             if any(
                 usage["component_observations"][component]["rows"]
                 != grant["component_counts"][component]
@@ -3914,14 +3939,16 @@ def validate_receipt_v4(
                 _fail("PYBENCH_RECEIPT_MISMATCH", "Graph read row closure differs", "receipt")
         write_grants = request.get("graph_write_grants", [])
         write_observations = value.get("graph_write_observations", [])
-        if len(write_observations) != len(write_grants) or [item["output_name"] for item in write_observations] != [
-            item["output_name"] for item in write_grants
-        ]:
+        if len(write_observations) != len(write_grants) or [
+            item["output_name"] for item in write_observations
+        ] != [item["output_name"] for item in write_grants]:
             _fail("PYBENCH_RECEIPT_MISMATCH", "Graph write observation closure differs", "receipt")
         observed_graphs = {item["name"]: item["descriptor"] for item in observed}
         for graph_observation, grant in zip(write_observations, write_grants, strict=True):
             validate_graph_write_observation(graph_observation, grant)
-            if observed_graphs[grant["output_name"]] != observed_graph_descriptor(graph_observation):
+            if observed_graphs[grant["output_name"]] != observed_graph_descriptor(
+                graph_observation
+            ):
                 _fail("PYBENCH_RECEIPT_MISMATCH", "Graph observed descriptor differs", "receipt")
     observed_map = {item["name"]: item["descriptor"] for item in observed}
     validate_sibling_model_observations(request, observed_map)
@@ -3996,23 +4023,28 @@ def validate_receipt_v4(
                 from .protocol_v5 import audit_graph_stage
 
                 graph_grant = next(
-                    item for item in request["graph_write_grants"]
+                    item
+                    for item in request["graph_write_grants"]
                     if item["output_name"] == grant["name"]
                 )
                 observation = next(
-                    item for item in value["graph_write_observations"]
+                    item
+                    for item in value["graph_write_observations"]
                     if item["output_name"] == grant["name"]
                 )
                 audit_graph_stage(
-                    graph_grant, root, observation,
+                    graph_grant,
+                    root,
+                    observation,
                     transition_identity=request["transition"]["transition_identity"],
                     input_kinds={
-                        item["name"]: item["descriptor"]["kind"]
-                        for item in request["inputs"]
+                        item["name"]: item["descriptor"]["kind"] for item in request["inputs"]
                     },
                     output_names=[item["output_name"] for item in request["graph_write_grants"]],
                 )
-                path = _safe_relative(root, "outputs/" + grant["name"] + "/payload.json", must_exist=True)
+                path = _safe_relative(
+                    root, "outputs/" + grant["name"] + "/payload.json", must_exist=True
+                )
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 write = _Write(payload, path, {"graph_observation": observation}, "write_graph")
             elif model_grant is not None:

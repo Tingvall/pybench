@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scwb-graph-fixture"
+version = "0.1.0"
+description = "Generic graph ABI4 Python integration fixture"
+requires-python = ">=3.11"
+dependencies = ["pybench==0.1.0"]
+
+[project.entry-points."scworkbench.operation_packs.v4"]
+fixture = "scwbgraphfixture.pack:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scwbgraphfixture"]

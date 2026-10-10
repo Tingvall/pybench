@@ -171,6 +171,19 @@ def _manifest():
                 [_graph_output(), _obs_output(promotion_group="result")],
             ),
             _operation("graph_to_table", [_graph_input()], [_obs_output()]),
+            _operation(
+                "graph_and_cell_vector",
+                [
+                    _graph_input(),
+                    {
+                        "name": "labels",
+                        "kind": "cell_vector",
+                        "required": True,
+                        "alignment": "cell_ordered",
+                    },
+                ],
+                [_graph_output(), _obs_output(promotion_group="result")],
+            ),
         ],
     }
     manifest["operations"][1]["outputs"][0]["axis_sources"] = [
@@ -179,6 +192,15 @@ def _manifest():
             "axis_kind": "cell",
             "selection_mode": "selected_graph_binding",
             "source_binding_selector": {"kind": "fixed_binding_id_v1", "binding_id": "binding_1"},
+        }
+    ]
+    manifest["operations"][3]["outputs"][0]["binding_policy"] = "required"
+    manifest["operations"][3]["outputs"][0]["axis_sources"] = [
+        {
+            "input_name": "labels",
+            "axis_kind": "cell",
+            "selection_mode": "retained_input_axis",
+            "source_binding_selector": None,
         }
     ]
     return manifest
@@ -202,6 +224,7 @@ def test_mixed_primitive_manifest_declarations_are_closed():
         "matrix_to_graph",
         "graph_and_metadata",
         "graph_to_table",
+        "graph_and_cell_vector",
     }
     bad = copy.deepcopy(fixture)
     bad["operations"][0]["outputs"][0]["resource_budgets"]["max_nodes"] = -1
@@ -212,6 +235,15 @@ def test_mixed_primitive_manifest_declarations_are_closed():
     bad = copy.deepcopy(fixture)
     bad["operations"][0]["outputs"][0]["host_path"] = "/tmp/forbidden"
     assert not Draft202012Validator(MANIFEST_SCHEMA).is_valid(bad)
+
+
+def test_installed_graph_fixture_manifest_matches_shared_fixture():
+    path = (
+        ROOT
+        / "tests/fixtures/operation-pack-v4-graph-python"
+        / "src/scwbgraphfixture/operation-pack.json"
+    )
+    assert json.loads(path.read_text(encoding="utf-8")) == _manifest()
 
 
 @pytest.mark.parametrize("kind", ["cell_vector", "cell_vector_family"])

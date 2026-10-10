@@ -213,6 +213,96 @@
         },
         "runner": ".graph_to_table",
         "title": "graph_to_table"
+      },
+      {
+        "dependencies": [],
+        "description": "Generic graph ABI4 mixed-primitive contract fixture.",
+        "inputs": [
+          {
+            "alignment": "none",
+            "binding_policy": "optional",
+            "kind": "graph",
+            "name": "source",
+            "read_mode": "bounded_partitions_v1",
+            "required": true,
+            "storage_profile": "graph_sqlite_v1"
+          },
+          {
+            "alignment": "cell_ordered",
+            "kind": "cell_vector",
+            "name": "labels",
+            "required": true
+          }
+        ],
+        "name": "graph_and_cell_vector",
+        "outputs": [
+          {
+            "allocated_id_key": "result_id",
+            "axis_sources": [
+              {
+                "axis_kind": "cell",
+                "input_name": "labels",
+                "selection_mode": "retained_input_axis",
+                "source_binding_selector": null
+              }
+            ],
+            "binding_policy": "required",
+            "category": "terminal_artifact",
+            "kind": "graph",
+            "name": "result",
+            "promotion_group": "result",
+            "required": true,
+            "resource_budgets": {
+              "max_attribute_fields": "100000",
+              "max_collect_bytes": "16777216",
+              "max_edges": "1000000",
+              "max_incidences": "8000000",
+              "max_memory_bytes": "67108864",
+              "max_nodes": "1000000",
+              "max_published_bytes": "1073741824",
+              "max_spill_bytes": "1073741824",
+              "max_staged_bytes": "1073741824",
+              "max_wal_bytes": "1073741824",
+              "partition_limits": {
+                "max_decoded_bytes": "1048576",
+                "max_rows": "4096"
+              }
+            },
+            "storage_profile": "graph_sqlite_v1"
+          },
+          {
+            "allocated_id_key": "summary_id",
+            "category": "terminal_artifact",
+            "kind": "obs_table",
+            "name": "summary",
+            "promotion_group": "result",
+            "required": true,
+            "storage_profile": "terminal_primitive_v1",
+            "table_type": "graph_summary"
+          }
+        ],
+        "params_schema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "promotion_closure": {
+          "result": [
+            "result",
+            "summary"
+          ],
+          "summary": [
+            "result",
+            "summary"
+          ]
+        },
+        "qualified_name": "scwbgraphfixture::graph_and_cell_vector",
+        "replay_equivalence": {
+          "result": "exact_graph_descriptor",
+          "summary": "exact_canonical_value"
+        },
+        "runner": ".graph_and_cell_vector",
+        "title": "graph_and_cell_vector"
       }
     ],
     "pack_abi_version": "4",
@@ -227,7 +317,7 @@
     "capability_identity": {
       "scheme": "scworkbench.operation_pack.capability.v4",
       "scope": "capability excluding capability_identity",
-      "sha256": "b81b51022f00e4b9c3d2d37ea85086ddbb76455b1e1fa08fb9b58d0a31674025"
+      "sha256": "e217e49590275bcb3f0bce5db1c7b0c4157506d94754f7e1ac01a74d812ee1b1"
     },
     "graph_read_usage": [
       {
@@ -536,13 +626,13 @@
     "receipt_identity": {
       "scheme": "scworkbench.operation_pack.transition_receipt.v4",
       "scope": "receipt excluding receipt_identity",
-      "sha256": "95364897ea4972edaf4110c75a5241b2a8434a8b1198d8be11a6de78e4042fd7"
+      "sha256": "f7e64450b1a83f40f46e8151e7ebd5bd17ed7122b9758052d18b26d6b072d818"
     },
     "registry_requests": [],
     "request_identity": {
       "scheme": "scworkbench.operation_pack.transition_request.v4",
       "scope": "request excluding request_identity",
-      "sha256": "bf64be02a47df30d8827abf555922f986f4bf04d57ecc2ed5689be9d5cedd408"
+      "sha256": "f4eea5f3039d066c3ab66977d57eb4c74ca98328a495e502c6bea07e4da859be"
     },
     "run_id": "run_00000000000000000000000000000001",
     "runtime_attestation": {
@@ -553,7 +643,7 @@
       },
       "distribution_identity": {
         "scheme": "scworkbench.operation_pack.content.v1",
-        "sha256": "3435ab21f5714a482c00e6a3e66e24bc089d7f4e9b1899a5fb1f24e8795c5d44"
+        "sha256": "65c816be67000465774c1015523b3151e9b77b51441ea6f72d979ba8b9e4affc"
       },
       "dynamic_resolutions": [],
       "entry_point": {
@@ -565,7 +655,7 @@
       },
       "manifest_source_identity": {
         "scheme": "scworkbench.operation_pack.manifest_source.bytes.v1",
-        "sha256": "b3435a5d89bc53135eaa08a59787a2fb6e637934dba4e886ab4085bf0a828ad7"
+        "sha256": "5ab24fe509fc91bfd36fb081a14b50b60557a630f3cc43fd728e0eef2260a972"
       },
       "operation_definition_identity": {
         "scheme": "scworkbench.operation_pack.definition.v4",
@@ -573,7 +663,7 @@
       },
       "pack_identity": {
         "scheme": "scworkbench.operation_pack.pack.v4",
-        "sha256": "d2e9ad9850d794477cdfb34ec5a2721a819521b9f9fa74846286d287d25792a5"
+        "sha256": "f4afcafd9ad82b5205a6718275893883231e3b810cb3b34d34fd3e1f2c7e176a"
       },
       "path_policy": "no_absolute_paths",
       "preflight_report_identity": {
@@ -583,7 +673,7 @@
       "runtime_identity": {
         "scheme": "scworkbench.operation_pack.runtime.v3",
         "scope": "runtime attestation excluding runtime_identity",
-        "sha256": "f122727e3b3d40cbf0237edcf41cc51371f5c5967dcf96918dd67755ea332ae0"
+        "sha256": "b32e7f8cdd3762a836c8603516d726aa47f2573126556aa9b0e98c414356d5a3"
       },
       "schema": "scworkbench.operation_pack.runtime.v3",
       "selected_requirement_set_identity": {
@@ -635,12 +725,12 @@
       "capability_identity": {
         "scheme": "scworkbench.operation_pack.capability.v4",
         "scope": "capability excluding capability_identity",
-        "sha256": "b81b51022f00e4b9c3d2d37ea85086ddbb76455b1e1fa08fb9b58d0a31674025"
+        "sha256": "e217e49590275bcb3f0bce5db1c7b0c4157506d94754f7e1ac01a74d812ee1b1"
       },
       "checkpoint_generation": "generation_00000000000000000000000000000001",
       "distribution_identity": {
         "scheme": "scworkbench.operation_pack.content.v1",
-        "sha256": "3435ab21f5714a482c00e6a3e66e24bc089d7f4e9b1899a5fb1f24e8795c5d44"
+        "sha256": "65c816be67000465774c1015523b3151e9b77b51441ea6f72d979ba8b9e4affc"
       },
       "entry_point_identity": {
         "scheme": "scworkbench.operation_pack.entry_point.v2",
@@ -649,7 +739,7 @@
       "lease_id": "lease_00000000000000000000000000000001",
       "manifest_source_identity": {
         "scheme": "scworkbench.operation_pack.manifest_source.bytes.v1",
-        "sha256": "b3435a5d89bc53135eaa08a59787a2fb6e637934dba4e886ab4085bf0a828ad7"
+        "sha256": "5ab24fe509fc91bfd36fb081a14b50b60557a630f3cc43fd728e0eef2260a972"
       },
       "mode": "private_staging_write",
       "operation_definition_identity": {
@@ -658,7 +748,7 @@
       },
       "pack_identity": {
         "scheme": "scworkbench.operation_pack.pack.v4",
-        "sha256": "d2e9ad9850d794477cdfb34ec5a2721a819521b9f9fa74846286d287d25792a5"
+        "sha256": "f4afcafd9ad82b5205a6718275893883231e3b810cb3b34d34fd3e1f2c7e176a"
       },
       "preflight_report_identity": {
         "scheme": "scworkbench.operation_pack.preflight.v2",
@@ -885,7 +975,7 @@
     "operation_authentication": {
       "distribution_identity": {
         "scheme": "scworkbench.operation_pack.content.v1",
-        "sha256": "3435ab21f5714a482c00e6a3e66e24bc089d7f4e9b1899a5fb1f24e8795c5d44"
+        "sha256": "65c816be67000465774c1015523b3151e9b77b51441ea6f72d979ba8b9e4affc"
       },
       "entry_point": {
         "identity": {
@@ -896,11 +986,11 @@
       },
       "manifest_identity": {
         "scheme": "scworkbench.operation_pack.manifest.v4",
-        "sha256": "f127a4f1aa04cf6d14c4963a49fc0d2ff80306b02e3c1b8599b88af6f83f439b"
+        "sha256": "27f2a75d7450d6f48b1a2124888b15b9ebdd392b155cda08939246a2bac188c2"
       },
       "manifest_source_identity": {
         "scheme": "scworkbench.operation_pack.manifest_source.bytes.v1",
-        "sha256": "b3435a5d89bc53135eaa08a59787a2fb6e637934dba4e886ab4085bf0a828ad7"
+        "sha256": "5ab24fe509fc91bfd36fb081a14b50b60557a630f3cc43fd728e0eef2260a972"
       },
       "name": "scwbgraphfixture::graph_and_metadata",
       "operation_definition_identity": {
@@ -909,7 +999,7 @@
       },
       "pack_identity": {
         "scheme": "scworkbench.operation_pack.pack.v4",
-        "sha256": "d2e9ad9850d794477cdfb34ec5a2721a819521b9f9fa74846286d287d25792a5"
+        "sha256": "f4afcafd9ad82b5205a6718275893883231e3b810cb3b34d34fd3e1f2c7e176a"
       }
     },
     "outputs": [
@@ -989,7 +1079,7 @@
     "request_identity": {
       "scheme": "scworkbench.operation_pack.transition_request.v4",
       "scope": "request excluding request_identity",
-      "sha256": "bf64be02a47df30d8827abf555922f986f4bf04d57ecc2ed5689be9d5cedd408"
+      "sha256": "f4eea5f3039d066c3ab66977d57eb4c74ca98328a495e502c6bea07e4da859be"
     },
     "schema": "scworkbench.operation_pack.transition_request.v4",
     "transition": {

@@ -87,6 +87,15 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="pybench-graph-fixture-") as tmp:
         root = Path(tmp)
         manifest = _manifest()
+        installed_fixture_manifest = (
+            ROOT
+            / "tests/fixtures/operation-pack-v4-graph-python"
+            / "src/scwbgraphfixture/operation-pack.json"
+        )
+        installed_fixture_manifest.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         path = root / "scwbgraphfixture" / "operation-pack.json"
         path.parent.mkdir()
         path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")

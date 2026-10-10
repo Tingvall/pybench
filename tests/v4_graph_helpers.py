@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 from pybench.graph import graph_identities
 from pybench.operation_packs_v2 import _identity
-from test_graph_protocol import _budgets, _manifest, _obs_output
+from test_graph_protocol import _budgets, _obs_output
+from test_graph_transport import _retained_axis
 from v3_helpers import fixture_inputs, make_request
 
 
@@ -85,9 +86,9 @@ def matrix_to_graph_request(discovery, stage: Path) -> dict:
 
 
 def graph_source_request(discovery, stage: Path, *, operation_index: int) -> dict:
-    if operation_index not in (1, 2):
-        raise ValueError("graph source fixture index must be 1 or 2")
-    manifest = copy.deepcopy(_manifest())
+    if operation_index not in (1, 2, 3):
+        raise ValueError("graph source fixture index must be 1, 2 or 3")
+    manifest = copy.deepcopy(discovery.manifest)
     operation = manifest["operations"][operation_index]
     operation["inputs"][0] = {
         "name": "source",
@@ -95,7 +96,7 @@ def graph_source_request(discovery, stage: Path, *, operation_index: int) -> dic
         "required": True,
         "alignment": "none",
     }
-    if operation_index == 1:
+    if operation_index in (1, 3):
         operation["outputs"][0] = _obs_output("result", promotion_group="result")
         operation["replay_equivalence"]["result"] = "exact_canonical_value"
     helper_discovery = SimpleNamespace(
@@ -109,6 +110,8 @@ def graph_source_request(discovery, stage: Path, *, operation_index: int) -> dic
     inputs = {"source": sources["obs_table"]}
     if operation_index == 1:
         inputs["metadata"] = sources["obs_table"]
+    elif operation_index == 3:
+        inputs["labels"] = sources["cell_vector"]
     request = make_request(helper_discovery, stage, operation["qualified_name"], inputs)
     shutil.rmtree(stage / "inputs" / "source")
     content = {
@@ -182,13 +185,29 @@ def graph_source_request(discovery, stage: Path, *, operation_index: int) -> dic
     request["pack_abi_version"] = "4"
     request["graph_read_grants"] = [read_grant]
     request["graph_write_grants"] = []
-    if operation_index == 1:
+    if operation_index in (1, 3):
+        authorized_axes = []
+        if operation_index == 3:
+            axis = _retained_axis(
+                request["transition"]["transition_identity"], output_name="result"
+            )
+            axis["input_name"] = "labels"
+            axis["source_binding_id"] = None
+            axis["axis_count"] = "1"
+            axis.pop("authority_identity")
+            axis["authority_identity"] = _identity(
+                "scworkbench.operation_pack.graph_source_axis_authority.v1",
+                axis,
+                "authority excluding authority_identity",
+            )
+            authorized_axes = [axis]
+        binding_policy = "required" if operation_index == 3 else "optional"
         graph_write = {
             "schema": "scworkbench.graph.write_grant.v1",
             "output_name": "result",
             "component_order": "graph_components_v1",
-            "binding_policy": "optional",
-            "authorized_source_axes": [],
+            "binding_policy": binding_policy,
+            "authorized_source_axes": authorized_axes,
             "resource_budgets": _budgets(),
         }
         graph_write["grant_identity"] = _identity(
@@ -201,7 +220,7 @@ def graph_source_request(discovery, stage: Path, *, operation_index: int) -> dic
             "kind": "graph",
             "storage_profile": "graph_sqlite_v1",
             "writer": "write_graph",
-            "binding_policy": "optional",
+            "binding_policy": binding_policy,
             "resource_budgets": _budgets(),
             "graph_write_grant_identity": graph_write["grant_identity"],
         }
