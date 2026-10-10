@@ -13,65 +13,68 @@
         "edges": [
           {
             "direction": "directed",
-            "edge_id": "flight:10",
+            "edge_id": "f1",
             "kind": "ordinary"
           },
           {
             "direction": "directed",
-            "edge_id": "flight:2",
+            "edge_id": "f2",
             "kind": "ordinary"
           },
           {
             "direction": "directed",
-            "edge_id": "flight:3",
+            "edge_id": "f3",
             "kind": "ordinary"
           }
         ],
         "incidences": [
           {
-            "edge_id": "flight:10",
+            "edge_id": "f1",
             "incidence_id": "i1",
-            "node_id": "LHR",
+            "node_id": "ARN",
             "ordinal": 0,
             "role": "tail"
           },
           {
-            "edge_id": "flight:10",
+            "edge_id": "f1",
             "incidence_id": "i2",
-            "node_id": "JFK",
+            "node_id": "LHR",
             "ordinal": 1,
             "role": "head"
           },
           {
-            "edge_id": "flight:2",
+            "edge_id": "f2",
             "incidence_id": "i3",
+            "node_id": "ARN",
+            "ordinal": 0,
+            "role": "tail"
+          },
+          {
+            "edge_id": "f2",
+            "incidence_id": "i4",
+            "node_id": "LHR",
+            "ordinal": 1,
+            "role": "head"
+          },
+          {
+            "edge_id": "f3",
+            "incidence_id": "i5",
             "node_id": "LHR",
             "ordinal": 0,
             "role": "tail"
           },
           {
-            "edge_id": "flight:2",
-            "incidence_id": "i4",
-            "node_id": "JFK",
-            "ordinal": 1,
-            "role": "head"
-          },
-          {
-            "edge_id": "flight:3",
-            "incidence_id": "i5",
-            "node_id": "JFK",
-            "ordinal": 0,
-            "role": "tail"
-          },
-          {
-            "edge_id": "flight:3",
+            "edge_id": "f3",
             "incidence_id": "i6",
-            "node_id": "KEF",
+            "node_id": "JFK",
             "ordinal": 1,
             "role": "head"
           }
         ],
         "nodes": [
+          {
+            "node_id": "ARN"
+          },
           {
             "node_id": "LHR"
           },
@@ -80,9 +83,6 @@
           },
           {
             "node_id": "KEF"
-          },
-          {
-            "node_id": "ISOLATED"
           }
         ],
         "schema": "scworkbench.graph.content.v1"
@@ -90,9 +90,9 @@
       "expected": {
         "binding_identity": {
           "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
-          "sha256": "5d0bea4b77e3985645a0b0d113e280cd18549e9010600867e5987ae37d0877c4"
+          "sha256": "900ebcff6dd45eb3bda08bd9e2bb3d3b62d59c55ad23e23582cd6a5445275c31"
         },
-        "canonical_content_bytes": "953",
+        "canonical_content_bytes": "891",
         "component_counts": {
           "attribute_fields": "0",
           "attribute_values": "0",
@@ -102,20 +102,20 @@
         },
         "content_identity": {
           "scheme": "scworkbench.graph.content.canonical-json.v1",
-          "sha256": "9b1f7007604c99c2c0a58ad3520708bc86a7736d969daacb38c59544498121ba"
+          "sha256": "bc2db514f8aa92f66943d994aa61736916b7d6d1f89c2478bf29136e8c729b52"
         },
         "descriptor_identity": {
           "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
-          "sha256": "6660ff653e900d6810540645df36c4f3084a85e8bb49dcc7871564735215e89b"
+          "sha256": "e37a05b643049ac5c3e3965949d4455d31697922f4a11aa681707c5249268fa6"
         },
         "igraph_eligible": true,
         "observations": {
           "isolated_nodes": [
-            "ISOLATED"
+            "KEF"
           ],
           "parallel_edges": [
-            "flight:10",
-            "flight:2"
+            "f1",
+            "f2"
           ]
         }
       },
@@ -223,35 +223,54 @@
         "edges": [
           {
             "direction": "directed",
-            "edge_id": "follows",
+            "edge_id": "follow1",
+            "kind": "ordinary"
+          },
+          {
+            "direction": "directed",
+            "edge_id": "follow2",
             "kind": "ordinary"
           }
         ],
         "incidences": [
           {
-            "edge_id": "follows",
+            "edge_id": "follow1",
             "incidence_id": "i1",
-            "node_id": "alice",
+            "node_id": "ada",
             "ordinal": 0,
             "role": "tail"
           },
           {
-            "edge_id": "follows",
+            "edge_id": "follow1",
             "incidence_id": "i2",
-            "node_id": "bob",
+            "node_id": "bea",
+            "ordinal": 1,
+            "role": "head"
+          },
+          {
+            "edge_id": "follow2",
+            "incidence_id": "i3",
+            "node_id": "bea",
+            "ordinal": 0,
+            "role": "tail"
+          },
+          {
+            "edge_id": "follow2",
+            "incidence_id": "i4",
+            "node_id": "ada",
             "ordinal": 1,
             "role": "head"
           }
         ],
         "nodes": [
           {
-            "node_id": "alice"
+            "node_id": "ada"
           },
           {
-            "node_id": "bob"
+            "node_id": "bea"
           },
           {
-            "node_id": "carol"
+            "node_id": "cy"
           }
         ],
         "schema": "scworkbench.graph.content.v1"
@@ -259,28 +278,28 @@
       "expected": {
         "binding_identity": {
           "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
-          "sha256": "3d51fdbef689d2c2c6d513494c3c30281a7039b90ac3ec4d101e029f0d644f43"
+          "sha256": "44ae60223e6bb5e70ae0af6300c544669277cd72212e749e745e1c3d2ace89e6"
         },
-        "canonical_content_bytes": "458",
+        "canonical_content_bytes": "684",
         "component_counts": {
           "attribute_fields": "0",
           "attribute_values": "0",
-          "edges": "1",
-          "incidences": "2",
+          "edges": "2",
+          "incidences": "4",
           "nodes": "3"
         },
         "content_identity": {
           "scheme": "scworkbench.graph.content.canonical-json.v1",
-          "sha256": "0ee33801132183175b364a5e2f65b2749b3cbb85579487cafa0d74681df1b7a5"
+          "sha256": "a6bc87faaf565ba2587000fa2650ad7b82d12bda3aeed7b2db5dd604da38b8f2"
         },
         "descriptor_identity": {
           "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
-          "sha256": "0477a106a7e17b0e65e44834e93314c80756f896430432e7881b0994203b1020"
+          "sha256": "d4a1315fe599c392723b0a8c0314db364a88dfd7cbadb4c582a5f143533c3383"
         },
         "igraph_eligible": true,
         "observations": {
           "isolated_nodes": [
-            "carol"
+            "cy"
           ]
         }
       },
@@ -298,35 +317,54 @@
         "edges": [
           {
             "direction": "undirected",
-            "edge_id": "friendship",
+            "edge_id": "friend1",
+            "kind": "ordinary"
+          },
+          {
+            "direction": "undirected",
+            "edge_id": "friend2",
             "kind": "ordinary"
           }
         ],
         "incidences": [
           {
-            "edge_id": "friendship",
+            "edge_id": "friend1",
             "incidence_id": "i1",
-            "node_id": "bob",
+            "node_id": "ada",
             "ordinal": 0,
             "role": "member"
           },
           {
-            "edge_id": "friendship",
+            "edge_id": "friend1",
             "incidence_id": "i2",
-            "node_id": "carol",
+            "node_id": "bea",
+            "ordinal": 1,
+            "role": "member"
+          },
+          {
+            "edge_id": "friend2",
+            "incidence_id": "i3",
+            "node_id": "bea",
+            "ordinal": 0,
+            "role": "member"
+          },
+          {
+            "edge_id": "friend2",
+            "incidence_id": "i4",
+            "node_id": "cy",
             "ordinal": 1,
             "role": "member"
           }
         ],
         "nodes": [
           {
-            "node_id": "alice"
+            "node_id": "ada"
           },
           {
-            "node_id": "bob"
+            "node_id": "bea"
           },
           {
-            "node_id": "carol"
+            "node_id": "cy"
           }
         ],
         "schema": "scworkbench.graph.content.v1"
@@ -334,30 +372,26 @@
       "expected": {
         "binding_identity": {
           "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
-          "sha256": "586fc104cb551679342ef1b0c182de9d10806f549abbe9da4c659d756453b7f3"
+          "sha256": "9c0189a062735dc8de0ed1bf8bf56e4572ed94a0164509bf703ae922e1cd4fa1"
         },
-        "canonical_content_bytes": "475",
+        "canonical_content_bytes": "697",
         "component_counts": {
           "attribute_fields": "0",
           "attribute_values": "0",
-          "edges": "1",
-          "incidences": "2",
+          "edges": "2",
+          "incidences": "4",
           "nodes": "3"
         },
         "content_identity": {
           "scheme": "scworkbench.graph.content.canonical-json.v1",
-          "sha256": "f222bd23eae8e934598fb3bc16b320c6c45e99638507fe651b176691ef06fdb0"
+          "sha256": "f1e0a27fed6662bd40aff773c7f20a783bd36d4fb5e324576a81b80462446ed2"
         },
         "descriptor_identity": {
           "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
-          "sha256": "d8f220563a5607dbeaf96834e5290087e2626f7872f6f39722ecad7bd4fb7aee"
+          "sha256": "cd7e904e22c9fec18fb6195de1ab1e089d964cb3fda09c715a7e05f1cac7cf3a"
         },
         "igraph_eligible": true,
-        "observations": {
-          "isolated_nodes": [
-            "alice"
-          ]
-        }
+        "observations": {}
       },
       "id": "social_undirected"
     },
@@ -368,10 +402,10 @@
             {
               "name": "sign",
               "nullable": false,
-              "type": "int64_decimal_string",
+              "type": "utf8",
               "values": [
-                "1",
-                "-1"
+                "positive",
+                "negative"
               ]
             },
             {
@@ -379,8 +413,8 @@
               "nullable": false,
               "type": "float64_le_hex",
               "values": [
-                "000000000000c03f",
-                "000000000000e8bf"
+                "9a9999999999e93f",
+                "9a9999999999d9bf"
               ]
             }
           ],
@@ -392,54 +426,54 @@
         "edges": [
           {
             "direction": "directed",
-            "edge_id": "activation",
+            "edge_id": "reg1",
             "kind": "ordinary"
           },
           {
             "direction": "directed",
-            "edge_id": "repression",
+            "edge_id": "reg2",
             "kind": "ordinary"
           }
         ],
         "incidences": [
           {
-            "edge_id": "activation",
+            "edge_id": "reg1",
             "incidence_id": "i1",
-            "node_id": "TF",
+            "node_id": "TF1",
             "ordinal": 0,
             "role": "tail"
           },
           {
-            "edge_id": "activation",
+            "edge_id": "reg1",
             "incidence_id": "i2",
-            "node_id": "gene_2",
+            "node_id": "G1",
             "ordinal": 1,
             "role": "head"
           },
           {
-            "edge_id": "repression",
+            "edge_id": "reg2",
             "incidence_id": "i3",
-            "node_id": "TF",
+            "node_id": "TF1",
             "ordinal": 0,
             "role": "tail"
           },
           {
-            "edge_id": "repression",
+            "edge_id": "reg2",
             "incidence_id": "i4",
-            "node_id": "gene_10",
+            "node_id": "G2",
             "ordinal": 1,
             "role": "head"
           }
         ],
         "nodes": [
           {
-            "node_id": "TF"
+            "node_id": "TF1"
           },
           {
-            "node_id": "gene_2"
+            "node_id": "G1"
           },
           {
-            "node_id": "gene_10"
+            "node_id": "G2"
           }
         ],
         "schema": "scworkbench.graph.content.v1"
@@ -447,9 +481,9 @@
       "expected": {
         "binding_identity": {
           "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
-          "sha256": "54d2b68e2babfd9f67dc0f27efcfeb10b8e2d478fc4cc42d1044944008fd4ede"
+          "sha256": "57aae74100b12188872c7fa7ac4916a2281e4f7b35008bd3f6e557622e09811b"
         },
-        "canonical_content_bytes": "904",
+        "canonical_content_bytes": "850",
         "component_counts": {
           "attribute_fields": "2",
           "attribute_values": "4",
@@ -459,11 +493,11 @@
         },
         "content_identity": {
           "scheme": "scworkbench.graph.content.canonical-json.v1",
-          "sha256": "4eba39b9d123f704cdb50a5fe24cd64a874a9281063ef75ba2196c8cf0654024"
+          "sha256": "894d811d330a34c2c108ac36b73037bfc1deef6f8fb3013f6586aa7fcc42dc99"
         },
         "descriptor_identity": {
           "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
-          "sha256": "62cd89291fe1f1a5b5d80e9cd2ec9cbfe5c251403826d889bd609ca609dc6e68"
+          "sha256": "47ea410aa46dc166701eefa1bc491c010caa97f127362bebe52b3a1b583aa2c1"
         },
         "igraph_eligible": true,
         "observations": {}
@@ -482,22 +516,41 @@
         "edges": [
           {
             "direction": "undirected",
-            "edge_id": "ppi",
+            "edge_id": "p1",
+            "kind": "ordinary"
+          },
+          {
+            "direction": "undirected",
+            "edge_id": "p2",
             "kind": "ordinary"
           }
         ],
         "incidences": [
           {
-            "edge_id": "ppi",
+            "edge_id": "p1",
             "incidence_id": "i1",
             "node_id": "P1",
             "ordinal": 0,
             "role": "member"
           },
           {
-            "edge_id": "ppi",
+            "edge_id": "p1",
             "incidence_id": "i2",
             "node_id": "P2",
+            "ordinal": 1,
+            "role": "member"
+          },
+          {
+            "edge_id": "p2",
+            "incidence_id": "i3",
+            "node_id": "P2",
+            "ordinal": 0,
+            "role": "member"
+          },
+          {
+            "edge_id": "p2",
+            "incidence_id": "i4",
+            "node_id": "P3",
             "ordinal": 1,
             "role": "member"
           }
@@ -518,30 +571,26 @@
       "expected": {
         "binding_identity": {
           "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
-          "sha256": "b60603a837f63ef4d89d789ec92d37a80ae11636b4429c401f419d7866a603a4"
+          "sha256": "e04acb799e56df3c3419970e336df3a80595e025a5b5a250aeeb3775ac3d8812"
         },
-        "canonical_content_bytes": "443",
+        "canonical_content_bytes": "662",
         "component_counts": {
           "attribute_fields": "0",
           "attribute_values": "0",
-          "edges": "1",
-          "incidences": "2",
+          "edges": "2",
+          "incidences": "4",
           "nodes": "3"
         },
         "content_identity": {
           "scheme": "scworkbench.graph.content.canonical-json.v1",
-          "sha256": "7449b5cb67b2223ee61bba7b3e5661fa8db908cf6d1ebf1df005ca6e4bdf8b76"
+          "sha256": "eca909068a531b5cc5850d9f7392e90349eb5ade27896cd3529c1004c37e3753"
         },
         "descriptor_identity": {
           "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
-          "sha256": "67c2cd20f9b10e69862f294c5534a0b48dc97f6d7f57854c3fd0dc542b826f36"
+          "sha256": "1d16c1021d52a03078325c21b27574b7bbdfabacf16c53f4f5242452c12b53f6"
         },
         "igraph_eligible": true,
-        "observations": {
-          "isolated_nodes": [
-            "P3"
-          ]
-        }
+        "observations": {}
       },
       "id": "ppi_undirected"
     },
@@ -558,8 +607,9 @@
               "values": [
                 "1",
                 "1",
-                "3",
-                "2"
+                "1",
+                "1",
+                "1"
               ]
             }
           ],
@@ -601,6 +651,13 @@
             "node_id": "C",
             "ordinal": 3,
             "role": "head"
+          },
+          {
+            "edge_id": "reaction",
+            "incidence_id": "i5",
+            "node_id": "D",
+            "ordinal": 4,
+            "role": "head"
           }
         ],
         "nodes": [
@@ -612,6 +669,9 @@
           },
           {
             "node_id": "C"
+          },
+          {
+            "node_id": "D"
           }
         ],
         "schema": "scworkbench.graph.content.v1"
@@ -619,23 +679,23 @@
       "expected": {
         "binding_identity": {
           "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
-          "sha256": "5e7e9cce502a44d7a503ed3a71e6345333e1efde6df9932111feb38e4370d4d5"
+          "sha256": "eb97fdb91e884df12286fbcd7c639c4fb5b1b01396578a7be8ee1f18c8ff0de9"
         },
-        "canonical_content_bytes": "708",
+        "canonical_content_bytes": "813",
         "component_counts": {
           "attribute_fields": "1",
-          "attribute_values": "4",
+          "attribute_values": "5",
           "edges": "1",
-          "incidences": "4",
-          "nodes": "3"
+          "incidences": "5",
+          "nodes": "4"
         },
         "content_identity": {
           "scheme": "scworkbench.graph.content.canonical-json.v1",
-          "sha256": "1243a84d9ef4b3fe4af9653a2546a52eb0736bff363ae7d0ac6004c3fd94e290"
+          "sha256": "7a46702d9d49eb69b478f992fcefa48f578af8907482a701c2cfb13df009dc69"
         },
         "descriptor_identity": {
           "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
-          "sha256": "7a04107741c07481395953ea1fa3d42b53dbc3533b3ed5b1a2c224d97547a058"
+          "sha256": "6338020e33530ac6b5daf0d920222ef49085ecc0587bcbc4e49dc8dd4f8328ea"
         },
         "igraph_eligible": false,
         "observations": {
@@ -659,84 +719,55 @@
         "direction_mode": "mixed",
         "edges": [
           {
-            "direction": "undirected",
-            "edge_id": "road",
-            "kind": "ordinary"
-          },
-          {
             "direction": "directed",
-            "edge_id": "rail",
+            "edge_id": "ferry",
             "kind": "ordinary"
           },
           {
             "direction": "undirected",
-            "edge_id": "route",
-            "kind": "hyper"
+            "edge_id": "walk",
+            "kind": "ordinary"
           }
         ],
         "incidences": [
           {
-            "edge_id": "road",
+            "edge_id": "ferry",
             "incidence_id": "i1",
-            "node_id": "a",
-            "ordinal": 0,
-            "role": "member"
-          },
-          {
-            "edge_id": "road",
-            "incidence_id": "i2",
-            "node_id": "b",
-            "ordinal": 1,
-            "role": "member"
-          },
-          {
-            "edge_id": "rail",
-            "incidence_id": "i3",
-            "node_id": "b",
+            "node_id": "hub",
             "ordinal": 0,
             "role": "tail"
           },
           {
-            "edge_id": "rail",
-            "incidence_id": "i4",
-            "node_id": "c",
+            "edge_id": "ferry",
+            "incidence_id": "i2",
+            "node_id": "port",
             "ordinal": 1,
             "role": "head"
           },
           {
-            "edge_id": "route",
-            "incidence_id": "i5",
-            "node_id": "a",
+            "edge_id": "walk",
+            "incidence_id": "i3",
+            "node_id": "port",
             "ordinal": 0,
             "role": "member"
           },
           {
-            "edge_id": "route",
-            "incidence_id": "i6",
-            "node_id": "c",
+            "edge_id": "walk",
+            "incidence_id": "i4",
+            "node_id": "rail",
             "ordinal": 1,
-            "role": "member"
-          },
-          {
-            "edge_id": "route",
-            "incidence_id": "i7",
-            "node_id": "d",
-            "ordinal": 2,
             "role": "member"
           }
         ],
         "nodes": [
           {
-            "node_id": "a"
+            "node_id": "hub"
           },
           {
-            "node_id": "b"
+            "node_id": "port"
           },
           {
-            "node_id": "c"
-          },
-          {
-            "node_id": "d"
+            "node_id": "rail"
           }
         ],
         "schema": "scworkbench.graph.content.v1"
@@ -744,23 +775,23 @@
       "expected": {
         "binding_identity": {
           "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
-          "sha256": "e1b0e8ddecae003a753861ebfd24d4f5872151357a9106a610338cb6dbec5a6b"
+          "sha256": "c76610832a1b7c9aa16f9be200fa48cca1ecc044cc3ae48837648a0412c7d7f7"
         },
-        "canonical_content_bytes": "982",
+        "canonical_content_bytes": "678",
         "component_counts": {
           "attribute_fields": "0",
           "attribute_values": "0",
-          "edges": "3",
-          "incidences": "7",
-          "nodes": "4"
+          "edges": "2",
+          "incidences": "4",
+          "nodes": "3"
         },
         "content_identity": {
           "scheme": "scworkbench.graph.content.canonical-json.v1",
-          "sha256": "f3172850f71f018f1bf5e46900f5e83cdcaca9d88185f3c17c00c31e855ee4d6"
+          "sha256": "2b226f3f43f029313bdc53ea64f36576afe7afe78417410532f14b9975c008f0"
         },
         "descriptor_identity": {
           "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
-          "sha256": "ad555178d3fc807645404e8dd36bbcd8da6050c05be30eb309e4615b1f2cdb17"
+          "sha256": "b390d60e251a6bddccd72dc4af51a7633a3021f984bfa361e83a501d39be679a"
         },
         "igraph_eligible": false,
         "observations": {}
@@ -1096,6 +1127,81 @@
         "edges": [
           {
             "direction": "undirected",
+            "edge_id": "link",
+            "kind": "ordinary"
+          }
+        ],
+        "incidences": [
+          {
+            "edge_id": "link",
+            "incidence_id": "i1",
+            "node_id": "a",
+            "ordinal": 0,
+            "role": "member"
+          },
+          {
+            "edge_id": "link",
+            "incidence_id": "i2",
+            "node_id": "b",
+            "ordinal": 1,
+            "role": "member"
+          }
+        ],
+        "nodes": [
+          {
+            "node_id": "a"
+          },
+          {
+            "node_id": "b"
+          },
+          {
+            "node_id": "c"
+          }
+        ],
+        "schema": "scworkbench.graph.content.v1"
+      },
+      "expected": {
+        "binding_identity": {
+          "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
+          "sha256": "903be4f24ebab614f5c89bba93066ef2910df89e2fff216f1a4bc991485dc05a"
+        },
+        "canonical_content_bytes": "441",
+        "component_counts": {
+          "attribute_fields": "0",
+          "attribute_values": "0",
+          "edges": "1",
+          "incidences": "2",
+          "nodes": "3"
+        },
+        "content_identity": {
+          "scheme": "scworkbench.graph.content.canonical-json.v1",
+          "sha256": "834c5e48d441a72df64326a7ed3065f40500c9b5219ce632ec17efd08619998b"
+        },
+        "descriptor_identity": {
+          "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
+          "sha256": "7a337af23043acfbd27141535e33b1be5d733b85aedd382cd5e5b773f59fb7be"
+        },
+        "igraph_eligible": true,
+        "observations": {
+          "isolated_nodes": [
+            "c"
+          ]
+        }
+      },
+      "id": "disconnected_undirected"
+    },
+    {
+      "content": {
+        "attributes": {
+          "edge": [],
+          "graph": [],
+          "incidence": [],
+          "node": []
+        },
+        "direction_mode": "undirected",
+        "edges": [
+          {
+            "direction": "undirected",
             "edge_id": "ab",
             "kind": "ordinary"
           },
@@ -1182,7 +1288,7 @@
           ]
         }
       },
-      "id": "disconnected_undirected"
+      "id": "disconnected_undirected_supplemental"
     },
     {
       "content": {

@@ -22,19 +22,31 @@ CONTENT_VALIDATOR = Draft202012Validator({"$defs": SCHEMA["$defs"], "$ref": "#/$
 SCOPES = ("graph", "node", "edge", "incidence")
 PLAN_COUNTS = {
     "airline_parallel_isolate": (4, 3, 6),
+    "social_directed": (3, 2, 4),
+    "social_undirected": (3, 2, 4),
     "social_mixed": (3, 2, 4),
     "signed_weighted_grn": (3, 2, 4),
-    "ppi_undirected": (3, 1, 2),
-    "reaction_hyper_repeated": (3, 1, 4),
-    "transport_mixed": (4, 3, 7),
+    "ppi_undirected": (3, 2, 4),
+    "reaction_hyper_repeated": (4, 1, 5),
+    "transport_mixed": (3, 2, 4),
     "empty_undirected": (0, 0, 0),
     "empty_directed": (0, 0, 0),
     "empty_mixed": (0, 0, 0),
     "isolated_only": (2, 0, 0),
     "disconnected_self_loop_mixed": (4, 2, 4),
-    "disconnected_undirected": (5, 2, 4),
+    "disconnected_undirected": (3, 1, 2),
+    "disconnected_undirected_supplemental": (5, 2, 4),
     "self_loops_mixed": (1, 2, 4),
     "repeated_hyper_incidences": (2, 2, 7),
+}
+FROZEN_PLAN_RECORDS = {
+    "airline_parallel_isolate": (["ARN", "LHR", "JFK", "KEF"], ["f1", "f2", "f3"]),
+    "social_directed": (["ada", "bea", "cy"], ["follow1", "follow2"]),
+    "social_undirected": (["ada", "bea", "cy"], ["friend1", "friend2"]),
+    "signed_weighted_grn": (["TF1", "G1", "G2"], ["reg1", "reg2"]),
+    "ppi_undirected": (["P1", "P2", "P3"], ["p1", "p2"]),
+    "reaction_hyper_repeated": (["A", "B", "C", "D"], ["reaction"]),
+    "transport_mixed": (["hub", "port", "rail"], ["ferry", "walk"]),
 }
 
 
@@ -73,12 +85,26 @@ def _component_rows(content):
 def test_scenario_vector_generator_is_stable():
     assert FIXTURE["schema"] == "scworkbench.graph.scenario_roundtrip_fixture.v1"
     assert FIXTURE["accepted_design_commit"] == "fa929601c7b8c67c2947b400341bfd90bd80d925"
-    assert len(FIXTURE["cases"]) == 21
+    assert len(FIXTURE["cases"]) == 22
     cases_by_id = {case["id"]: case for case in FIXTURE["cases"]}
     assert len(cases_by_id) == len(FIXTURE["cases"])
     for name, counts in PLAN_COUNTS.items():
         content = cases_by_id[name]["content"]
         assert tuple(len(content[key]) for key in ("nodes", "edges", "incidences")) == counts
+    for name, (node_ids, edge_ids) in FROZEN_PLAN_RECORDS.items():
+        content = cases_by_id[name]["content"]
+        assert [row["node_id"] for row in content["nodes"]] == node_ids
+        assert [row["edge_id"] for row in content["edges"]] == edge_ids
+    grn = cases_by_id["signed_weighted_grn"]["content"]
+    assert grn["attributes"]["edge"] == [
+        {"name": "sign", "type": "utf8", "nullable": False, "values": ["positive", "negative"]},
+        {
+            "name": "weight",
+            "type": "float64_le_hex",
+            "nullable": False,
+            "values": ["9a9999999999e93f", "9a9999999999d9bf"],
+        },
+    ]
     identities = {
         case["id"]: case["expected"]["content_identity"]["sha256"] for case in FIXTURE["cases"]
     }

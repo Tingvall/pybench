@@ -110,25 +110,21 @@ def scenarios():
         _case(
             "airline_parallel_isolate",
             "directed",
-            ["LHR", "JFK", "KEF", "ISOLATED"],
+            ["ARN", "LHR", "JFK", "KEF"],
             [
                 _edge(
-                    "flight:10",
+                    "f1",
                     "ordinary",
                     "directed",
-                    ("tail", "LHR", "i1"),
-                    ("head", "JFK", "i2"),
+                    ("tail", "ARN", "i1"),
+                    ("head", "LHR", "i2"),
                 ),
-                _edge(
-                    "flight:2", "ordinary", "directed", ("tail", "LHR", "i3"), ("head", "JFK", "i4")
-                ),
-                _edge(
-                    "flight:3", "ordinary", "directed", ("tail", "JFK", "i5"), ("head", "KEF", "i6")
-                ),
+                _edge("f2", "ordinary", "directed", ("tail", "ARN", "i3"), ("head", "LHR", "i4")),
+                _edge("f3", "ordinary", "directed", ("tail", "LHR", "i5"), ("head", "JFK", "i6")),
             ],
             observations={
-                "isolated_nodes": ["ISOLATED"],
-                "parallel_edges": ["flight:10", "flight:2"],
+                "isolated_nodes": ["KEF"],
+                "parallel_edges": ["f1", "f2"],
             },
         ),
         _case(
@@ -156,66 +152,75 @@ def scenarios():
         _case(
             "social_directed",
             "directed",
-            ["alice", "bob", "carol"],
+            ["ada", "bea", "cy"],
             [
                 _edge(
-                    "follows",
+                    "follow1",
                     "ordinary",
                     "directed",
-                    ("tail", "alice", "i1"),
-                    ("head", "bob", "i2"),
-                )
+                    ("tail", "ada", "i1"),
+                    ("head", "bea", "i2"),
+                ),
+                _edge(
+                    "follow2", "ordinary", "directed", ("tail", "bea", "i3"), ("head", "ada", "i4")
+                ),
             ],
-            observations={"isolated_nodes": ["carol"]},
+            observations={"isolated_nodes": ["cy"]},
         ),
         _case(
             "social_undirected",
             "undirected",
-            ["alice", "bob", "carol"],
+            ["ada", "bea", "cy"],
             [
                 _edge(
-                    "friendship",
+                    "friend1",
                     "ordinary",
                     "undirected",
-                    ("member", "bob", "i1"),
-                    ("member", "carol", "i2"),
-                )
+                    ("member", "ada", "i1"),
+                    ("member", "bea", "i2"),
+                ),
+                _edge(
+                    "friend2",
+                    "ordinary",
+                    "undirected",
+                    ("member", "bea", "i3"),
+                    ("member", "cy", "i4"),
+                ),
             ],
-            observations={"isolated_nodes": ["alice"]},
         ),
         _case(
             "signed_weighted_grn",
             "directed",
-            ["TF", "gene_2", "gene_10"],
+            ["TF1", "G1", "G2"],
             [
                 _edge(
-                    "activation",
+                    "reg1",
                     "ordinary",
                     "directed",
-                    ("tail", "TF", "i1"),
-                    ("head", "gene_2", "i2"),
+                    ("tail", "TF1", "i1"),
+                    ("head", "G1", "i2"),
                 ),
                 _edge(
-                    "repression",
+                    "reg2",
                     "ordinary",
                     "directed",
-                    ("tail", "TF", "i3"),
-                    ("head", "gene_10", "i4"),
+                    ("tail", "TF1", "i3"),
+                    ("head", "G2", "i4"),
                 ),
             ],
             attributes={
                 "edge": [
                     {
                         "name": "sign",
-                        "type": "int64_decimal_string",
+                        "type": "utf8",
                         "nullable": False,
-                        "values": ["1", "-1"],
+                        "values": ["positive", "negative"],
                     },
                     {
                         "name": "weight",
                         "type": "float64_le_hex",
                         "nullable": False,
-                        "values": ["000000000000c03f", "000000000000e8bf"],
+                        "values": ["9a9999999999e93f", "9a9999999999d9bf"],
                     },
                 ]
             },
@@ -226,15 +231,17 @@ def scenarios():
             ["P1", "P2", "P3"],
             [
                 _edge(
-                    "ppi", "ordinary", "undirected", ("member", "P1", "i1"), ("member", "P2", "i2")
+                    "p1", "ordinary", "undirected", ("member", "P1", "i1"), ("member", "P2", "i2")
+                ),
+                _edge(
+                    "p2", "ordinary", "undirected", ("member", "P2", "i3"), ("member", "P3", "i4")
                 ),
             ],
-            observations={"isolated_nodes": ["P3"]},
         ),
         _case(
             "reaction_hyper_repeated",
             "directed",
-            ["A", "B", "C"],
+            ["A", "B", "C", "D"],
             [
                 _edge(
                     "reaction",
@@ -244,6 +251,7 @@ def scenarios():
                     ("tail", "A", "i2"),
                     ("tail", "B", "i3"),
                     ("head", "C", "i4"),
+                    ("head", "D", "i5"),
                 )
             ],
             attributes={
@@ -252,7 +260,7 @@ def scenarios():
                         "name": "coefficient",
                         "type": "int64_decimal_string",
                         "nullable": False,
-                        "values": ["1", "1", "3", "2"],
+                        "values": ["1", "1", "1", "1", "1"],
                     }
                 ]
             },
@@ -264,19 +272,17 @@ def scenarios():
         _case(
             "transport_mixed",
             "mixed",
-            ["a", "b", "c", "d"],
+            ["hub", "port", "rail"],
             [
                 _edge(
-                    "road", "ordinary", "undirected", ("member", "a", "i1"), ("member", "b", "i2")
+                    "ferry", "ordinary", "directed", ("tail", "hub", "i1"), ("head", "port", "i2")
                 ),
-                _edge("rail", "ordinary", "directed", ("tail", "b", "i3"), ("head", "c", "i4")),
                 _edge(
-                    "route",
-                    "hyper",
+                    "walk",
+                    "ordinary",
                     "undirected",
-                    ("member", "a", "i5"),
-                    ("member", "c", "i6"),
-                    ("member", "d", "i7"),
+                    ("member", "port", "i3"),
+                    ("member", "rail", "i4"),
                 ),
             ],
             igraph=False,
@@ -310,6 +316,13 @@ def scenarios():
         ),
         _case(
             "disconnected_undirected",
+            "undirected",
+            ["a", "b", "c"],
+            [_edge("link", "ordinary", "undirected", ("member", "a", "i1"), ("member", "b", "i2"))],
+            observations={"isolated_nodes": ["c"]},
+        ),
+        _case(
+            "disconnected_undirected_supplemental",
             "undirected",
             ["a", "b", "c", "d", "e"],
             [
