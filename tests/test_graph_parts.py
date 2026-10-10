@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 
+from pybench import graph_parts
 from pybench.graph import graph_identities
 from pybench.graph_parts import GraphPartsWriter, partition_chain_seed, partition_chain_update
 from pybench.operation_packs import OperationPackError
@@ -47,6 +49,61 @@ def _writer(tmp_path: Path, *, axis_count: str | None = None) -> GraphPartsWrite
 
 def _content(name: str) -> dict:
     return next(row["content"] for row in FIXTURES["positive"] if row["id"] == name)
+
+
+@pytest.mark.parametrize("failure", ["connect", "schema"])
+@pytest.mark.parametrize("parent_exists", [False, True])
+def test_constructor_failure_closes_handles_and_removes_only_owned_stage(
+    tmp_path, monkeypatch, failure, parent_exists
+):
+    output_parent = tmp_path / "outputs"
+    if parent_exists:
+        output_parent.mkdir()
+        (output_parent / "keep").write_text("preserve", encoding="utf-8")
+    opened = []
+    real_open = Path.open
+    real_connect = sqlite3.connect
+
+    def tracked_open(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        if path.name == "graph.parts.ndjson":
+            opened.append(handle)
+        return handle
+
+    class FailingConnection:
+        def __init__(self, path):
+            self.inner = real_connect(path)
+            self.closed = False
+
+        def execute(self, statement):
+            if statement.startswith("CREATE TABLE"):
+                raise RuntimeError("injected schema failure")
+            return self.inner.execute(statement)
+
+        def close(self):
+            self.closed = True
+            self.inner.close()
+
+    connections = []
+
+    def failing_connect(path):
+        if failure == "connect":
+            raise RuntimeError("injected connect failure")
+        connection = FailingConnection(path)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+    monkeypatch.setattr(graph_parts.sqlite3, "connect", failing_connect)
+    with pytest.raises(RuntimeError, match="injected (connect|schema) failure"):
+        _writer(tmp_path)
+    assert opened and all(handle.closed for handle in opened)
+    assert all(connection.closed for connection in connections)
+    assert not (output_parent / "graph").exists()
+    if parent_exists:
+        assert sorted(path.name for path in output_parent.iterdir()) == ["keep"]
+    else:
+        assert not output_parent.exists()
 
 
 def test_stage_empty_graph_has_exact_frozen_identities(tmp_path):

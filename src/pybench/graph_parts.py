@@ -123,51 +123,69 @@ class GraphPartsWriter:
         output_parent = root / "outputs"
         if output_parent.is_symlink():
             _fail("private output parent is a symlink")
-        output_parent.mkdir(exist_ok=True)
-        self._dir = output_parent / grant["output_name"]
-        self._dir.mkdir(mode=0o700)
-        self._parts_path = self._dir / "graph.parts.ndjson"
-        self._descriptor_path = self._dir / "payload.json"
-        self._scratch_path = self._dir / ".graph-index.sqlite"
-        self._parts = self._parts_path.open("x", encoding="utf-8")
-        self._db = sqlite3.connect(self._scratch_path)
-        self._db.execute("PRAGMA journal_mode=DELETE")
-        self._db.execute("PRAGMA temp_store=FILE")
-        self._db.execute("PRAGMA cache_size=-1024")
-        self._db.execute(
-            "CREATE TABLE rows (component TEXT NOT NULL, global_ordinal INTEGER NOT NULL, scope TEXT, field_ordinal_num INTEGER, entity_ordinal_num INTEGER, binding_id TEXT, mapping_ordinal_num INTEGER, row_json TEXT NOT NULL, PRIMARY KEY(component, global_ordinal)) WITHOUT ROWID"
-        )
-        self._db.execute(
-            "CREATE INDEX attribute_coordinates ON rows(component,scope,field_ordinal_num,entity_ordinal_num)"
-        )
-        self._db.execute(
-            "CREATE INDEX binding_coordinates ON rows(component,binding_id,mapping_ordinal_num)"
-        )
-        self._db.execute(
-            "CREATE TABLE node_ids (node_id TEXT PRIMARY KEY, node_ordinal INTEGER NOT NULL) WITHOUT ROWID"
-        )
-        self._db.execute("CREATE TABLE edge_ids (edge_id TEXT PRIMARY KEY) WITHOUT ROWID")
-        self._db.execute("CREATE TABLE incidence_ids (incidence_id TEXT PRIMARY KEY) WITHOUT ROWID")
-        self._db.execute(
-            "CREATE TABLE binding_ids (binding_id TEXT PRIMARY KEY, binding_ordinal INTEGER NOT NULL) WITHOUT ROWID"
-        )
-        self._db.execute(
-            "CREATE TABLE field_names (scope TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(scope,name)) WITHOUT ROWID"
-        )
-        self._db.execute(
-            "CREATE TABLE mapping_nodes (binding_id TEXT NOT NULL, node_id TEXT NOT NULL, PRIMARY KEY(binding_id,node_id)) WITHOUT ROWID"
-        )
-        self._db.execute(
-            "CREATE TABLE mapping_axes (binding_id TEXT NOT NULL, axis_id TEXT NOT NULL, PRIMARY KEY(binding_id,axis_id)) WITHOUT ROWID"
-        )
-        self._grant = dict(grant)
-        self._counts = {name: 0 for name in COMPONENTS}
-        self._partition_counts = {name: 0 for name in COMPONENTS}
-        self._chains = {name: partition_chain_seed(name) for name in COMPONENTS}
-        self._last_component = 0
-        self._stage_bytes = 0
-        self._closed = False
-        self._failed = False
+        created_parent = not output_parent.exists()
+        created_dir = False
+        parts = None
+        db = None
+        try:
+            output_parent.mkdir(exist_ok=True)
+            self._dir = output_parent / grant["output_name"]
+            self._dir.mkdir(mode=0o700)
+            created_dir = True
+            self._parts_path = self._dir / "graph.parts.ndjson"
+            self._descriptor_path = self._dir / "payload.json"
+            self._scratch_path = self._dir / ".graph-index.sqlite"
+            parts = self._parts_path.open("x", encoding="utf-8")
+            db = sqlite3.connect(self._scratch_path)
+            db.execute("PRAGMA journal_mode=DELETE")
+            db.execute("PRAGMA temp_store=FILE")
+            db.execute("PRAGMA cache_size=-1024")
+            db.execute(
+                "CREATE TABLE rows (component TEXT NOT NULL, global_ordinal INTEGER NOT NULL, scope TEXT, field_ordinal_num INTEGER, entity_ordinal_num INTEGER, binding_id TEXT, mapping_ordinal_num INTEGER, row_json TEXT NOT NULL, PRIMARY KEY(component, global_ordinal)) WITHOUT ROWID"
+            )
+            db.execute(
+                "CREATE INDEX attribute_coordinates ON rows(component,scope,field_ordinal_num,entity_ordinal_num)"
+            )
+            db.execute(
+                "CREATE INDEX binding_coordinates ON rows(component,binding_id,mapping_ordinal_num)"
+            )
+            db.execute(
+                "CREATE TABLE node_ids (node_id TEXT PRIMARY KEY, node_ordinal INTEGER NOT NULL) WITHOUT ROWID"
+            )
+            db.execute("CREATE TABLE edge_ids (edge_id TEXT PRIMARY KEY) WITHOUT ROWID")
+            db.execute("CREATE TABLE incidence_ids (incidence_id TEXT PRIMARY KEY) WITHOUT ROWID")
+            db.execute(
+                "CREATE TABLE binding_ids (binding_id TEXT PRIMARY KEY, binding_ordinal INTEGER NOT NULL) WITHOUT ROWID"
+            )
+            db.execute(
+                "CREATE TABLE field_names (scope TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(scope,name)) WITHOUT ROWID"
+            )
+            db.execute(
+                "CREATE TABLE mapping_nodes (binding_id TEXT NOT NULL, node_id TEXT NOT NULL, PRIMARY KEY(binding_id,node_id)) WITHOUT ROWID"
+            )
+            db.execute(
+                "CREATE TABLE mapping_axes (binding_id TEXT NOT NULL, axis_id TEXT NOT NULL, PRIMARY KEY(binding_id,axis_id)) WITHOUT ROWID"
+            )
+            self._parts = parts
+            self._db = db
+            self._grant = dict(grant)
+            self._counts = {name: 0 for name in COMPONENTS}
+            self._partition_counts = {name: 0 for name in COMPONENTS}
+            self._chains = {name: partition_chain_seed(name) for name in COMPONENTS}
+            self._last_component = 0
+            self._stage_bytes = 0
+            self._closed = False
+            self._failed = False
+        except BaseException:
+            if db is not None:
+                db.close()
+            if parts is not None:
+                parts.close()
+            if created_dir:
+                shutil.rmtree(self._dir)
+            if created_parent and output_parent.is_dir():
+                output_parent.rmdir()
+            raise
 
     def _rows(self, component: str) -> Iterator[dict[str, Any]]:
         cursor = self._db.execute(
