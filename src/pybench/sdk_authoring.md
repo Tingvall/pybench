@@ -5,6 +5,8 @@ this SDK scaffolds ABI-v3 packs executed through `pybench-op-v4`. Existing
 ABI-v1/v2 manifests are not upgraded by changing a version label. Scientific
 method tests belong to the pack; engine authority and broker tests remain in
 PyBench/scworkbench, with separately invoked installed-pack composites.
+Generic graph ABI4/process5 support is separate and opt-in; the scaffold's
+ABI3 default is unchanged.
 
 The installed public helper is `pybench.scaffold_operation_pack(path,
 distribution, namespace, *, author, email) -> pathlib.Path`. The destination must
@@ -83,6 +85,7 @@ the inspected implementation, rather than inferring execution from schema bytes.
 | Parameter/dimension axes, matrix fragments, add/replace publication | accepted | implemented; Phase 4C tests |
 | Contained model trees, source linkage v1/v2, sibling closure | accepted | implemented; Phase 4D/G1-G2 tests |
 | Artifact ancestry | accepted | implemented |
+| Generic graph, ABI4/process5 only | closed graph and mixed-primitive declarations, bounded graph grants, retained cell-vector/family or selected graph-binding source axes | bounded broker reads, private staged graph writes and complete mixed receipts; installed fixture exercises execution; no graph scaffold |
 | Selector-bound typed spaces and sparse kNN grants | schemas and receipt parity supported | no typed-space callback/client in executor; unsupported scaffold |
 | G4 collections, G5 named axes, G6 display/endpoint groups | shared schemas/parity | no Python runtime callback; unsupported scaffold |
 | G3 external-state adoption | shared schemas/parity | no Python adoption runtime; unsupported scaffold |
@@ -98,6 +101,8 @@ The simple scaffold exposes only matrix-cell sums. Unsupported advanced runtime
 contracts are not scaffold options; callers must not use schema validation as a
 claim of execution qualification. Existing fail-closed guards are in
 `validate_manifest_v3`, `validate_request_v4`, and `validate_receipt_v4`.
+ABI4 graph dispatch retains those inherited unsupported-grant boundaries;
+graph support does not turn a schema-only capability into an executable one.
 Callbacks absent from the executor cannot be supplied by author code without
 creating unauthorized authority. A capability extension requires a separate
 engine decision. No shared protocol file or scientific pack changed for this SDK.
@@ -108,6 +113,48 @@ input block, not total algorithm memory: this example retains one value per cell
 Scientific validity, floating-point error, resources and native dependencies are
 the author's responsibility. Installation is not activation; activation is not
 scientific qualification; pack-free inspection is not pack-free replay.
+
+## Generic graph ABI4/process5 authoring
+
+The source-tree package at
+`tests/fixtures/operation-pack-v4-graph-python/` is the executable,
+public-interface reference for this candidate. It declares a v4 manifest and
+one distribution entry point, uses `operation_pack_handlers_v4`, and implements
+matrix-to-unbound-graph, graph-to-table, graph-plus-metadata, and
+graph-plus-retained-cell-vector operations. It imports no bundle, SQL,
+registry, request or receipt internals. With Python 3.11+ and `build` and
+`hatchling` available in the build environment, run from the PyBench
+repository root to build and inspect the installed example explicitly:
+
+```bash
+python -m build --wheel --outdir /tmp/pybench-graph-wheels .
+python -m build --wheel --outdir /tmp/pybench-graph-wheels tests/fixtures/operation-pack-v4-graph-python
+python -m venv /tmp/pybench-graph-env
+/tmp/pybench-graph-env/bin/python -m pip install /tmp/pybench-graph-wheels/pybench-*.whl /tmp/pybench-graph-wheels/scwb_graph_fixture-*.whl
+/tmp/pybench-graph-env/bin/python -m pip check
+```
+
+```python
+from importlib.resources import files
+from pybench import activate_operation_pack_v4, discover_operation_pack_v4, validate_manifest_v4
+
+manifest = files("scwbgraphfixture").joinpath("operation-pack.json")
+validate_manifest_v4(manifest, expected_backend="Python")
+pack = discover_operation_pack_v4(manifest)
+activate_operation_pack_v4(pack)  # Explicit trust decision; installation is inert.
+```
+
+Validation and activation do not execute an operation or grant source access.
+Only an R-issued process-v5 private staging capability can invoke a handler.
+Handlers read graphs with `readers.read_graph_parts(name)`, write bounded parts
+through `writers.open_graph(name, header)` and `write_part`/`finish`, or use
+`GraphPrimitive` and `writers.write_graph` under the collection cap. For a
+declared retained axis, use `context["graph_source_axes"][output_name]` and
+`graph_binding_from_source`; no authority handle or host path is exposed. The
+full contract and a public callback example are in `graph_abi4_candidate.md`.
+Matrix-to-unbound-graph is supported; matrix-derived bindings remain fail-closed
+until core authenticates their source certificate. Python cannot promote,
+register or attest a graph independently of scworkbench.
 
 ## Authoring and Release Sequence
 
