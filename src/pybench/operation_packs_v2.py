@@ -273,9 +273,7 @@ def _catalog_param_type(schema: Mapping[str, Any] | None) -> str:
     return "list"
 
 
-def _semantic_admission(
-    manifest: Mapping[str, Any], *, allow_graph_replay: bool = False
-) -> None:
+def _semantic_admission(manifest: Mapping[str, Any], *, allow_graph_replay: bool = False) -> None:
     namespace = manifest["namespace"]
     operations = manifest["operations"]
     short = [operation["name"] for operation in operations]
