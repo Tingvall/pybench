@@ -38,6 +38,7 @@ PLAN_COUNTS = {
     "disconnected_undirected_supplemental": (5, 2, 4),
     "self_loops_mixed": (1, 2, 4),
     "repeated_hyper_incidences": (2, 2, 7),
+    "unary_undirected_hyperedge": (1, 1, 1),
 }
 FROZEN_PLAN_RECORDS = {
     "airline_parallel_isolate": (["ARN", "LHR", "JFK", "KEF"], ["f1", "f2", "f3"]),
@@ -85,7 +86,7 @@ def _component_rows(content):
 def test_scenario_vector_generator_is_stable():
     assert FIXTURE["schema"] == "scworkbench.graph.scenario_roundtrip_fixture.v1"
     assert FIXTURE["accepted_design_commit"] == "fa929601c7b8c67c2947b400341bfd90bd80d925"
-    assert len(FIXTURE["cases"]) == 22
+    assert len(FIXTURE["cases"]) == 23
     cases_by_id = {case["id"]: case for case in FIXTURE["cases"]}
     assert len(cases_by_id) == len(FIXTURE["cases"])
     for name, counts in PLAN_COUNTS.items():

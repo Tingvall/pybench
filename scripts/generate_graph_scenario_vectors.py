@@ -405,6 +405,13 @@ def scenarios():
             observations={"repeated_participation": {"edge_id": "h", "node_id": "a", "count": 2}},
         ),
         _case(
+            "unary_undirected_hyperedge",
+            "undirected",
+            ["a"],
+            [_edge("h", "hyper", "undirected", ("member", "a", "i1"))],
+            igraph=False,
+        ),
+        _case(
             "typed_all_scopes",
             "directed",
             ["a", "b"],

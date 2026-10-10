@@ -1718,6 +1718,64 @@
     {
       "content": {
         "attributes": {
+          "edge": [],
+          "graph": [],
+          "incidence": [],
+          "node": []
+        },
+        "direction_mode": "undirected",
+        "edges": [
+          {
+            "direction": "undirected",
+            "edge_id": "h",
+            "kind": "hyper"
+          }
+        ],
+        "incidences": [
+          {
+            "edge_id": "h",
+            "incidence_id": "i1",
+            "node_id": "a",
+            "ordinal": 0,
+            "role": "member"
+          }
+        ],
+        "nodes": [
+          {
+            "node_id": "a"
+          }
+        ],
+        "schema": "scworkbench.graph.content.v1"
+      },
+      "expected": {
+        "binding_identity": {
+          "scheme": "scworkbench.graph.axis-bindings.canonical-json.v1",
+          "sha256": "453ea3813ff2e6da02fbc624bd7c4eff901ebc972b9cc13cb7d72660c00ccee6"
+        },
+        "canonical_content_bytes": "317",
+        "component_counts": {
+          "attribute_fields": "0",
+          "attribute_values": "0",
+          "edges": "1",
+          "incidences": "1",
+          "nodes": "1"
+        },
+        "content_identity": {
+          "scheme": "scworkbench.graph.content.canonical-json.v1",
+          "sha256": "93fbc3c82fa3eea7e9c69dc4c80c3d738b7b81a9b79048cc8cee453cc7246b87"
+        },
+        "descriptor_identity": {
+          "scheme": "scworkbench.graph.retained-descriptor.canonical-json.v1",
+          "sha256": "34a7271c49a1279ca2c5c7af54bcf8b43e5aa89df1ab573599636d3e9b153a0c"
+        },
+        "igraph_eligible": false,
+        "observations": {}
+      },
+      "id": "unary_undirected_hyperedge"
+    },
+    {
+      "content": {
+        "attributes": {
           "edge": [
             {
               "name": "flag",
