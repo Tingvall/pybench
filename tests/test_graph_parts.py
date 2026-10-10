@@ -135,7 +135,14 @@ def test_missing_procfs_rejects_spill_accounting_without_residue(tmp_path, monke
 
 
 def test_sqlite_page_cap_rejects_part_without_residue(tmp_path):
-    writer = _writer(tmp_path, budgets={"max_spill_bytes": "45056"})
+    baseline_root = tmp_path / "baseline"
+    baseline_root.mkdir()
+    baseline = _writer(baseline_root)
+    initial_bytes = baseline._scratch_path.stat().st_size
+    baseline.abort()
+    limited_root = tmp_path / "limited"
+    limited_root.mkdir()
+    writer = _writer(limited_root, budgets={"max_spill_bytes": str(initial_bytes)})
     assert writer._db.execute("PRAGMA journal_mode").fetchone()[0] == "off"
     with pytest.raises(OperationPackError) as error:
         writer.write_part(
@@ -144,7 +151,7 @@ def test_sqlite_page_cap_rejects_part_without_residue(tmp_path):
         )
         writer.write_part("nodes", [{"node_id": f"n{index}"} for index in range(300)])
     assert error.value.code == "PYBENCH_GRAPH_RESOURCE_LIMIT"
-    assert not (tmp_path / "outputs" / "graph").exists()
+    assert not (limited_root / "outputs" / "graph").exists()
     with pytest.raises(OperationPackError, match="writer is closed"):
         writer.write_part("nodes", [{"node_id": "n0"}])
 
