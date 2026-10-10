@@ -65,6 +65,27 @@ def _number(value: str) -> int:
     return int(value)
 
 
+def _sqlite_spill_bytes(path: Path) -> int:
+    fd_root = Path("/proc/self/fd")
+    if not fd_root.is_dir():
+        _fail("SQLite temporary spill accounting requires Linux procfs", resource=True)
+    total = 0
+    for candidate in (path, Path(f"{path}-journal"), Path(f"{path}-wal"), Path(f"{path}-shm")):
+        try:
+            total += candidate.stat().st_size
+        except FileNotFoundError:
+            pass
+    for name in os.listdir(fd_root):
+        descriptor = fd_root / name
+        try:
+            target = os.readlink(descriptor)
+            if Path(target.removesuffix(" (deleted)")).name.startswith("etilqs_"):
+                total += descriptor.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
 def partition_chain_seed(component: str) -> dict[str, str]:
     if component not in COMPONENTS:
         _fail("unknown graph component")
@@ -137,9 +158,12 @@ class GraphPartsWriter:
             self._scratch_path = self._dir / ".graph-index.sqlite"
             parts = self._parts_path.open("x", encoding="utf-8")
             db = sqlite3.connect(self._scratch_path)
-            db.execute("PRAGMA journal_mode=DELETE")
+            if db.execute("PRAGMA journal_mode=OFF").fetchone()[0] != "off":
+                _fail("discard-only SQLite scratch mode is unavailable", resource=True)
             db.execute("PRAGMA temp_store=FILE")
             db.execute("PRAGMA cache_size=-1024")
+            if db.execute("PRAGMA temp_store").fetchone()[0] != 1:
+                _fail("disk-backed SQLite temporary storage is unavailable", resource=True)
             db.execute(
                 "CREATE TABLE rows (component TEXT NOT NULL, global_ordinal INTEGER NOT NULL, scope TEXT, field_ordinal_num INTEGER, entity_ordinal_num INTEGER, binding_id TEXT, mapping_ordinal_num INTEGER, row_json TEXT NOT NULL, PRIMARY KEY(component, global_ordinal)) WITHOUT ROWID"
             )
@@ -166,6 +190,12 @@ class GraphPartsWriter:
             db.execute(
                 "CREATE TABLE mapping_axes (binding_id TEXT NOT NULL, axis_id TEXT NOT NULL, PRIMARY KEY(binding_id,axis_id)) WITHOUT ROWID"
             )
+            spill_limit = _number(grant["resource_budgets"]["max_spill_bytes"])
+            page_size = db.execute("PRAGMA page_size").fetchone()[0]
+            page_limit = spill_limit // page_size
+            admitted_pages = db.execute(f"PRAGMA max_page_count={page_limit}").fetchone()[0]
+            if admitted_pages > page_limit or _sqlite_spill_bytes(self._scratch_path) > spill_limit:
+                _fail("graph spill byte budget cannot admit scratch schema", resource=True)
             self._parts = parts
             self._db = db
             self._grant = dict(grant)
@@ -187,9 +217,25 @@ class GraphPartsWriter:
                 output_parent.rmdir()
             raise
 
+    def _check_spill(self) -> None:
+        if _sqlite_spill_bytes(self._scratch_path) > _number(
+            self._grant["resource_budgets"]["max_spill_bytes"]
+        ):
+            _fail("graph spill byte budget exceeded", resource=True)
+
+    def _query_rows(self, statement: str, parameters: tuple[Any, ...]) -> Iterator[tuple[Any, ...]]:
+        cursor = self._db.execute(statement, parameters)
+        self._check_spill()
+        for index, row in enumerate(cursor):
+            if index % 128 == 0:
+                self._check_spill()
+            yield row
+        self._check_spill()
+
     def _rows(self, component: str) -> Iterator[dict[str, Any]]:
-        cursor = self._db.execute(
-            "SELECT row_json FROM rows WHERE component=? ORDER BY global_ordinal", (component,)
+        cursor = self._query_rows(
+            "SELECT row_json FROM rows WHERE component=? ORDER BY global_ordinal",
+            (component,),
         )
         for (raw,) in cursor:
             yield json.loads(raw)
@@ -201,6 +247,7 @@ class GraphPartsWriter:
             self._write_part(component, rows)
         except BaseException:
             self._failed = True
+            self.abort()
             raise
 
     def _write_part(self, component: str, rows: list[dict[str, Any]]) -> None:
@@ -298,7 +345,13 @@ class GraphPartsWriter:
                 )
         except sqlite3.IntegrityError as exc:
             _fail(f"duplicate graph ID, field or partition ordinal: {exc}")
+        except sqlite3.DatabaseError as exc:
+            if getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL:
+                _fail("graph spill byte budget exceeded", resource=True)
+            raise
+        self._check_spill()
         self._db.commit()
+        self._check_spill()
         self._counts[component] += len(rows)
         self._partition_counts[component] += 1
         self._chains[component] = partition_chain_update(
@@ -319,13 +372,10 @@ class GraphPartsWriter:
             self._grant["resource_budgets"][limit_by_component[component]]
         ):
             _fail(f"graph {component} budget exceeded", resource=True)
-        if self._scratch_path.stat().st_size > _number(
-            self._grant["resource_budgets"]["max_spill_bytes"]
-        ):
-            _fail("graph spill byte budget exceeded", resource=True)
+        self._check_spill()
 
     def _values(self, scope: str, field_ordinal: str, kind: str, nullable: bool) -> Iterator[Any]:
-        cursor = self._db.execute(
+        cursor = self._query_rows(
             "SELECT row_json FROM rows WHERE component='attribute_values' AND scope=? AND field_ordinal_num=? ORDER BY entity_ordinal_num",
             (scope, int(field_ordinal)),
         )
@@ -337,7 +387,7 @@ class GraphPartsWriter:
             yield row["value"]
 
     def _fields(self, scope: str) -> Iterator[dict[str, Any]]:
-        cursor = self._db.execute(
+        cursor = self._query_rows(
             "SELECT row_json FROM rows WHERE component='attribute_fields' AND scope=? ORDER BY field_ordinal_num",
             (scope,),
         )
@@ -365,7 +415,7 @@ class GraphPartsWriter:
             }
 
     def _mapping_for(self, binding_id: str) -> Iterator[dict[str, str]]:
-        cursor = self._db.execute(
+        cursor = self._query_rows(
             "SELECT row_json FROM rows WHERE component='binding_mappings' AND binding_id=? ORDER BY mapping_ordinal_num",
             (binding_id,),
         )
@@ -530,6 +580,7 @@ class GraphPartsWriter:
             return self._finish()
         except BaseException:
             self._failed = True
+            self.abort()
             raise
 
     def _finish(self) -> dict[str, Any]:
@@ -589,22 +640,32 @@ class GraphPartsWriter:
             "seal excluding sealed_output_identity",
         )
         validate_graph_write_observation(result, self._grant)
-        self._parts.close()
-        self._db.close()
-        self._scratch_path.unlink()
         descriptor = {
             "schema": "scworkbench.graph.staged_payload.v1",
             "output_name": self._grant["output_name"],
             "parts_file": "graph.parts.ndjson",
             "observation": result,
         }
-        self._descriptor_path.write_text(_json(descriptor) + "\n", encoding="utf-8")
+        descriptor_bytes = (_json(descriptor) + "\n").encode("utf-8")
+        if self._stage_bytes + len(descriptor_bytes) > _number(
+            self._grant["resource_budgets"]["max_staged_bytes"]
+        ):
+            _fail("graph staged descriptor exceeds byte budget", resource=True)
+        self._check_spill()
+        self._parts.close()
+        self._db.close()
+        self._scratch_path.unlink()
+        self._descriptor_path.write_bytes(descriptor_bytes)
         self._closed = True
         return result
 
     def abort(self) -> None:
         if not self._closed:
-            self._parts.close()
-            self._db.close()
-            shutil.rmtree(self._dir)
             self._closed = True
+            try:
+                self._parts.close()
+            finally:
+                try:
+                    self._db.close()
+                finally:
+                    shutil.rmtree(self._dir)

@@ -20,7 +20,12 @@ FIXTURES = json.loads(
 )
 
 
-def _writer(tmp_path: Path, *, axis_count: str | None = None) -> GraphPartsWriter:
+def _writer(
+    tmp_path: Path,
+    *,
+    axis_count: str | None = None,
+    budgets: dict[str, str] | None = None,
+) -> GraphPartsWriter:
     transition = _transition()
     grant = _grant(transition)
     if axis_count is not None:
@@ -32,6 +37,9 @@ def _writer(tmp_path: Path, *, axis_count: str | None = None) -> GraphPartsWrite
             axis,
             "authority excluding authority_identity",
         )
+    if budgets is not None:
+        grant["resource_budgets"].update(budgets)
+    if axis_count is not None or budgets is not None:
         grant.pop("grant_identity")
         grant["grant_identity"] = _identity(
             "scworkbench.operation_pack.graph_write_grant.v1",
@@ -106,6 +114,79 @@ def test_constructor_failure_closes_handles_and_removes_only_owned_stage(
         assert not output_parent.exists()
 
 
+def test_spill_budget_rejects_scratch_schema_without_residue(tmp_path):
+    with pytest.raises(OperationPackError) as error:
+        _writer(tmp_path, budgets={"max_spill_bytes": "4096"})
+    assert error.value.code == "PYBENCH_GRAPH_RESOURCE_LIMIT"
+    assert not (tmp_path / "outputs").exists()
+
+
+def test_missing_procfs_rejects_spill_accounting_without_residue(tmp_path, monkeypatch):
+    real_is_dir = Path.is_dir
+    monkeypatch.setattr(
+        Path,
+        "is_dir",
+        lambda path: False if str(path) == "/proc/self/fd" else real_is_dir(path),
+    )
+    with pytest.raises(OperationPackError, match="requires Linux procfs") as error:
+        _writer(tmp_path)
+    assert error.value.code == "PYBENCH_GRAPH_RESOURCE_LIMIT"
+    assert not (tmp_path / "outputs").exists()
+
+
+def test_sqlite_page_cap_rejects_part_without_residue(tmp_path):
+    writer = _writer(tmp_path, budgets={"max_spill_bytes": "45056"})
+    assert writer._db.execute("PRAGMA journal_mode").fetchone()[0] == "off"
+    with pytest.raises(OperationPackError) as error:
+        writer.write_part(
+            "header",
+            [{"schema": "scworkbench.graph.content.v1", "direction_mode": "undirected"}],
+        )
+        writer.write_part("nodes", [{"node_id": f"n{index}"} for index in range(300)])
+    assert error.value.code == "PYBENCH_GRAPH_RESOURCE_LIMIT"
+    assert not (tmp_path / "outputs" / "graph").exists()
+    with pytest.raises(OperationPackError, match="writer is closed"):
+        writer.write_part("nodes", [{"node_id": "n0"}])
+
+
+def test_unlinked_sqlite_temp_spill_rejects_without_residue(tmp_path):
+    output_parent = tmp_path / "outputs"
+    output_parent.mkdir()
+    (output_parent / "keep").write_text("preserve", encoding="utf-8")
+    writer = _writer(tmp_path, budgets={"max_spill_bytes": "1048576"})
+    scratch_temp = tmp_path / "etilqs_injected"
+    with scratch_temp.open("wb+") as handle:
+        handle.write(b"x" * (2 * 1024 * 1024))
+        handle.flush()
+        scratch_temp.unlink()
+        with pytest.raises(OperationPackError) as error:
+            writer.write_part(
+                "header",
+                [{"schema": "scworkbench.graph.content.v1", "direction_mode": "undirected"}],
+            )
+    assert error.value.code == "PYBENCH_GRAPH_RESOURCE_LIMIT"
+    assert sorted(path.name for path in output_parent.iterdir()) == ["keep"]
+
+
+def test_descriptor_bytes_are_included_in_staged_budget(tmp_path):
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    writer = _writer(reference)
+    header = [{"schema": "scworkbench.graph.content.v1", "direction_mode": "undirected"}]
+    writer.write_part("header", header)
+    writer.finish()
+    output = reference / "outputs" / "graph"
+    exact_bytes = sum(path.stat().st_size for path in output.iterdir())
+    constrained = tmp_path / "constrained"
+    constrained.mkdir()
+    writer = _writer(constrained, budgets={"max_staged_bytes": str(exact_bytes - 1)})
+    writer.write_part("header", header)
+    with pytest.raises(OperationPackError) as error:
+        writer.finish()
+    assert error.value.code == "PYBENCH_GRAPH_RESOURCE_LIMIT"
+    assert not (constrained / "outputs" / "graph").exists()
+
+
 def test_stage_empty_graph_has_exact_frozen_identities(tmp_path):
     content = _content("empty_undirected")
     writer = _writer(tmp_path)
@@ -150,6 +231,10 @@ def test_scratch_queries_use_numeric_indexes_without_temp_sort(tmp_path):
     try:
         statements = (
             (
+                "SELECT row_json FROM rows WHERE component=? ORDER BY global_ordinal",
+                ("nodes",),
+            ),
+            (
                 "SELECT row_json FROM rows WHERE component='attribute_values' AND scope=? "
                 "AND field_ordinal_num=? ORDER BY entity_ordinal_num",
                 ("node", 0),
@@ -173,7 +258,7 @@ def test_scratch_queries_use_numeric_indexes_without_temp_sort(tmp_path):
                     parameters,
                 )
             ]
-            assert any("USING INDEX" in step for step in plan)
+            assert any("USING INDEX" in step or "USING PRIMARY KEY" in step for step in plan)
             assert not any("TEMP B-TREE" in step for step in plan)
     finally:
         writer.abort()

@@ -15,11 +15,19 @@ from test_graph_transport import _grant, _transition
 NODE_COUNT = int(os.environ.get("PYBENCH_GRAPH_GATE_NODES", "24576"))
 
 
+class InjectedLateWriteFault(RuntimeError):
+    pass
+
+
 def peak_rss_bytes() -> int:
     for line in Path("/proc/self/status").read_text().splitlines():
         if line.startswith("VmHWM:"):
             return int(line.split()[1]) * 1024
     raise RuntimeError("Linux VmHWM is unavailable")
+
+
+def stage_disk_bytes(root: Path) -> int:
+    return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
 
 
 def main(root: Path) -> None:
@@ -57,6 +65,7 @@ def main(root: Path) -> None:
     )
     baseline_rss = peak_rss_bytes()
     checkpoints = {"baseline": baseline_rss}
+    disk_checkpoints = {"baseline": stage_disk_bytes(root)}
     writer = GraphPartsWriter(
         grant,
         root,
@@ -80,6 +89,7 @@ def main(root: Path) -> None:
                 [{"node_id": f"n{index}"} for index in range(start, min(start + 128, NODE_COUNT))],
             )
         checkpoints["nodes"] = peak_rss_bytes()
+        disk_checkpoints["nodes"] = stage_disk_bytes(root)
         writer.write_part(
             "edges",
             [
@@ -105,6 +115,7 @@ def main(root: Path) -> None:
                 ],
             )
         checkpoints["incidences"] = peak_rss_bytes()
+        disk_checkpoints["incidences"] = stage_disk_bytes(root)
         writer.write_part(
             "attribute_fields",
             [
@@ -132,6 +143,7 @@ def main(root: Path) -> None:
                 ],
             )
         checkpoints["attributes"] = peak_rss_bytes()
+        disk_checkpoints["attributes"] = stage_disk_bytes(root)
         axis = grant["authorized_source_axes"][0]
         writer.write_part(
             "bindings",
@@ -166,12 +178,16 @@ def main(root: Path) -> None:
                 ],
             )
         checkpoints["mappings"] = peak_rss_bytes()
+        disk_checkpoints["mappings"] = stage_disk_bytes(root)
+        if os.environ.get("PYBENCH_GRAPH_GATE_FAULT") == "late_write":
+            raise InjectedLateWriteFault("injected late graph write fault")
         for method_name in ("_validate_topology", "_validate_attributes", "_validate_bindings"):
             original = getattr(writer, method_name)
 
             def tracked(*args, _original=original, _name=method_name):
                 result = _original(*args)
                 checkpoints[_name] = peak_rss_bytes()
+                disk_checkpoints[_name] = stage_disk_bytes(root)
                 return result
 
             setattr(writer, method_name, tracked)
@@ -181,18 +197,41 @@ def main(root: Path) -> None:
         def tracked_hash(parts):
             result = original_hash(parts)
             checkpoints["content_hash"] = peak_rss_bytes()
+            disk_checkpoints["content_hash"] = stage_disk_bytes(root)
             return result
 
         def tracked_identity(scheme, value):
             result = original_identity(scheme, value)
             if scheme in (graph_parts.BINDING_SCHEME, graph_parts.DESCRIPTOR_SCHEME):
                 checkpoints[scheme] = peak_rss_bytes()
+                disk_checkpoints[scheme] = stage_disk_bytes(root)
             return result
 
         graph_parts.canonical_sha256_size_stream = tracked_hash
         graph_parts.identity = tracked_identity
         observation = writer.finish()
         checkpoints["sealed"] = peak_rss_bytes()
+        disk_checkpoints["sealed"] = stage_disk_bytes(root)
+    except InjectedLateWriteFault:
+        staged_bytes = writer._stage_bytes
+        writer.abort()
+        assert not (root / "outputs" / "graph").exists()
+        print(
+            json.dumps(
+                {
+                    "fault": "late_write",
+                    "memory_budget_bytes": int(budgets["max_memory_bytes"]),
+                    "peak_rss_bytes": peak_rss_bytes(),
+                    "pre_fault_staged_bytes": staged_bytes,
+                    "peak_stage_disk_bytes": max(disk_checkpoints.values()),
+                    "stage_disk_bytes_after_abort": stage_disk_bytes(root),
+                    "rss_checkpoints": checkpoints,
+                    "disk_checkpoints": disk_checkpoints,
+                },
+                sort_keys=True,
+            )
+        )
+        return
     except BaseException:
         writer.abort()
         raise
@@ -204,7 +243,10 @@ def main(root: Path) -> None:
                 "baseline_rss_bytes": baseline_rss,
                 "peak_rss_bytes": peak_rss_bytes(),
                 "staged_bytes": parts.stat().st_size,
+                "peak_stage_disk_bytes": max(disk_checkpoints.values()),
+                "stage_disk_bytes_after_finish": stage_disk_bytes(root),
                 "rss_checkpoints": checkpoints,
+                "disk_checkpoints": disk_checkpoints,
                 "canonical_content_bytes": writer._canonical_content_bytes,
                 "counts": observation["component_counts"],
                 "content_identity": observation["content_identity"],
