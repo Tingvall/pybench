@@ -31,6 +31,11 @@ The older bridge and pack versions remain explicit compatibility contracts;
 they are not templates to copy into a new SDK pack. ABI-v2 packs use
 `pybench-op-v3`; ABI-v3 Python packs use `pybench-op-v4`.
 
+The generic graph ABI4/process5 implementation is under joint qualification;
+see the [candidate graph authoring contract](docs/graph_abi4_candidate.md).
+It does not replace the current ABI-v3 authoring route or establish cluster or
+publication readiness on its own.
+
 Purpose:
 - read bundle data directly (SQLite + payload files)
 - run Python-native methods (for example `palantir`, `scvi-tools`)

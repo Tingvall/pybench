@@ -67,7 +67,9 @@ def _has_type(schema: Any, expected: str) -> bool:
     return expected in types
 
 
-def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
+def _semantic_admission_v3(
+    manifest: Mapping[str, Any], *, allow_graph_replay: bool = False
+) -> None:
     """Apply frozen v2 semantics plus the three closed v3 declarations.
 
     The shared schema owns each successor tuple.  This admission layer owns
@@ -136,7 +138,7 @@ def _semantic_admission_v3(manifest: Mapping[str, Any]) -> None:
         operation["dimension_policies"] = [
             policy for policy in policies if policy.get("policy") in {"data_dependent_table_v1"}
         ]
-    _semantic_admission(inherited)
+    _semantic_admission(inherited, allow_graph_replay=allow_graph_replay)
 
     for operation in manifest["operations"]:
         opname = operation["qualified_name"]

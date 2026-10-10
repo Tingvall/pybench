@@ -273,7 +273,9 @@ def _catalog_param_type(schema: Mapping[str, Any] | None) -> str:
     return "list"
 
 
-def _semantic_admission(manifest: Mapping[str, Any]) -> None:
+def _semantic_admission(
+    manifest: Mapping[str, Any], *, allow_graph_replay: bool = False
+) -> None:
     namespace = manifest["namespace"]
     operations = manifest["operations"]
     short = [operation["name"] for operation in operations]
@@ -510,7 +512,9 @@ def _semantic_admission(manifest: Mapping[str, Any]) -> None:
         valid_replay = set(replay) == set(output_names)
         for output in operation["outputs"]:
             category, kind = output["category"], output["kind"]
-            if category == "materialization" and kind in {"matrix", "space"}:
+            if allow_graph_replay and category == "terminal_artifact" and kind == "graph":
+                allowed = {"exact_graph_descriptor"}
+            elif category == "materialization" and kind in {"matrix", "space"}:
                 allowed = {"exact_canonical_value"}
             elif kind == "space_2d" and category in {"materialization", "terminal_artifact"}:
                 allowed = {"exact_canonical_value", "cell_aligned_embedding"}
