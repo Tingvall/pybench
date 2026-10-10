@@ -114,6 +114,48 @@ def test_constructor_failure_closes_handles_and_removes_only_owned_stage(
         assert not output_parent.exists()
 
 
+@pytest.mark.parametrize("unsupported", ["journal", "temp"])
+def test_unsupported_sqlite_scratch_mode_fails_closed(tmp_path, monkeypatch, unsupported):
+    real_connect = sqlite3.connect
+    connections = []
+
+    class Cursor:
+        def __init__(self, value):
+            self.value = value
+
+        def fetchone(self):
+            return (self.value,)
+
+    class UnsupportedConnection:
+        def __init__(self, path):
+            self.inner = real_connect(path)
+            self.closed = False
+
+        def execute(self, statement):
+            if (unsupported == "journal" and statement == "PRAGMA journal_mode=OFF") or (
+                unsupported == "temp" and statement == "PRAGMA temp_store"
+            ):
+                result = "delete" if unsupported == "journal" else 2
+                return Cursor(result)
+            return self.inner.execute(statement)
+
+        def close(self):
+            self.closed = True
+            self.inner.close()
+
+    def connect(path):
+        connection = UnsupportedConnection(path)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(graph_parts.sqlite3, "connect", connect)
+    with pytest.raises(OperationPackError) as error:
+        _writer(tmp_path)
+    assert error.value.code == "PYBENCH_GRAPH_RESOURCE_LIMIT"
+    assert connections and all(connection.closed for connection in connections)
+    assert not (tmp_path / "outputs").exists()
+
+
 def test_spill_budget_rejects_scratch_schema_without_residue(tmp_path):
     with pytest.raises(OperationPackError) as error:
         _writer(tmp_path, budgets={"max_spill_bytes": "4096"})
