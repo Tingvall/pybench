@@ -269,6 +269,51 @@ def test_retained_cell_axis_source_is_explicit_manifest_declaration(kind):
     assert validate_manifest_v4(manifest)["operations"][0]["outputs"][0]["axis_sources"]
 
 
+def test_retained_matrix_axis_source_requires_declared_matrix_input():
+    manifest = _manifest()
+    operation = manifest["operations"][0]
+    operation["outputs"][0]["binding_policy"] = "required"
+    operation["outputs"][0]["axis_sources"] = [
+        {
+            "input_name": "matrix",
+            "axis_kind": axis_kind,
+            "selection_mode": "retained_matrix_axis",
+            "source_binding_selector": None,
+        }
+        for axis_kind in ("cell", "feature")
+    ]
+    validate_manifest_v4(manifest)
+
+    wrong_kind = copy.deepcopy(manifest)
+    wrong_kind["operations"][0]["inputs"] = [_graph_input("matrix")]
+    with pytest.raises(OperationPackError, match="requires a matrix input"):
+        validate_manifest_v4(wrong_kind)
+
+    undeclared = copy.deepcopy(manifest)
+    undeclared["operations"][0]["outputs"][0]["axis_sources"][0]["input_name"] = "missing"
+    with pytest.raises(OperationPackError, match="undeclared input"):
+        validate_manifest_v4(undeclared)
+
+    duplicate = copy.deepcopy(manifest)
+    sources = duplicate["operations"][0]["outputs"][0]["axis_sources"]
+    sources.append(copy.deepcopy(sources[0]))
+    with pytest.raises(OperationPackError, match="Duplicate graph axis source"):
+        validate_manifest_v4(duplicate)
+
+    selector = copy.deepcopy(manifest)
+    selector["operations"][0]["outputs"][0]["axis_sources"][0]["source_binding_selector"] = {
+        "kind": "fixed_binding_id_v1",
+        "binding_id": "cell_source",
+    }
+    with pytest.raises(OperationPackError, match="Draft 2020-12 validation"):
+        validate_manifest_v4(selector)
+
+    axis_kind = copy.deepcopy(manifest)
+    axis_kind["operations"][0]["outputs"][0]["axis_sources"][0]["axis_kind"] = "sample"
+    with pytest.raises(OperationPackError, match="Draft 2020-12 validation"):
+        validate_manifest_v4(axis_kind)
+
+
 def test_graph_binding_selector_must_be_required_nonempty_string():
     manifest = _manifest()
     operation = manifest["operations"][1]

@@ -114,6 +114,13 @@ def _validate_graph_axis_sources(operation: Mapping[str, Any]) -> None:
                         "Retained graph axis requires a cell vector input",
                         "semantic_admission",
                     )
+            elif source["selection_mode"] == "retained_matrix_axis":
+                if declaration["kind"] != "matrix":
+                    _fail(
+                        "OPERATION_PACK_MANIFEST_SCHEMA_INVALID",
+                        "Retained matrix axis requires a matrix input",
+                        "semantic_admission",
+                    )
             else:
                 if declaration["kind"] != "graph":
                     _fail(

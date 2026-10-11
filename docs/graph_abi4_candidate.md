@@ -1,9 +1,9 @@
 # Generic graph operation packs (ABI4 candidate)
 
 This is the implementation-branch authoring contract. The ABI4/process5
-schema and fixtures remain a joint PyBench/scworkbench draft until the R issuer,
-broker, importer and publication path pass the same executable fixture.
-ABI3/process4 remains unchanged.
+shared schema and real matrix request/receipt samples are frozen for a narrow
+cross-language parity checkpoint; the whole R/Python candidate is not yet
+qualified. ABI3/process4 remains unchanged.
 
 The installed copy is available through
 `importlib.resources.files("pybench").joinpath("graph_abi4_candidate.md")`.
@@ -29,16 +29,31 @@ graph. A nonempty array must explicitly name a declared source input:
 - `retained_input_axis` selects the authenticated cell axis of a declared
   `cell_vector` or `cell_vector_family` input; `axis_kind` is `cell` and
   `source_binding_selector` is `null`.
+- `retained_matrix_axis` selects the authenticated full `cell` or `feature`
+  axis of a declared matrix input; `source_binding_selector` is `null`.
 - `selected_graph_binding` selects an existing graph-input binding by fixed ID
   or by a required nonempty string parameter. The issued graph read grant must
-  include that exact binding ID. No axis-only or implicit-first selection is
-  allowed.
+  include that exact binding ID, including when its retained source is a
+  matrix. No axis-only or implicit-first selection is allowed.
 
 The R-issued `authorized_source_axes` grant supplies the exact retained source
 snapshot, payload closure, axis content/order identities and transition. A pack
-cannot make a new authority by self-hashing these fields. Matrix-bound graph
-authority is currently fail-closed pending a separate core-authenticated
-matrix source certificate; unbound matrix-to-graph output remains supported.
+cannot make a new authority by self-hashing these fields. R may issue
+matrix-bound graph authority only after independently authenticating the
+existing `scworkbench.content.matrix.fragment-tree.v2` identity, its producer
+lineage, and the exact staged/publication source. The first route requires a promoted
+matrix with a retained content-verified producer anchor.
+An unpromoted session-produced matrix, even one named by `wb_ref_run`, is not
+eligible for matrix binding before promotion. No new matrix certificate or
+identity scheme is approved. A readable legacy path-only matrix without a
+`fragment-tree.v2` content-verified producer anchor is not binding authority.
+Unbound matrix-to-graph computation remains supported, but does not establish
+authenticated matrix-bound mappings. PyBench can check the closed issued grant;
+only the R engine verifies native BPCells bytes, the R serialization preimage,
+producer provenance and promotion state independently. The full retained axis
+may be larger than a selected matrix input descriptor, and a binding may map
+only a subset of that axis. Python must not equate the projected input's
+dimensions or content identity with the full source authority.
 
 For a declared bound output, the handler receives a deep-copied, path-free
 `context["graph_source_axes"][output_name]` list. Each entry contains only

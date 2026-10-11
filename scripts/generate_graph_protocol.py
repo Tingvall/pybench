@@ -360,6 +360,14 @@ def manifest_schema() -> dict[str, Any]:
                     "source_binding_selector": ref("graph_axis_source_selector"),
                 }
             ),
+            obj(
+                {
+                    "input_name": {"type": "string", "pattern": NAME_PATTERN},
+                    "axis_kind": {"enum": ["cell", "feature"]},
+                    "selection_mode": {"const": "retained_matrix_axis"},
+                    "source_binding_selector": {"type": "null"},
+                }
+            ),
         ]
     }
     defs["input"]["oneOf"].append(

@@ -122,7 +122,7 @@ def test_issued_source_axis_grant_is_closed():
     )
 
 
-def test_matrix_graph_binding_authority_is_fail_closed_pending_core_certificate():
+def test_direct_matrix_axis_grant_accepts_issued_native_closure():
     transition = _transition()
     grant = _grant(transition)
     grant["authorized_source_axes"] = [_axis(transition)]
@@ -132,11 +132,74 @@ def test_matrix_graph_binding_authority_is_fail_closed_pending_core_certificate(
         grant,
         "grant excluding grant_identity",
     )
-    with pytest.raises(OperationPackError, match="awaits a core-authenticated source closure"):
+    validate_graph_write_grant(
+        grant,
+        transition_identity=transition,
+        input_kinds={"matrix": "matrix"},
+        output_names=["graph"],
+    )
+
+
+def test_selected_graph_binding_with_matrix_source_accepts_issued_closure():
+    transition = _transition()
+    axis = _axis(transition, input_name="source")
+    axis["source_binding_id"] = "binding_1"
+    axis["authority_identity"] = _identity(
+        "scworkbench.operation_pack.graph_source_axis_authority.v1",
+        {k: v for k, v in axis.items() if k != "authority_identity"},
+        "authority excluding authority_identity",
+    )
+    grant = _grant(transition)
+    grant["authorized_source_axes"] = [axis]
+    grant["grant_identity"] = _identity(
+        "scworkbench.operation_pack.graph_write_grant.v1",
+        {k: v for k, v in grant.items() if k != "grant_identity"},
+        "grant excluding grant_identity",
+    )
+    validate_graph_write_grant(
+        grant,
+        transition_identity=transition,
+        input_kinds={"source": "graph"},
+        output_names=["graph"],
+    )
+
+
+@pytest.mark.parametrize(
+    ("input_kind", "axis_factory", "direct", "message"),
+    [
+        ("cell_vector", _axis, True, "direct matrix axis authority requires a matrix input"),
+        ("matrix", _axis, False, "selected matrix axis authority requires a graph input"),
+        ("matrix", _retained_axis, True, "retained cell axis authority differs"),
+        ("cell_vector", _retained_axis, False, "graph source requires an explicit"),
+        ("graph", _retained_axis, False, "feature binding cannot claim a retained cell axis"),
+    ],
+)
+def test_source_axis_kind_must_match_declared_input(input_kind, axis_factory, direct, message):
+    transition = _transition()
+    axis = axis_factory(transition)
+    if direct:
+        axis["source_binding_id"] = None
+    elif axis_factory is _axis:
+        axis["source_binding_id"] = "binding_1"
+    elif input_kind == "graph":
+        axis["axis_kind"] = "feature"
+    axis["authority_identity"] = _identity(
+        "scworkbench.operation_pack.graph_source_axis_authority.v1",
+        {k: v for k, v in axis.items() if k != "authority_identity"},
+        "authority excluding authority_identity",
+    )
+    grant = _grant(transition)
+    grant["authorized_source_axes"] = [axis]
+    grant["grant_identity"] = _identity(
+        "scworkbench.operation_pack.graph_write_grant.v1",
+        {k: v for k, v in grant.items() if k != "grant_identity"},
+        "grant excluding grant_identity",
+    )
+    with pytest.raises(OperationPackError, match=message):
         validate_graph_write_grant(
             grant,
             transition_identity=transition,
-            input_kinds={"matrix": "matrix"},
+            input_kinds={axis["input_name"]: input_kind},
             output_names=["graph"],
         )
 

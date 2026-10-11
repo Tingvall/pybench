@@ -74,17 +74,29 @@ def validate_graph_write_grant(
         _self_identity(axis, "authority_identity")
         if int(axis["axis_count"]) > 9223372036854775807:
             _fail("source axis count exceeds signed int64")
-        if axis["source_ref"]["kind"] == "matrix":
-            _fail("matrix graph-binding authority awaits a core-authenticated source closure")
         input_kind = input_kinds.get(axis["input_name"])
         if input_kind is None or axis["output_name"] != grant["output_name"]:
             _fail("axis authority names undeclared input or wrong output")
         if canonical_json(axis["transition_identity"]) != canonical_json(transition_identity):
             _fail("axis authority belongs to a different transition")
-        if (axis["source_binding_id"] is None) == (input_kind == "graph"):
-            _fail("graph source requires an explicit binding selector")
-        if axis["source_ref"]["kind"] == "retained_cell_axis" and axis["axis_kind"] != "cell":
+        source_kind = axis["source_ref"]["kind"]
+        if source_kind == "retained_cell_axis" and axis["axis_kind"] != "cell":
             _fail("feature binding cannot claim a retained cell axis")
+        if source_kind == "matrix":
+            if axis["source_binding_id"] is None:
+                if input_kind != "matrix":
+                    _fail("direct matrix axis authority requires a matrix input")
+            elif input_kind != "graph":
+                _fail("selected matrix axis authority requires a graph input")
+        elif axis["source_binding_id"] is None:
+            if (
+                source_kind != "retained_cell_axis"
+                or input_kind not in {"cell_vector", "cell_vector_family"}
+                or axis["axis_kind"] != "cell"
+            ):
+                _fail("retained cell axis authority differs from its declared input")
+        elif input_kind != "graph":
+            _fail("graph source requires an explicit binding selector")
         key = canonical_json(
             {
                 "input_name": axis["input_name"],

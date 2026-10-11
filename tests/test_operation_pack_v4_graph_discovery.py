@@ -299,6 +299,109 @@ def test_process_v5_declared_retained_cell_axis_binding(tmp_path, monkeypatch, i
         unload_operation_pack_v4(manifest["namespace"])
 
 
+def test_process_v5_declared_retained_matrix_axes_binding(tmp_path, monkeypatch):
+    manifest, path, entry, _, _ = _install_fake(tmp_path, monkeypatch)
+    output = manifest["operations"][0]["outputs"][0]
+    output["binding_policy"] = "required"
+    output["axis_sources"] = [
+        {
+            "input_name": "matrix",
+            "axis_kind": axis_kind,
+            "selection_mode": "retained_matrix_axis",
+            "source_binding_selector": None,
+        }
+        for axis_kind in ("cell", "feature")
+    ]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    discovery = discover_operation_pack_v4(path)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    request = matrix_to_graph_request(discovery, stage)
+    transition = request["transition"]["transition_identity"]
+    cell_axis = _axis(transition, output_name="result")
+    feature_axis = copy.deepcopy(cell_axis)
+    feature_axis["axis_kind"] = "feature"
+    feature_axis["axis_count"] = "1"
+    feature_axis["axis_order_identity"] = _id("scworkbench.feature_order.v1")
+    feature_axis.pop("authority_identity")
+    feature_axis["authority_identity"] = _identity(
+        "scworkbench.operation_pack.graph_source_axis_authority.v1",
+        feature_axis,
+        "authority excluding authority_identity",
+    )
+    grant = request["graph_write_grants"][0]
+    grant["binding_policy"] = "required"
+    grant["authorized_source_axes"] = [cell_axis, feature_axis]
+    grant.pop("grant_identity")
+    grant["grant_identity"] = _identity(
+        "scworkbench.operation_pack.graph_write_grant.v1",
+        grant,
+        "grant excluding grant_identity",
+    )
+    descriptor = request["outputs"][0]["descriptor"]
+    descriptor["binding_policy"] = "required"
+    descriptor["graph_write_grant_identity"] = grant["grant_identity"]
+    descriptor.pop("grant_identity")
+    descriptor["grant_identity"] = _identity(
+        "scworkbench.operation_pack.output_grant.v4",
+        descriptor,
+        "descriptor excluding grant_identity",
+    )
+    capability = request["execution_capability"]
+    capability["writer_grants"][0]["grant_identity"] = descriptor["grant_identity"]
+    capability.pop("capability_identity")
+    capability["capability_identity"] = _identity(
+        "scworkbench.operation_pack.capability.v4",
+        capability,
+        "capability excluding capability_identity",
+    )
+    request.pop("request_identity")
+    request["request_identity"] = _identity(
+        "scworkbench.operation_pack.transition_request.v4",
+        request,
+        "request excluding request_identity",
+    )
+    validate_request_v5(request, discovery)
+
+    def handler(readers, writers, params, context):
+        assert readers["matrix"]()["values"] == [[1.0]]
+        sources = {axis["axis_kind"]: axis for axis in context["graph_source_axes"]["result"]}
+        assert set(sources) == {"cell", "feature"}
+        assert all("source_payload_closure_identity" not in axis for axis in sources.values())
+        bindings = [
+            graph_binding_from_source(
+                sources["cell"], "cell_source", [{"node_id": "n_cell", "axis_id": "cell_1"}]
+            ),
+            graph_binding_from_source(
+                sources["feature"],
+                "feature_source",
+                [{"node_id": "n_feature", "axis_id": "feature_1"}],
+            ),
+        ]
+        content = {
+            "schema": "scworkbench.graph.content.v1",
+            "direction_mode": "undirected",
+            "nodes": [{"node_id": "n_cell"}, {"node_id": "n_feature"}],
+            "edges": [],
+            "incidences": [],
+            "attributes": {scope: [] for scope in ("graph", "node", "edge", "incidence")},
+        }
+        writers.write_graph("result", GraphPrimitive(content, bindings))
+
+    entry.callback = lambda: operation_pack_handlers_v4(
+        {item["qualified_name"]: handler for item in manifest["operations"]}
+    )
+    try:
+        activate_operation_pack_v4(discovery)
+        receipt, runtime = execute_operation_pack_v5(request, discovery, stage)
+        assert receipt["status"] == "ok"
+        assert receipt["graph_write_observations"][0]["component_counts"]["bindings"] == "2"
+        validate_receipt_v5(receipt, request, discovery, stage)
+        validate_python_runtime_sidecar_v5(runtime, request, discovery)
+    finally:
+        unload_operation_pack_v4(manifest["namespace"])
+
+
 @pytest.mark.parametrize("operation_index", [1, 2])
 def test_full_graph_source_process_v5_request_admits(tmp_path, monkeypatch, operation_index):
     _, path, _, _, _ = _install_fake(tmp_path, monkeypatch)

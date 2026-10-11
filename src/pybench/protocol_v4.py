@@ -725,6 +725,11 @@ def validate_request_v4(
                             authority["source_binding_id"] is None
                             and authority["source_ref"]["kind"] == "retained_cell_axis"
                         )
+                    elif source["selection_mode"] == "retained_matrix_axis":
+                        authorized = (
+                            authority["source_binding_id"] is None
+                            and authority["source_ref"]["kind"] == "matrix"
+                        )
                     else:
                         selector = source["source_binding_selector"]
                         selected_id = (
