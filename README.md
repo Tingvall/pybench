@@ -190,7 +190,7 @@ cd "$(git rev-parse --show-toplevel)"
 intentionally does not enforce `E501`: long SQL statements and compact SQLite
 fixture DDL are schema contracts where wrapping does not improve reviewability.
 
-Three optional cross-repository tests use explicit external fixture contracts:
+Optional cross-repository tests use explicit external fixture contracts:
 
 - `PYBENCH_GOLDEN_BUNDLE` names the generated scworkbench golden bundle.
   `PYBENCH_GOLDEN_BUNDLE_SHA256` must contain its lowercase
@@ -201,6 +201,14 @@ Three optional cross-repository tests use explicit external fixture contracts:
 - `PYBENCH_SCWORKBENCH_SOURCE_DIR` names the pinned scworkbench source checkout
   used by the Python path-contract tripwire. It must contain
   `R/python_protocol.R`, `R/path_containment.R`, and `R/op_python_bridge.R`.
+- `PYBENCH_HISTORICAL_FORGE_SOURCE_DIR` names the historical Phase 3B Forge
+  checkout used by ABI-v2 identity and R receipt tests.
+- `PYBENCH_STATISTICS_MANIFEST` names the historical scwbStatistics
+  `operation-pack.json` used by ABI-v2 manifest identity tests.
+
+Unconfigured external fixtures produce named skips. Configured missing paths
+fail, and the historical tests still enforce their frozen byte hashes and R
+receipt checks.
 
 Compute and supply the golden identity, then run the complete core suite:
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from external_contracts import HISTORICAL_FORGE_SOURCE_ENV, configured_directory
 from pybench.feature_set_registry import strict_snapshot_json, validate_snapshot
 from pybench.operation_packs import OperationPackError, canonical_sha256
 from pybench.operation_packs_v2 import (
@@ -20,9 +21,6 @@ from pybench.protocol_v3 import execute_operation_pack_v3, validate_receipt_v3, 
 from v3_helpers import fixture_inputs, install_reference_fixture, make_request
 
 ROOT = Path(__file__).parents[1]
-FORGE = Path(
-    "/home/dirk/Projects/.scworkbench-worktrees/core-to-packs-phase3b-geneprograms-forge-20260916"
-)
 SHARED_SHA = {
     "operation-pack-v2.schema.json": "e4ca57a6a40d87a62865aae43597646f5b6a3f5ca15dec65b89d163033acd8ec",
     "operation-pack-transition-request-v2.schema.json": "700665a2ba03a69c6df75f9640bf09b9be86b443c61060ffdf0381dcc24bcae5",
@@ -74,9 +72,12 @@ def _snapshot_files(stage):
 
 
 def test_shared_assets_match_forge_bytes_and_digests():
+    forge = configured_directory(
+        HISTORICAL_FORGE_SOURCE_ENV, purpose="historical Phase 3B Forge parity"
+    )
     for relative, digest in SHARED_SHA.items():
         pybench = (ROOT / "protocol" / relative).read_bytes()
-        assert pybench == (FORGE / "inst/protocol" / relative).read_bytes()
+        assert pybench == (forge / "inst/protocol" / relative).read_bytes()
         assert hashlib.sha256(pybench).hexdigest() == digest
 
 

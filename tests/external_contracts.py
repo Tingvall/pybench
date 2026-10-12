@@ -11,6 +11,8 @@ GOLDEN_BUNDLE_ENV = "PYBENCH_GOLDEN_BUNDLE"
 GOLDEN_BUNDLE_SHA256_ENV = "PYBENCH_GOLDEN_BUNDLE_SHA256"
 SCWORKBENCH_PROTOCOL_ENV = "PYBENCH_SCWORKBENCH_PROTOCOL_DIR"
 SCWORKBENCH_SOURCE_ENV = "PYBENCH_SCWORKBENCH_SOURCE_DIR"
+HISTORICAL_FORGE_SOURCE_ENV = "PYBENCH_HISTORICAL_FORGE_SOURCE_DIR"
+STATISTICS_MANIFEST_ENV = "PYBENCH_STATISTICS_MANIFEST"
 DIRECTORY_IDENTITY_SCHEME = "pybench-external-directory-sha256-v1"
 
 
@@ -41,6 +43,16 @@ def configured_directory(variable: str, *, purpose: str) -> Path:
     path = Path(configured).expanduser()
     if not path.is_dir():
         pytest.fail(f"{purpose}: {variable} does not name an existing directory: {configured}")
+    return path.resolve(strict=True)
+
+
+def configured_file(variable: str, *, purpose: str) -> Path:
+    configured = os.environ.get(variable)
+    if not configured:
+        pytest.skip(f"{purpose} skipped: set {variable} to its external fixture file")
+    path = Path(configured).expanduser()
+    if not path.is_file():
+        pytest.fail(f"{purpose}: {variable} does not name an existing file: {configured}")
     return path.resolve(strict=True)
 
 

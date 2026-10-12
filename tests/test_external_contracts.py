@@ -10,7 +10,9 @@ from external_contracts import (
     GOLDEN_BUNDLE_SHA256_ENV,
     SCWORKBENCH_PROTOCOL_ENV,
     SCWORKBENCH_SOURCE_ENV,
+    STATISTICS_MANIFEST_ENV,
     configured_directory,
+    configured_file,
     directory_identity,
     golden_bundle_directory,
     scworkbench_protocol_directory,
@@ -41,6 +43,18 @@ def test_invalid_external_directory_fails_without_fallback(tmp_path: Path, monke
     monkeypatch.setenv(SCWORKBENCH_PROTOCOL_ENV, str(missing))
     with pytest.raises(pytest.fail.Exception, match=SCWORKBENCH_PROTOCOL_ENV):
         configured_directory(SCWORKBENCH_PROTOCOL_ENV, purpose="test contract")
+
+
+def test_external_file_requires_explicit_existing_fixture(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv(STATISTICS_MANIFEST_ENV, raising=False)
+    with pytest.raises(pytest.skip.Exception, match=STATISTICS_MANIFEST_ENV):
+        configured_file(STATISTICS_MANIFEST_ENV, purpose="test manifest")
+    manifest = tmp_path / "operation-pack.json"
+    monkeypatch.setenv(STATISTICS_MANIFEST_ENV, str(manifest))
+    with pytest.raises(pytest.fail.Exception, match=STATISTICS_MANIFEST_ENV):
+        configured_file(STATISTICS_MANIFEST_ENV, purpose="test manifest")
+    manifest.write_text("{}\n", encoding="utf-8")
+    assert configured_file(STATISTICS_MANIFEST_ENV, purpose="test manifest") == manifest.resolve()
 
 
 def _write_scworkbench_source_contract(root: Path) -> None:

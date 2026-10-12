@@ -12,6 +12,12 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+from external_contracts import (
+    HISTORICAL_FORGE_SOURCE_ENV,
+    STATISTICS_MANIFEST_ENV,
+    configured_directory,
+    configured_file,
+)
 from pybench.operation_packs import OperationPackError, canonical_sha256
 from pybench.operation_packs_v2 import (
     ENTRY_POINT_GROUP_V2,
@@ -37,16 +43,10 @@ from pybench.protocol_v3 import (
 from v3_helpers import deep_copy, fixture_inputs, install_reference_fixture, make_request
 
 REPO = Path(__file__).parents[1]
-FORGE = Path(
-    "/home/dirk/Projects/.scworkbench-worktrees/core-to-packs-phase3b-geneprograms-forge-20260916"
-)
 SHARED = (
     "operation-pack-v2.schema.json",
     "operation-pack-transition-request-v2.schema.json",
     "operation-pack-transition-receipt-v2.schema.json",
-)
-STATISTICS_MANIFEST = Path(
-    "/home/dirk/Projects/operation_packs/scwbStatistics/inst/scworkbench/operation-pack.json"
 )
 PYTHON_RUNTIME_SCHEMA_SHA256 = "59fbaf6456d010bf777323e113ea0e36f94c5b41e75657148ae8cd0aeb9b0b7d"
 STATISTICS_DEFINITIONS = {
@@ -103,6 +103,12 @@ def _stage_snapshot(stage):
     }
 
 
+def _historical_forge() -> Path:
+    return configured_directory(
+        HISTORICAL_FORGE_SOURCE_ENV, purpose="historical Phase 3B Forge parity"
+    )
+
+
 def _five_feature_inputs():
     inputs = fixture_inputs()
     inputs["matrix"].update(
@@ -135,10 +141,11 @@ def _resign_sidecar(sidecar, *, observation=True):
 
 
 def test_shared_protocol_bytes_and_frozen_canonical_identities_match_forge():
+    forge = _historical_forge()
     ledger = json.loads((REPO / "protocol/fixtures/operation-pack-v2/identities.json").read_text())
     for name in SHARED:
         ours = (REPO / "protocol" / name).read_bytes()
-        theirs = (FORGE / "inst/protocol" / name).read_bytes()
+        theirs = (forge / "inst/protocol" / name).read_bytes()
         assert ours == theirs
         assert hashlib.sha256(ours).hexdigest() == ledger["files"][name]
     for relative in (
@@ -147,7 +154,7 @@ def test_shared_protocol_bytes_and_frozen_canonical_identities_match_forge():
         "fixtures/operation-pack-v2/identities.json",
     ):
         assert (REPO / "protocol" / relative).read_bytes() == (
-            FORGE / "inst/protocol" / relative
+            forge / "inst/protocol" / relative
         ).read_bytes()
     schema = json.loads((REPO / "protocol/operation-pack-v2.schema.json").read_text())
     for example, expected in zip(schema["examples"], ledger["manifest_examples"], strict=True):
@@ -179,10 +186,13 @@ def test_python_runtime_sidecar_schema_has_amended_identity():
 
 
 def test_statistics_manifest_semantics_and_canonical_identities_match_forge():
-    assert hashlib.sha256(STATISTICS_MANIFEST.read_bytes()).hexdigest() == (
+    statistics_manifest = configured_file(
+        STATISTICS_MANIFEST_ENV, purpose="historical scwbStatistics manifest parity"
+    )
+    assert hashlib.sha256(statistics_manifest.read_bytes()).hexdigest() == (
         "14b4610595e255f199c58748e387981b294825a145a3ffffa2e0c5e309c175ad"
     )
-    manifest = parse_manifest_v2_bytes(STATISTICS_MANIFEST.read_bytes())
+    manifest = parse_manifest_v2_bytes(statistics_manifest.read_bytes())
     validate_manifest_v2(manifest, expected_backend=None)
     identities = manifest_identities_v2(manifest)
     assert identities["manifest_sha256"] == (
@@ -1390,7 +1400,7 @@ def test_forge_core_schema_validates_python_receipt_without_reinterpretation(ins
     )
     result = subprocess.run(
         ["Rscript", "--vanilla", "-e", expression],
-        cwd=FORGE,
+        cwd=_historical_forge(),
         text=True,
         capture_output=True,
         timeout=180,
