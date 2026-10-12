@@ -83,7 +83,7 @@ def handler(readers, writers, params, context):
 
 
 def main() -> None:
-    target = ROOT / "protocol" / "fixtures" / "graph-v1" / "draft-abi4-mixed-interop.json"
+    target = ROOT / "tests" / "fixtures" / "graph-v1" / "draft-abi4-mixed-interop.json"
     with tempfile.TemporaryDirectory(prefix="pybench-graph-fixture-") as tmp:
         root = Path(tmp)
         manifest = _manifest()

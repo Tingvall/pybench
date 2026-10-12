@@ -359,7 +359,9 @@ def test_old_abi3_schema_remains_closed_to_graph():
 
 
 def test_draft_mixed_interop_fixture_is_closed_and_self_hashed():
-    fixture = json.loads((PROTOCOL / "fixtures/graph-v1/draft-abi4-mixed-interop.json").read_text())
+    fixture = json.loads(
+        (ROOT / "tests/fixtures/graph-v1/draft-abi4-mixed-interop.json").read_text()
+    )
     assert fixture["status"] == "draft"
     manifest, request, receipt = (fixture["manifest"], fixture["request"], fixture["receipt"])
     Draft202012Validator(MANIFEST_SCHEMA).validate(manifest)
