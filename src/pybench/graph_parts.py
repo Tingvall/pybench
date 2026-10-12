@@ -7,6 +7,7 @@ import math
 import os
 import shutil
 import sqlite3
+import threading
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,8 @@ _PARTITION_VALIDATOR = Draft202012Validator(
         "$ref": "#/$defs/component_partition",
     }
 )
+_WRITER_RESERVATIONS: dict[object, tuple[int, int]] = {}
+_WRITER_RESERVATIONS_LOCK = threading.Lock()
 
 
 def _fail(reason: str, *, resource: bool = False) -> None:
@@ -63,6 +66,30 @@ def _number(value: str) -> int:
     if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
         _fail("graph budget is not a decimal integer")
     return int(value)
+
+
+def _reserve_writer_memory(grant: Mapping[str, Any]) -> tuple[object, int]:
+    budgets = grant["resource_budgets"]
+    memory_bytes = _number(budgets["max_memory_bytes"])
+    partition_bytes = _number(budgets["partition_limits"]["max_decoded_bytes"])
+    cache_kib = min(1024, memory_bytes // 4096)
+    # A part can exist in the caller, canonical encoder, staged line, and
+    # SQLite row carrier at once; reserve eight copies plus FD metadata.
+    reserved_bytes = cache_kib * 1024 + 8 * partition_bytes + 64 * 1024
+    if cache_kib < 1 or reserved_bytes > memory_bytes:
+        _fail("graph working memory cannot admit cache and partition carriers", resource=True)
+    token = object()
+    with _WRITER_RESERVATIONS_LOCK:
+        active = (*_WRITER_RESERVATIONS.values(), (memory_bytes, reserved_bytes))
+        if sum(reserved for _, reserved in active) > min(budget for budget, _ in active):
+            _fail("concurrent graph writers exceed working memory allowance", resource=True)
+        _WRITER_RESERVATIONS[token] = (memory_bytes, reserved_bytes)
+    return token, cache_kib
+
+
+def _release_writer_memory(token: object) -> None:
+    with _WRITER_RESERVATIONS_LOCK:
+        _WRITER_RESERVATIONS.pop(token, None)
 
 
 def _sqlite_spill_bytes(path: Path) -> int:
@@ -145,6 +172,7 @@ class GraphPartsWriter:
         if output_parent.is_symlink():
             _fail("private output parent is a symlink")
         created_parent = not output_parent.exists()
+        self._reservation_token, cache_kib = _reserve_writer_memory(grant)
         created_dir = False
         parts = None
         db = None
@@ -161,9 +189,11 @@ class GraphPartsWriter:
             if db.execute("PRAGMA journal_mode=OFF").fetchone()[0] != "off":
                 _fail("discard-only SQLite scratch mode is unavailable", resource=True)
             db.execute("PRAGMA temp_store=FILE")
-            db.execute("PRAGMA cache_size=-1024")
+            db.execute(f"PRAGMA cache_size=-{cache_kib}")
             if db.execute("PRAGMA temp_store").fetchone()[0] != 1:
                 _fail("disk-backed SQLite temporary storage is unavailable", resource=True)
+            if db.execute("PRAGMA cache_size").fetchone()[0] != -cache_kib:
+                _fail("SQLite scratch cache differs from admitted allowance", resource=True)
             db.execute(
                 "CREATE TABLE rows (component TEXT NOT NULL, global_ordinal INTEGER NOT NULL, scope TEXT, field_ordinal_num INTEGER, entity_ordinal_num INTEGER, binding_id TEXT, mapping_ordinal_num INTEGER, row_json TEXT NOT NULL, PRIMARY KEY(component, global_ordinal)) WITHOUT ROWID"
             )
@@ -207,14 +237,17 @@ class GraphPartsWriter:
             self._closed = False
             self._failed = False
         except BaseException:
-            if db is not None:
-                db.close()
-            if parts is not None:
-                parts.close()
-            if created_dir:
-                shutil.rmtree(self._dir)
-            if created_parent and output_parent.is_dir():
-                output_parent.rmdir()
+            try:
+                if db is not None:
+                    db.close()
+                if parts is not None:
+                    parts.close()
+                if created_dir:
+                    shutil.rmtree(self._dir)
+                if created_parent and output_parent.is_dir():
+                    output_parent.rmdir()
+            finally:
+                _release_writer_memory(self._reservation_token)
             raise
 
     def _check_spill(self) -> None:
@@ -657,6 +690,7 @@ class GraphPartsWriter:
         self._scratch_path.unlink()
         self._descriptor_path.write_bytes(descriptor_bytes)
         self._closed = True
+        _release_writer_memory(self._reservation_token)
         return result
 
     def abort(self) -> None:
@@ -668,4 +702,7 @@ class GraphPartsWriter:
                 try:
                     self._db.close()
                 finally:
-                    shutil.rmtree(self._dir)
+                    try:
+                        shutil.rmtree(self._dir)
+                    finally:
+                        _release_writer_memory(self._reservation_token)

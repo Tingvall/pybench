@@ -132,13 +132,22 @@ R publication gate must separately enforce published/WAL budgets and rollback
 on any source mismatch, invalid receipt, undeclared mutation or fault.
 Python counts the exact UTF-8 bytes of both `graph.parts.ndjson` and
 `payload.json` against `max_staged_bytes` before sealing. Its discard-only
-SQLite scratch uses no rollback journal, a 1 MiB cache, an admitted page-count
-cap, and indexed ordered scans. `max_spill_bytes` includes the scratch DB and
+SQLite scratch uses no rollback journal, an admitted page-count cap, and
+indexed ordered scans. Cache is capped at the lesser of 1 MiB and one quarter
+of the issued `max_memory_bytes`; the writer verifies SQLite's actual PRAGMA
+value. It reserves that cache plus eight decoded partitions and 64 KiB of
+metadata within the working allowance across simultaneously open writers,
+and releases the reservation on seal, abort or constructor failure.
+`max_spill_bytes` includes the scratch DB and
 live SQLite temp/journal file descriptors, checked before/after part commits
 and at bounded scan intervals; missing Linux `/proc/self/fd` fails closed.
 Those checkpoints are not a filesystem quota for transient bytes between
 checks, so core independently audits the complete staged closure. A failed
 part or seal closes and removes its owned scratch immediately. The
-`max_memory_bytes` value is a measured process-RSS qualification target, not
-an OS limit on arbitrary trusted pack code. `max_published_bytes` and
+`max_memory_bytes` is an admission allowance for graph writer working data,
+not a bound on total Python process RSS or arbitrary trusted pack code.
+Physical RSS must be measured separately during qualification. A graph read grant has only
+partition limits: the broker uses one bounded response through its shared
+spool, but does not claim an aggregate read-side memory allowance or RSS
+proof. `max_published_bytes` and
 `max_wal_bytes` are core publication budgets, not Python writer guarantees.
