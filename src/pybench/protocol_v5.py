@@ -94,16 +94,49 @@ def _fingerprint_tree(root: Path) -> dict[str, tuple[int, str]]:
     return result
 
 
+def _copy_and_fingerprint_tree(root: Path, backup: Path) -> dict[str, tuple[int, str]]:
+    if root.is_symlink() or not root.is_dir():
+        _fail("private stage root is unsafe")
+    result: dict[str, tuple[int, str]] = {}
+    backup.mkdir()
+
+    def copy_directory(source: Path, target: Path) -> None:
+        for path in sorted(source.iterdir()):
+            if path.is_symlink():
+                _fail("private stage contains a symlink")
+            destination = target / path.name
+            if path.is_dir():
+                destination.mkdir()
+                copy_directory(path, destination)
+            elif path.is_file():
+                digest = hashlib.sha256()
+                size = 0
+                with path.open("rb") as reader, destination.open("xb") as writer:
+                    for block in iter(lambda: reader.read(1024 * 1024), b""):
+                        digest.update(block)
+                        writer.write(block)
+                        size += len(block)
+                if path.stat().st_size != size:
+                    _fail("private stage file changed while being copied")
+                shutil.copystat(path, destination)
+                result[path.relative_to(root).as_posix()] = (size, digest.hexdigest())
+            else:
+                _fail("private stage contains an unsupported object")
+        shutil.copystat(source, target)
+
+    copy_directory(root, backup)
+    return result
+
+
 class DiskStageSnapshot:
-    """Disk-backed rollback baseline for large private staging generations."""
+    """Rollback baseline while the engine exclusively owns this private stage."""
 
     def __init__(self, root: Path):
         self.root = root
-        self.before = _fingerprint_tree(root)
         self._temp = Path(tempfile.mkdtemp(prefix="pybench-v5-stage-"))
         self._backup = self._temp / "stage"
         try:
-            shutil.copytree(root, self._backup)
+            self.before = _copy_and_fingerprint_tree(root, self._backup)
         except BaseException:
             shutil.rmtree(self._temp)
             raise

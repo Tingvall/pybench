@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
+import tempfile
+from types import SimpleNamespace
 
 import pytest
 
+import pybench.protocol_v5 as protocol_v5
 from pybench.graph import GraphPrimitive, identity
 from pybench.operation_packs import OperationPackError
 from pybench.operation_packs_v2 import _identity
@@ -135,6 +140,7 @@ def test_disk_snapshot_restores_created_replaced_deleted_and_nested_files(tmp_pa
     original = tmp_path / "inputs" / "large.bin"
     original.parent.mkdir()
     original.write_bytes(b"abc" * 1024 * 1024)
+    original.chmod(0o640)
     nested = tmp_path / "nested" / "keep.txt"
     nested.parent.mkdir()
     nested.write_text("original")
@@ -151,8 +157,35 @@ def test_disk_snapshot_restores_created_replaced_deleted_and_nested_files(tmp_pa
         snapshot.restore()
         assert snapshot.after() == snapshot.before
         assert not (tmp_path / "outputs").exists()
+        assert stat.S_IMODE(original.stat().st_mode) == 0o640
     finally:
         snapshot.close()
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "fifo"])
+def test_disk_snapshot_rejects_unsafe_nested_stage_and_cleans_partial_copy(
+    tmp_path, monkeypatch, unsafe
+):
+    stage = tmp_path / "stage"
+    inputs = stage / "inputs"
+    inputs.mkdir(parents=True)
+    (inputs / "first.bin").write_bytes(b"preserve")
+    bad = inputs / "second"
+    if unsafe == "symlink":
+        bad.symlink_to("first.bin")
+    else:
+        os.mkfifo(bad)
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    monkeypatch.setattr(
+        protocol_v5,
+        "tempfile",
+        SimpleNamespace(mkdtemp=lambda prefix: tempfile.mkdtemp(prefix=prefix, dir=backups)),
+    )
+    with pytest.raises(OperationPackError, match="symlink|unsupported object"):
+        DiskStageSnapshot(stage)
+    assert list(backups.iterdir()) == []
+    assert (inputs / "first.bin").read_bytes() == b"preserve"
 
 
 def test_graph_stage_reaudit_rejects_self_rehashed_payload_tamper(tmp_path):

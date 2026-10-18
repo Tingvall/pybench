@@ -13,7 +13,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from .graph import identity
+from .graph import canonical_sha256_size_stream
 from .graph_parts import COMPONENTS, partition_chain_seed, partition_chain_update
 from .operation_packs import OperationPackError, canonical_json, protocol_asset
 from .operation_packs_v2 import _identity
@@ -167,15 +167,11 @@ class GraphBrokerClient:
                 errors = list(_PARTITION_VALIDATOR.iter_errors(part))
                 if errors:
                     _fail(f"graph broker partition schema differs: {errors[0].message}")
-                expected_id = identity(
-                    "scworkbench.graph.partition.v1",
-                    {key: child for key, child in part.items() if key != "partition_identity"},
-                )
-                decoded_size = len(
-                    canonical_json(
-                        {key: child for key, child in part.items() if key != "partition_identity"}
-                    ).encode("utf-8")
-                )
+                preimage = {
+                    key: child for key, child in part.items() if key != "partition_identity"
+                }
+                digest, decoded_size = canonical_sha256_size_stream(preimage)
+                expected_id = {"scheme": "scworkbench.graph.partition.v1", "sha256": digest}
                 count = int(part["row_count"])
                 if (
                     part["partition_identity"] != expected_id
