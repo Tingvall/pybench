@@ -1,12 +1,12 @@
 # S1 baseline harness specification
 
-Status: source-only preparation. No executable harness file, fixture bytes,
-trial, Python test, or candidate implementation exists yet. Runtime peer is
+Status: harness source prepared but unexecuted. No fixture bytes, trial,
+Python test, or candidate runtime implementation exists yet. Runtime peer is
 the clean PyBench `0ef3c56f9d300e7813ac5a555e6d2ac7cb64a57e`.
 `S1_STREAM_PRECODE_BUDGET.md` defines the acceptance gates; this note fixes
 the harness interface and future commands, not measured results.
 
-## Future files and fixed workload
+## Harness files and fixed workload
 
 - `tests/perf/transport_s1_trial.py`: one fresh child process. It receives
   `--protocol v3|v4`, `--stage PATH`, `--case-id`, and an installed local
@@ -49,17 +49,20 @@ explicitly selected source root's `src` and `tests`, never a different
 editable installation. Do not use a
 no-restore flag, infer R parent ownership, or change public staging paths.
 
-## Future command lines (not runnable until harness files exist)
+## Held command lines
 
 Run only after root releases the CPU lane. The working directory for all
 commands is the clean isolated PyBench worktree at
 `/home/dirk/Projects/.pybench-worktrees/engine-transport-s1-stream-precode-quill-20261019`.
-The interpreter path is intentionally explicit and must be recorded along
-with its executable SHA-256 and installed distribution versions.
+The interpreter is the PyBench main `.venv` used for the recorded full-suite
+qualification, not the separate `/tmp/quill-engine-simplification-venv` used
+for R fixture/broker work. It is not modified. Record its executable SHA-256,
+installed distribution versions, METADATA and RECORD digests. The work root
+is fresh and owned by this trial; never reuse a shared temporary root.
 
 ```bash
 cd /home/dirk/Projects/.pybench-worktrees/engine-transport-s1-stream-precode-quill-20261019
-PYTHONPATH="$PWD/src:$PWD/tests" /home/dirk/Projects/pybench/.venv/bin/python tests/perf/transport_s1_runner.py --phase baseline --baseline-root /home/dirk/Projects/.pybench-worktrees/engine-simplification-quill-20261018 --protocols v3,v4 --sizes-mib 64,256 --repetitions 3 --work-root /tmp/pybench-s1-trial --ledger /tmp/pybench-s1-trial/baseline.json --raw /tmp/pybench-s1-trial/baseline.jsonl
+PYTHONPATH="$PWD/src:$PWD/tests" /home/dirk/Projects/pybench/.venv/bin/python tests/perf/transport_s1_runner.py --phase baseline --baseline-root /home/dirk/Projects/.pybench-worktrees/engine-simplification-quill-20261018 --protocols v3,v4 --sizes-mib 64,256 --repetitions 3 --work-root /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline --ledger /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/baseline.json --raw /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/baseline.jsonl
 ```
 
 The baseline command must run against unchanged `0ef3c56` runtime files.
@@ -74,7 +77,7 @@ accepted, the runner's fixed paired mode is:
 
 ```bash
 cd /home/dirk/Projects/.pybench-worktrees/engine-transport-s1-stream-precode-quill-20261019
-PYTHONPATH="$PWD/src:$PWD/tests" /home/dirk/Projects/pybench/.venv/bin/python tests/perf/transport_s1_runner.py --phase paired --baseline-root /home/dirk/Projects/.pybench-worktrees/engine-simplification-quill-20261018 --candidate-root "$PWD" --protocols v3,v4 --sizes-mib 64,256 --repetitions 3 --order baseline,candidate/candidate,baseline/baseline,candidate --work-root /tmp/pybench-s1-trial --baseline-ledger /tmp/pybench-s1-trial/baseline.json --raw /tmp/pybench-s1-trial/paired.jsonl
+PYTHONPATH="$PWD/src:$PWD/tests" /home/dirk/Projects/pybench/.venv/bin/python tests/perf/transport_s1_runner.py --phase paired --baseline-root /home/dirk/Projects/.pybench-worktrees/engine-simplification-quill-20261018 --candidate-root "$PWD" --protocols v3,v4 --sizes-mib 64,256 --repetitions 3 --order baseline,candidate/candidate,baseline/baseline,candidate --work-root /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline --baseline-ledger /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/baseline.json --raw /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/paired.jsonl
 ```
 
 The runner must reject changed fixture/request/pack/protocol/interpreter
@@ -83,7 +86,7 @@ exit, residual stage directories, or a byte mismatch. It must record each
 natural-cache observation but must not label a fresh process as cold cache.
 No artificial warm-up or favorable-subset rerun is part of this plan.
 
-## Before coding the harness
+## Before running the harness
 
 Freeze the reference operation/request shape from the existing fixtures and
 verify that both protocols accept one unchanged inert stage file without
