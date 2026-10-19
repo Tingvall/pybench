@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+
 def _sha_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -49,10 +50,13 @@ def main() -> int:
 
     def audit(event: str, args: tuple) -> None:
         if event in {"subprocess.Popen", "os.fork", "os.posix_spawn", "os.spawn"}:
-            spawn_events.append({
-                "phase": phase, "event": event,
-                "details": repr(args[:3])[:2048],
-            })
+            spawn_events.append(
+                {
+                    "phase": phase,
+                    "event": event,
+                    "details": repr(args[:3])[:2048],
+                }
+            )
 
     sys.addaudithook(audit)
     initial_children = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
