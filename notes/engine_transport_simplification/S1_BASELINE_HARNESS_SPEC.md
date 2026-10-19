@@ -144,3 +144,15 @@ must identify it before the baseline can be accepted. Retry 02 uses distinct
 `quill_s1_baseline_retry02`, `quill_s1_supervisor_retry02`, and
 `quill_s1_bootstrap_retry02.log` paths. Neither failed attempt completed a
 performance case or established a ceiling.
+
+Retry 02 at clean `1b39508` exited 1 during the first v3 case, with no
+completed performance result or ceiling. Its setup audit identified the
+subprocess as `uname -p`; the setup child peak was 49,912 KiB and remained
+separate from execution accounting. The case then failed before completion
+because the harness serialized the transport request through canonical JSON,
+turning integer `chunk_size: 1` into the JSON token `1e0`. Python parsed that
+token as a float and the v3 chunk-call audit correctly rejected it. The
+request file now uses ordinary finite transport JSON, preserving integer
+tokens; protocol identity calculation is unchanged. Retry 03 has distinct
+`quill_s1_baseline_retry03`, `quill_s1_supervisor_retry03`, and
+`quill_s1_bootstrap_retry03.log` paths. All prior failure evidence is retained.

@@ -262,7 +262,6 @@ def _install_local_fixtures(site: Path, owned_sources: Path, logs: Path) -> None
 
 
 def _prepare_template(root: Path, protocol: str, size_mib: int) -> None:
-    from pybench.operation_packs import canonical_json
     from v3_helpers import fixture_inputs, make_request
 
     root.mkdir(parents=True)
@@ -305,7 +304,10 @@ def _prepare_template(root: Path, protocol: str, size_mib: int) -> None:
             {"family": family},
         )
         validate_request_v4(request, discovery)
-    (root / "request.json").write_text(canonical_json(request), encoding="utf-8")
+    (root / "request.json").write_text(
+        json.dumps(request, sort_keys=True, separators=(",", ":"), allow_nan=False),
+        encoding="utf-8",
+    )
     inert = root / "inert/payload.bin"
     inert.parent.mkdir()
     generator = random.Random(FIXTURE_SEED + size_mib)

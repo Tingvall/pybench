@@ -6,9 +6,9 @@ repo=/home/dirk/Projects/.pybench-worktrees/engine-transport-s1-stream-precode-q
 base=/home/dirk/Projects/.pybench-worktrees/engine-simplification-quill-20261018
 python=/home/dirk/Projects/pybench/.venv/bin/python
 parent=/tmp/scwb-engine-simplification-forge-20261018
-work="$parent/quill_s1_baseline_retry02"
-logs="$parent/quill_s1_supervisor_retry02"
-bootstrap="$parent/quill_s1_bootstrap_retry02.log"
+work="$parent/quill_s1_baseline_retry03"
+logs="$parent/quill_s1_supervisor_retry03"
+bootstrap="$parent/quill_s1_bootstrap_retry03.log"
 
 if [[ ! -d "$parent" || -e "$work" || -e "$logs" || -e "$bootstrap" ]]; then
   printf '%s\n' 'S1 baseline requires fresh owned work, supervisor, and bootstrap paths.' >&2
