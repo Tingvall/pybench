@@ -720,7 +720,7 @@ def _changed_snapshot(root: Path, before: Mapping[str, bytes]) -> list[str]:
         offset = 0
         with path.open("rb") as handle:
             while block := handle.read(1024 * 1024):
-                if prior is not None and block != prior_view[offset : offset + len(block)]:
+                if prior is not None and block != bytes(prior_view[offset : offset + len(block)]):
                     changed.add(relative)
                 offset += len(block)
         if prior is not None and offset != len(prior):
