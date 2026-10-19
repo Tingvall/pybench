@@ -104,3 +104,19 @@ CPU lane is free. If either fixture cannot satisfy the ordinary public
 execution contract, revise the harness workload and get the fixed request
 reviewed before taking the baseline. Do not adjust the workload after
 measuring candidate results.
+
+## Prelaunch source check
+
+On 2026-10-19, only the three `tests/perf/transport_s1_*.py` harness files
+received Ruff formatting/import sorting. The first focused `ruff check`
+returned exit 1 for one `I001` import-order finding in the runner. Focused
+`ruff format` returned exit 0 (two files reformatted), focused
+`ruff check --fix` returned exit 0 (one import-order fix), and the repeat
+`ruff format` returned exit 0 (three unchanged). The final focused
+`ruff check` returned exit 0 (`All checks passed!`); focused
+`ruff format --check` returned exit 0 (`3 files already formatted`).
+No harness import, fixture generation, test, benchmark, or runtime change
+was run. The sole non-formatting source change in this check keys installed
+dependency evidence by distribution name plus resolved installation
+location, retaining both the qualified venv and owned-overlay reference
+pack records and rejecting only conflicting records at the same key.

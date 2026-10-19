@@ -58,11 +58,15 @@ def main() -> int:
     error = ""
     started = time.perf_counter()
     try:
-        with (log_root / "runner.stdout").open("xb") as stdout, (
-            log_root / "runner.stderr"
-        ).open("xb") as stderr:
+        with (
+            (log_root / "runner.stdout").open("xb") as stdout,
+            (log_root / "runner.stderr").open("xb") as stderr,
+        ):
             process = subprocess.Popen(
-                command, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL,
+                command,
+                stdout=stdout,
+                stderr=stderr,
+                stdin=subprocess.DEVNULL,
                 start_new_session=True,
             )
             try:
@@ -79,12 +83,17 @@ def main() -> int:
         after = _best_effort_guard(work, baseline, candidate)
         _atomic_json(log_root / "post_guard.json", after)
         (log_root / "supervisor_error.log").write_text(error, encoding="utf-8")
-        _atomic_json(log_root / "status.json", {
-            "exit_code": code, "timed_out": timed_out,
-            "elapsed_seconds": time.perf_counter() - started,
-            "command": command, "pre_post_guard_equal": before == after,
-            "supervisor_error": bool(error),
-        })
+        _atomic_json(
+            log_root / "status.json",
+            {
+                "exit_code": code,
+                "timed_out": timed_out,
+                "elapsed_seconds": time.perf_counter() - started,
+                "command": command,
+                "pre_post_guard_equal": before == after,
+                "supervisor_error": bool(error),
+            },
+        )
     if error:
         sys.stderr.write(error)
     return code

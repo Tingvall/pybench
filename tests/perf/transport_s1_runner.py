@@ -24,7 +24,6 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-
 HARNESS = Path(__file__).resolve()
 REPO = HARNESS.parents[2]
 BASELINE_COMMIT = "0ef3c56f9d300e7813ac5a555e6d2ac7cb64a57e"
@@ -70,8 +69,8 @@ def _dependency_guard() -> dict[str, dict[str, Any]]:
         if not dist.metadata.get("Name"):
             continue
         name = dist.metadata["Name"].lower()
-        if name in result:
-            raise RuntimeError(f"Ambiguous installed distribution: {name}")
+        location = str(Path(dist.locate_file("")).resolve(strict=True))
+        key = json.dumps([name, location], separators=(",", ":"))
         code_digest = hashlib.sha256()
         count = 0
         total = 0
@@ -87,7 +86,7 @@ def _dependency_guard() -> dict[str, dict[str, Any]]:
             code_digest.update(bytes.fromhex(_sha_file(path)))
             count += 1
             total += size
-        result[name] = {
+        descriptor = {
             "version": dist.version,
             "metadata_sha256": hashlib.sha256(
                 (dist.read_text("METADATA") or "").encode("utf-8")
@@ -99,6 +98,9 @@ def _dependency_guard() -> dict[str, dict[str, Any]]:
             "code_file_count": count,
             "code_bytes": total,
         }
+        if key in result and result[key] != descriptor:
+            raise RuntimeError(f"Conflicting installed distribution at {location}: {name}")
+        result[key] = descriptor
     return result
 
 
@@ -161,7 +163,10 @@ def _write_jsonl(path: Path, header: dict[str, Any], rows: list[dict[str, Any]])
         raise RuntimeError(f"Pending evidence already exists: {temporary}")
     try:
         with temporary.open("x", encoding="utf-8") as output:
-            for record in [{"kind": "guard", **header}, *({"kind": "trial", **row} for row in rows)]:
+            for record in [
+                {"kind": "guard", **header},
+                *({"kind": "trial", **row} for row in rows),
+            ]:
                 output.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
         temporary.replace(path)
     finally:
@@ -172,8 +177,11 @@ def _run_captured(
     command: list[str], *, env: dict[str, str], timeout: int
 ) -> tuple[subprocess.CompletedProcess[bytes], bool]:
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        env=env, start_new_session=True,
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        start_new_session=True,
     )
     try:
         stdout, stderr = process.communicate(timeout=timeout)
@@ -190,7 +198,9 @@ def _run_captured(
 
 def _copy_git_fixtures(target: Path) -> None:
     target.mkdir()
-    paths = [f"tests/fixtures/operation-pack-{version}-python-reference" for version in ("v2", "v3")]
+    paths = [
+        f"tests/fixtures/operation-pack-{version}-python-reference" for version in ("v2", "v3")
+    ]
     archive = subprocess.run(
         ["git", "-C", str(REPO), "archive", "--format=tar", "HEAD", *paths],
         capture_output=True,
@@ -222,17 +232,30 @@ def _install_local_fixtures(site: Path, owned_sources: Path, logs: Path) -> None
         fixture = owned_sources / "tests/fixtures" / f"operation-pack-{version}-python-reference"
         process, timed_out = _run_captured(
             [
-                sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
-                "--no-build-isolation", "--no-cache-dir", "--target", str(site), str(fixture),
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--no-deps",
+                "--no-build-isolation",
+                "--no-cache-dir",
+                "--target",
+                str(site),
+                str(fixture),
             ],
             timeout=600,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
         _write_bytes(logs / f"install_{version}.stdout", process.stdout)
         _write_bytes(logs / f"install_{version}.stderr", process.stderr)
-        _write_json(logs / f"install_{version}.status.json", {
-            "exit_code": process.returncode, "timed_out": timed_out,
-        })
+        _write_json(
+            logs / f"install_{version}.status.json",
+            {
+                "exit_code": process.returncode,
+                "timed_out": timed_out,
+            },
+        )
         if process.returncode:
             raise RuntimeError(f"Owned {version} fixture installation failed: {process.returncode}")
     sys.path.insert(0, str(site))
@@ -262,9 +285,7 @@ def _prepare_template(root: Path, protocol: str, size_mib: int) -> None:
         dist = metadata.distribution("scwb-v3-python-reference")
         manifest = dist.locate_file("scwbpyv3reference/operation-pack.json")
         discovery = discover_operation_pack_v3(manifest)
-        request = _request_v4(
-            discovery, root, "scwbpyv3reference::all_contracts", fixture_inputs()
-        )
+        request = _request_v4(discovery, root, "scwbpyv3reference::all_contracts", fixture_inputs())
         validate_request_v4(request, discovery)
     (root / "request.json").write_text(canonical_json(request), encoding="utf-8")
     inert = root / "inert/payload.bin"
@@ -280,7 +301,11 @@ def _parse_trial(stdout: str) -> dict[str, Any]:
     if len(records) != 1:
         raise RuntimeError("Fresh child emitted no unique trial result")
     result = json.loads(records[0])
-    if result.get("status") != "ok" or result.get("child_peak_delta_kib") != 0 or result.get("live_children"):
+    if (
+        result.get("status") != "ok"
+        or result.get("child_peak_delta_kib") != 0
+        or result.get("live_children")
+    ):
         raise RuntimeError("Trial failed or spawned a child process")
     return result
 
@@ -293,15 +318,24 @@ def _cgroup_memory() -> dict[str, str]:
     root = Path("/sys/fs/cgroup")
     return {
         name: (root / name).read_text(encoding="ascii").strip()
-        if (root / name).is_file() else "unavailable"
+        if (root / name).is_file()
+        else "unavailable"
         for name in ("memory.current", "memory.max", "memory.peak")
     }
 
 
 def _trial(
-    protocol: str, size_mib: int, label: str, source: Path, site: Path,
-    fixture: Path, expected_files: dict[str, str], trials: Path, logs: Path,
-    phase: str, repetition: int,
+    protocol: str,
+    size_mib: int,
+    label: str,
+    source: Path,
+    site: Path,
+    fixture: Path,
+    expected_files: dict[str, str],
+    trials: Path,
+    logs: Path,
+    phase: str,
+    repetition: int,
 ) -> dict[str, Any]:
     disk_free_before = shutil.disk_usage(trials).free
     if disk_free_before < 2 * 1024**3:
@@ -319,9 +353,16 @@ def _trial(
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         command = [
-            sys.executable, str(HARNESS.parent / "transport_s1_trial.py"),
-            "--protocol", protocol, "--source-root", str(source), "--stage", str(stage),
-            "--case-id", _case_id(protocol, size_mib),
+            sys.executable,
+            str(HARNESS.parent / "transport_s1_trial.py"),
+            "--protocol",
+            protocol,
+            "--source-root",
+            str(source),
+            "--stage",
+            str(stage),
+            "--case-id",
+            _case_id(protocol, size_mib),
         ]
         cgroup_before = _cgroup_memory()
         started = time.perf_counter()
@@ -331,10 +372,15 @@ def _trial(
         stem = f"{phase}_{_case_id(protocol, size_mib)}_{label}_{repetition}"
         _write_bytes(logs / f"{stem}.stdout", process.stdout)
         _write_bytes(logs / f"{stem}.stderr", process.stderr)
-        _write_json(logs / f"{stem}.status.json", {
-            "exit_code": process.returncode, "timed_out": timed_out,
-            "wall_seconds": wall, "command": command,
-        })
+        _write_json(
+            logs / f"{stem}.status.json",
+            {
+                "exit_code": process.returncode,
+                "timed_out": timed_out,
+                "wall_seconds": wall,
+                "command": command,
+            },
+        )
         if process.returncode:
             raise RuntimeError(
                 f"Trial {label} {_case_id(protocol, size_mib)} #{repetition} exited "
@@ -346,12 +392,17 @@ def _trial(
             raise RuntimeError("Fresh child imported PyBench from the wrong source root")
         if result["stage_files"].get("inert/payload.bin") != expected_files["inert/payload.bin"]:
             raise RuntimeError("Inert baseline payload changed during execution")
-        result.update({
-            "label": label, "repetition": repetition, "wall_seconds": wall,
-            "cgroup_before": cgroup_before, "cgroup_after": cgroup_after,
-            "disk_free_before_bytes": disk_free_before,
-            "disk_free_after_bytes": shutil.disk_usage(trials).free,
-        })
+        result.update(
+            {
+                "label": label,
+                "repetition": repetition,
+                "wall_seconds": wall,
+                "cgroup_before": cgroup_before,
+                "cgroup_after": cgroup_after,
+                "disk_free_before_bytes": disk_free_before,
+                "disk_free_after_bytes": shutil.disk_usage(trials).free,
+            }
+        )
         return result
 
 
@@ -387,7 +438,9 @@ def _best_effort_guard(work: Path, baseline: Path | None, candidate: Path | None
             if root is not None
         },
         "paths": {
-            name: observe(lambda path=path: _tree_hashes(path)) if path.exists() else {"missing": True}
+            name: observe(lambda path=path: _tree_hashes(path))
+            if path.exists()
+            else {"missing": True}
             for name, path in paths.items()
         },
     }
@@ -432,14 +485,18 @@ def main() -> int:
             _prepare_template(fixtures / _case_id(protocol, size), protocol, size)
         sources = {"baseline": baseline}
         guard_paths = {
-            "site": work / "site", "fixtures": fixtures, "harness": HARNESS.parent,
+            "site": work / "site",
+            "fixtures": fixtures,
+            "harness": HARNESS.parent,
             "owned_pack_sources": owned_sources,
             "reference_v2": REPO / "tests/fixtures/operation-pack-v2-python-reference",
             "reference_v3": REPO / "tests/fixtures/operation-pack-v3-python-reference",
         }
     else:
         if not work.is_dir() or args.baseline_ledger is None or args.candidate_root is None:
-            raise RuntimeError("Paired mode needs existing owned baseline evidence and candidate root")
+            raise RuntimeError(
+                "Paired mode needs existing owned baseline evidence and candidate root"
+            )
         if args.baseline_ledger.resolve(strict=True) != work / "baseline.json":
             raise RuntimeError("Paired mode must use this work root's baseline ledger")
         if args.order != "baseline,candidate/candidate,baseline/baseline,candidate":
@@ -450,7 +507,9 @@ def main() -> int:
         if not logs.is_dir() or logs.is_symlink():
             raise RuntimeError("Owned trial log directory is missing or unsafe")
         guard_paths = {
-            "site": work / "site", "fixtures": work / "fixtures", "harness": HARNESS.parent,
+            "site": work / "site",
+            "fixtures": work / "fixtures",
+            "harness": HARNESS.parent,
             "owned_pack_sources": work / "pack_sources",
             "reference_v2": REPO / "tests/fixtures/operation-pack-v2-python-reference",
             "reference_v3": REPO / "tests/fixtures/operation-pack-v3-python-reference",
@@ -472,7 +531,10 @@ def main() -> int:
             raise RuntimeError("Baseline source changed since its frozen ledger")
         if ledger["guard"]["paths"] != before["paths"]:
             raise RuntimeError("Fixtures, site, or harness differ from frozen baseline")
-        if ledger["guard"]["dependencies"] != before["dependencies"] or ledger["guard"]["python_executable_sha256"] != before["python_executable_sha256"]:
+        if (
+            ledger["guard"]["dependencies"] != before["dependencies"]
+            or ledger["guard"]["python_executable_sha256"] != before["python_executable_sha256"]
+        ):
             raise RuntimeError("Interpreter or dependencies changed since baseline")
     rows: list[dict[str, Any]] = []
     frozen_ledger: dict[str, Any] | None = None
@@ -481,14 +543,29 @@ def main() -> int:
             fixture = work / "fixtures" / _case_id(protocol, size)
             expected_files = _tree_hashes(fixture)
             for repetition in range(1, 4):
-                labels = ("baseline",) if args.phase == "baseline" else (
-                    ("baseline", "candidate") if repetition != 2 else ("candidate", "baseline")
+                labels = (
+                    ("baseline",)
+                    if args.phase == "baseline"
+                    else (
+                        ("baseline", "candidate") if repetition != 2 else ("candidate", "baseline")
+                    )
                 )
                 for label in labels:
-                    rows.append(_trial(
-                        protocol, size, label, sources[label], work / "site", fixture,
-                        expected_files, trials, logs, args.phase, repetition,
-                    ))
+                    rows.append(
+                        _trial(
+                            protocol,
+                            size,
+                            label,
+                            sources[label],
+                            work / "site",
+                            fixture,
+                            expected_files,
+                            trials,
+                            logs,
+                            args.phase,
+                            repetition,
+                        )
+                    )
         if args.phase == "baseline":
             ceilings: dict[str, dict[str, float]] = {}
             for protocol, size in cases:
@@ -501,11 +578,14 @@ def main() -> int:
                     raise RuntimeError("Frozen RSS ceiling is below measured interpreter floor")
                 ceilings[_case_id(protocol, size)] = {
                     "rss_kib": rss_ceiling,
-                    "execute_seconds": 1.10 * statistics.median(row["execute_seconds"] for row in group),
+                    "execute_seconds": 1.10
+                    * statistics.median(row["execute_seconds"] for row in group),
                 }
-            frozen_ledger = {"guard": before, "ceilings": ceilings, "cases": [
-                _case_id(protocol, size) for protocol, size in cases
-            ]}
+            frozen_ledger = {
+                "guard": before,
+                "ceilings": ceilings,
+                "cases": [_case_id(protocol, size) for protocol, size in cases],
+            }
         else:
             for protocol, size in cases:
                 name = _case_id(protocol, size)
@@ -517,7 +597,11 @@ def main() -> int:
                         if left[key] != right[key]:
                             raise RuntimeError(f"Candidate {name} differs in {key}")
                 ceiling = ledger["ceilings"][name]
-                if max(row["rss_peak_kib"] for row in candidate) > ceiling["rss_kib"] or statistics.median(row["execute_seconds"] for row in candidate) > ceiling["execute_seconds"]:
+                if (
+                    max(row["rss_peak_kib"] for row in candidate) > ceiling["rss_kib"]
+                    or statistics.median(row["execute_seconds"] for row in candidate)
+                    > ceiling["execute_seconds"]
+                ):
                     raise RuntimeError(f"Candidate {name} misses frozen RSS or elapsed ceiling")
     finally:
         after = _guard(guard_paths, sources)
@@ -540,9 +624,13 @@ def _supervised_entry() -> int:
     baseline = known.baseline_root.resolve(strict=False) if known.baseline_root else None
     candidate = known.candidate_root.resolve(strict=False) if known.candidate_root else None
     initial_exists = work.exists() if work else False
-    owned = bool(work and known.phase in ("baseline", "paired") and (
-        not initial_exists if known.phase == "baseline" else (work / "baseline.json").is_file()
-    ))
+    owned = bool(
+        work
+        and known.phase in ("baseline", "paired")
+        and (
+            not initial_exists if known.phase == "baseline" else (work / "baseline.json").is_file()
+        )
+    )
     pre = _best_effort_guard(work, baseline, candidate) if work else {"missing_work_root": True}
     code = 0
     failure = ""
@@ -561,10 +649,14 @@ def _supervised_entry() -> int:
         _write_json(logs / f"{phase}_supervisor_pre_guard.json", pre)
         _write_json(logs / f"{phase}_supervisor_post_guard.json", post)
         _write_bytes(logs / f"{phase}_supervisor_error.log", failure.encode("utf-8"))
-        _write_json(logs / f"{phase}_supervisor.status.json", {
-            "exit_code": code, "error_type": "" if not failure else "runner_exception",
-            "pre_post_guard_equal": pre == post,
-        })
+        _write_json(
+            logs / f"{phase}_supervisor.status.json",
+            {
+                "exit_code": code,
+                "error_type": "" if not failure else "runner_exception",
+                "pre_post_guard_equal": pre == post,
+            },
+        )
     if failure:
         sys.stderr.write(failure)
     return code
