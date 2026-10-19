@@ -285,7 +285,25 @@ def _prepare_template(root: Path, protocol: str, size_mib: int) -> None:
         dist = metadata.distribution("scwb-v3-python-reference")
         manifest = dist.locate_file("scwbpyv3reference/operation-pack.json")
         discovery = discover_operation_pack_v3(manifest)
-        request = _request_v4(discovery, root, "scwbpyv3reference::all_contracts", fixture_inputs())
+        family = {
+            "kind": "cell_set_family_admission",
+            "mode": "add",
+            "sets": [],
+            "source": {
+                "label": "successor fixture",
+                "created_by": None,
+                "input_artifact_id": None,
+                "input_run_id": None,
+                "input_snapshot_id": None,
+            },
+        }
+        request = _request_v4(
+            discovery,
+            root,
+            "scwbpyv3reference::family_probe",
+            fixture_inputs(),
+            {"family": family},
+        )
         validate_request_v4(request, discovery)
     (root / "request.json").write_text(canonical_json(request), encoding="utf-8")
     inert = root / "inert/payload.bin"

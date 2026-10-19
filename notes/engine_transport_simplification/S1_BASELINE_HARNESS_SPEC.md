@@ -34,9 +34,12 @@ the harness interface and future commands, not measured results.
   per-trial stdout/stderr and numeric timeout/exit status, including setup
   failure evidence.
 
-Use the existing local v2 and v3 Python reference-pack fixture manifests and
-their `all_contracts` operations, with the same minimal declared inputs and
-outputs for every run within each protocol. Keep the inert file outside
+Use the existing local v2 reference `all_contracts` operation for ordinary
+protocol v3 and the existing v3 reference `family_probe` operation for ordinary
+protocol v4, with the same minimal declared inputs and outputs for every run
+within each protocol. The v4 request uses the already tested empty-family
+parameter from `test_v3_discovery_activation_and_plain_v4_execution`.
+Keep the inert file outside
 declared writer paths, named `inert/payload.bin`; it must be unchanged by the
 handler and present in both `S0` and `S1`. Use a deterministic byte generator
 with fixed seed and a recorded SHA-256, not sparse/all-zero or compressible
@@ -120,3 +123,11 @@ was run. The sole non-formatting source change in this check keys installed
 dependency evidence by distribution name plus resolved installation
 location, retaining both the qualified venv and owned-overlay reference
 pack records and rejecting only conflicting records at the same key.
+
+The first baseline setup at clean `e06a4f5` exited 1 before any trial. Its
+v4 `all_contracts` request failed `validate_request_v4()` because the
+`relation_family` output grant is not in the current v4 request schema. The
+complete setup traceback and supervisor status remain under the original
+`quill_s1_baseline` and `quill_s1_supervisor` evidence roots. Retry 01 uses
+distinct `quill_s1_baseline_retry01`, `quill_s1_supervisor_retry01`, and
+`quill_s1_bootstrap_retry01.log` paths; no old evidence is removed or reused.
