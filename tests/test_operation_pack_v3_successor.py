@@ -697,6 +697,7 @@ def test_plain_v4_stream_audit_restores_nested_undeclared_payload(
     from pybench.protocol_v3 import _snapshot, _tree
 
     discovery = installed_v3
+    unload_operation_pack_v3(discovery.manifest["namespace"])
     registration = activate_operation_pack_v3(discovery)
     name = "scwbpyv3reference::family_probe"
     original = registration.handlers[name]
