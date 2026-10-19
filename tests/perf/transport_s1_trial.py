@@ -16,10 +16,6 @@ import sys
 import time
 from pathlib import Path
 
-import pybench
-from pybench.operation_packs import canonical_json
-
-
 def _sha_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -48,12 +44,27 @@ def _live_children() -> str:
 
 
 def main() -> int:
+    phase = "setup"
+    spawn_events: list[dict[str, str]] = []
+
+    def audit(event: str, args: tuple) -> None:
+        if event in {"subprocess.Popen", "os.fork", "os.posix_spawn", "os.spawn"}:
+            spawn_events.append({
+                "phase": phase, "event": event,
+                "details": repr(args[:3])[:2048],
+            })
+
+    sys.addaudithook(audit)
+    initial_children = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     parser = argparse.ArgumentParser()
     parser.add_argument("--protocol", choices=("v3", "v4"), required=True)
     parser.add_argument("--stage", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--case-id", required=True)
     args = parser.parse_args()
+    import pybench
+    from pybench.operation_packs import canonical_json
+
     expected_source = args.source_root.resolve(strict=True) / "src/pybench"
     imported = Path(pybench.__file__).resolve(strict=True)
     if not imported.is_relative_to(expected_source):
@@ -85,15 +96,26 @@ def main() -> int:
         activate_operation_pack_v3(discovery)
         execute = execute_operation_pack_v4
     before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    if before or _live_children():
-        raise RuntimeError("Trial setup spawned a child process")
+    live_before = _live_children()
+    setup_observation = {
+        "setup_child_peak_kib": before,
+        "setup_child_delta_kib": before - initial_children,
+        "setup_spawn_events": [item for item in spawn_events if item["phase"] == "setup"],
+        "live_children_before_execution": live_before,
+    }
+    print("PYBENCH_S1_SETUP_JSON=" + json.dumps(setup_observation, sort_keys=True), flush=True)
+    if live_before:
+        raise RuntimeError("Trial setup left a live child at the execution boundary")
     rss_pre = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    phase = "execute"
     started = time.perf_counter()
     receipt, sidecar = execute(request, discovery, stage)
     elapsed = time.perf_counter() - started
+    phase = "post"
     rss_peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     children = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss - before
     live_children = _live_children()
+    execute_spawns = [item for item in spawn_events if item["phase"] == "execute"]
     files, total = _stage_files(stage)
     result = {
         "case_id": args.case_id,
@@ -104,6 +126,8 @@ def main() -> int:
         "rss_peak_kib": rss_peak,
         "child_peak_delta_kib": children,
         "live_children": live_children,
+        "execute_spawn_events": execute_spawns,
+        **setup_observation,
         "receipt_sha256": hashlib.sha256(canonical_json(receipt).encode("utf-8")).hexdigest(),
         "sidecar_sha256": hashlib.sha256(canonical_json(sidecar).encode("utf-8")).hexdigest(),
         "stage_files": files,
@@ -112,7 +136,7 @@ def main() -> int:
         "pybench_import_path": str(imported),
     }
     print("PYBENCH_S1_TRIAL_JSON=" + json.dumps(result, sort_keys=True, separators=(",", ":")))
-    return 0 if children == 0 and not live_children else 2
+    return 0 if children == 0 and not live_children and not execute_spawns else 2
 
 
 if __name__ == "__main__":

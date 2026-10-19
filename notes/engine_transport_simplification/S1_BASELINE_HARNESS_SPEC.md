@@ -131,3 +131,16 @@ complete setup traceback and supervisor status remain under the original
 `quill_s1_baseline` and `quill_s1_supervisor` evidence roots. Retry 01 uses
 distinct `quill_s1_baseline_retry01`, `quill_s1_supervisor_retry01`, and
 `quill_s1_bootstrap_retry01.log` paths; no old evidence is removed or reused.
+
+Retry 01 at clean `7a5c629` also exited 1 before timed execution. The first
+v3 child found nonzero completed-child resource usage during pack setup and
+the harness incorrectly rejected it as an execution child. The full stderr,
+numeric trial/supervisor statuses and guards remain under the retry-01 roots.
+Retry 02 records setup child usage and Python spawn audit events separately,
+requires no live child at the timed boundary, and continues to reject
+execution-phase spawns or completed-child usage. The source of the setup
+subprocess is not established by retry-01 logs; retry-02's setup event log
+must identify it before the baseline can be accepted. Retry 02 uses distinct
+`quill_s1_baseline_retry02`, `quill_s1_supervisor_retry02`, and
+`quill_s1_bootstrap_retry02.log` paths. Neither failed attempt completed a
+performance case or established a ceiling.

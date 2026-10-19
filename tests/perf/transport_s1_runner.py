@@ -323,6 +323,7 @@ def _parse_trial(stdout: str) -> dict[str, Any]:
         result.get("status") != "ok"
         or result.get("child_peak_delta_kib") != 0
         or result.get("live_children")
+        or result.get("execute_spawn_events")
     ):
         raise RuntimeError("Trial failed or spawned a child process")
     return result
