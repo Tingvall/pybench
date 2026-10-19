@@ -57,6 +57,7 @@ from .phase5_contracts import (
 from .protocol_v3 import (
     V3Readers,
     V3Writers,
+    _changed_snapshot,
     _no_absolute_paths,
     _observed_descriptor,
     _ordered,
@@ -3530,11 +3531,14 @@ def execute_operation_pack_v4(
                     }
                 )
         _finalize_contained_model_descriptors(request, outputs, writes)
-        after = disk_baseline.after() if disk_baseline is not None else _snapshot(root)
+        if disk_baseline is not None:
+            after = disk_baseline.after()
+            changed = sorted(
+                key for key in set(before) | set(after) if before.get(key) != after.get(key)
+            )
+        else:
+            changed = _changed_snapshot(root, before)
         tree_after = _tree(root)
-        changed = sorted(
-            key for key in set(before) | set(after) if before.get(key) != after.get(key)
-        )
         if sorted(item["path"] for item in entries) != changed:
             _fail(
                 "PYBENCH_OUT_OF_SCOPE_MUTATION",

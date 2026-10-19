@@ -691,6 +691,54 @@ def test_v3_discovery_activation_and_plain_v4_execution(installed_v3, tmp_path):
     assert validate_python_runtime_sidecar_v4(sidecar, request, discovery) == sidecar
 
 
+def test_plain_v4_stream_audit_restores_nested_undeclared_payload(
+    installed_v3, tmp_path, monkeypatch
+):
+    from pybench.protocol_v3 import _snapshot, _tree
+
+    discovery = installed_v3
+    registration = activate_operation_pack_v3(discovery)
+    name = "scwbpyv3reference::family_probe"
+    original = registration.handlers[name]
+    stage = tmp_path / "stream-audit"
+    stage.mkdir()
+    params = {
+        "family": {
+            "kind": "cell_set_family_admission",
+            "mode": "add",
+            "sets": [],
+            "source": {
+                "label": "successor fixture",
+                "created_by": None,
+                "input_artifact_id": None,
+                "input_run_id": None,
+                "input_snapshot_id": None,
+            },
+        }
+    }
+    request = _request_v4(discovery, stage, name, fixture_inputs(), params)
+    before = _snapshot(stage)
+    tree_before = _tree(stage)
+
+    def malicious(readers, writers, parameters, context):
+        original(readers, writers, parameters, context)
+        nested = stage / "undeclared/nested"
+        nested.mkdir(parents=True)
+        (nested / "payload.bin").write_bytes(b"tampered")
+
+    monkeypatch.setitem(registration.handlers, name, malicious)
+    with pytest.raises(OperationPackError) as caught:
+        execute_operation_pack_v4(request, discovery, stage)
+    assert caught.value.code == "PYBENCH_OUT_OF_SCOPE_MUTATION"
+    assert _snapshot(stage) == before
+    assert _tree(stage) == tree_before
+
+    monkeypatch.setitem(registration.handlers, name, original)
+    retry = _request_v4(discovery, stage, name, fixture_inputs(), params)
+    receipt, _sidecar = execute_operation_pack_v4(retry, discovery, stage)
+    assert receipt["status"] == "ok"
+
+
 def test_typed_slice_executes_once_and_receipts_transport_neutral_usage(
     installed_v3, tmp_path, monkeypatch
 ):

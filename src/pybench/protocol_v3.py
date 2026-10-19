@@ -702,6 +702,32 @@ def _snapshot(root: Path) -> dict[str, bytes]:
     return result
 
 
+def _changed_snapshot(root: Path, before: Mapping[str, bytes]) -> list[str]:
+    changed: set[str] = set()
+    observed: set[str] = set()
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            _fail("PYBENCH_OUT_OF_SCOPE_MUTATION", "Private stage contains a symlink", "audit")
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        observed.add(relative)
+        prior = before.get(relative)
+        if prior is None:
+            changed.add(relative)
+        else:
+            prior_view = memoryview(prior)
+        offset = 0
+        with path.open("rb") as handle:
+            while block := handle.read(1024 * 1024):
+                if prior is not None and block != prior_view[offset : offset + len(block)]:
+                    changed.add(relative)
+                offset += len(block)
+        if prior is not None and offset != len(prior):
+            changed.add(relative)
+    return sorted(changed | (before.keys() - observed))
+
+
 def _tree(root: Path) -> set[str]:
     result: set[str] = set()
     for path in sorted(root.rglob("*")):
@@ -1552,11 +1578,8 @@ def execute_operation_pack_v3(
                     "sha256": hashlib.sha256(write.path.read_bytes()).hexdigest(),
                 }
             )
-        after = _snapshot(root)
+        changed = _changed_snapshot(root, before)
         tree_after = _tree(root)
-        changed = sorted(
-            key for key in set(before) | set(after) if before.get(key) != after.get(key)
-        )
         if sorted(item["path"] for item in entries) != changed:
             _fail(
                 "PYBENCH_OUT_OF_SCOPE_MUTATION",
