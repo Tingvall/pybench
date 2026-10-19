@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+import pybench
 from pybench.operation_packs import canonical_json
 
 
@@ -50,8 +51,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--protocol", choices=("v3", "v4"), required=True)
     parser.add_argument("--stage", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--case-id", required=True)
     args = parser.parse_args()
+    expected_source = args.source_root.resolve(strict=True) / "src/pybench"
+    imported = Path(pybench.__file__).resolve(strict=True)
+    if not imported.is_relative_to(expected_source):
+        raise RuntimeError(f"PyBench imported from {imported}, not {expected_source}")
     stage = args.stage.resolve(strict=True)
     request = json.loads((stage / "request.json").read_text(encoding="utf-8"))
     if args.protocol == "v3":
@@ -103,6 +109,7 @@ def main() -> int:
         "stage_files": files,
         "stage_total_bytes": total,
         "python_version": sys.version,
+        "pybench_import_path": str(imported),
     }
     print("PYBENCH_S1_TRIAL_JSON=" + json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if children == 0 and not live_children else 2

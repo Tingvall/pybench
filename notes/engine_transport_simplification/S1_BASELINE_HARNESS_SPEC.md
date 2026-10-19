@@ -9,17 +9,17 @@ the harness interface and future commands, not measured results.
 ## Harness files and fixed workload
 
 - `tests/perf/transport_s1_trial.py`: one fresh child process. It receives
-  `--protocol v3|v4`, `--stage PATH`, `--case-id`, and an installed local
+  `--protocol v3|v4`, `--stage PATH`, `--source-root PATH`, `--case-id`, and an installed local
   reference-pack distribution. It explicitly discovers/activates the pack,
   loads a deterministic request, invokes the ordinary public PyBench
   `execute_operation_pack_v3` or `execute_operation_pack_v4` once, and reports
   success/error code, output/receipt/sidecar SHA-256, `resource.RUSAGE_SELF`
-  peak RSS in KiB, elapsed monotonic time, child-process count, and stage
+  peak RSS in KiB, elapsed monotonic time, child-process rejection, and stage
   poststate fingerprint as one JSON object. Any spawned child disqualifies
   the trial rather than being omitted from the process RSS number.
 - `tests/perf/transport_s1_runner.py`: outside the measured child. It creates
-  two immutable deterministic fixture sources once, prepares the local
-  reference-pack installation before timing, checks free disk/cgroup state,
+  four immutable deterministic fixture sources once, prepares the local
+  reference-pack installation from an owned Git archive before timing, checks free disk/cgroup state,
   copies exactly one fixture into one owned `TemporaryDirectory`, launches
   the child in a fresh interpreter with the selected baseline or candidate
   source root on `PYTHONPATH`, records its JSON and parent-observed wall
@@ -27,6 +27,12 @@ the harness interface and future commands, not measured results.
   JSONL plus a baseline ledger with literal frozen thresholds. It never
   retains a per-trial stage payload or changes the child invocation between
   baseline and candidate.
+- `tests/perf/transport_s1_supervisor.py` and the two
+  `tests/perf/launch_transport_s1_*.sh` scripts: detached launch and external
+  owner of full runner stdout/stderr, numeric status, and pre/post source,
+  installed-code and fixture guards. The runner retains full per-install and
+  per-trial stdout/stderr and numeric timeout/exit status, including setup
+  failure evidence.
 
 Use the existing local v2 and v3 Python reference-pack fixture manifests and
 their `all_contracts` operations, with the same minimal declared inputs and
@@ -43,11 +49,14 @@ effects on the inert payload; otherwise the workload is invalid.
 The child should use the ordinary public execution function and local
 installed reference distribution, not an internal `_snapshot` microbench.
 Only the baseline harness imports test fixture helpers; the reference pack
-itself remains independently installed. No pip/network/install step belongs
+itself remains independently installed into the owned work root. Pip reads
+the Git-derived copy, never the source worktree or main venv. No network or install step belongs
 inside measured child time. Each child's `PYTHONPATH` must point to the
 explicitly selected source root's `src` and `tests`, never a different
-editable installation. Do not use a
-no-restore flag, infer R parent ownership, or change public staging paths.
+editable installation. Parent and child assert and report actual PyBench
+import paths; actual installed dependency code/native files are hashed before
+and after, not merely METADATA/RECORD. Do not use a no-restore flag, infer R
+parent ownership, or change public staging paths.
 
 ## Held command lines
 
@@ -62,7 +71,7 @@ is fresh and owned by this trial; never reuse a shared temporary root.
 
 ```bash
 cd /home/dirk/Projects/.pybench-worktrees/engine-transport-s1-stream-precode-quill-20261019
-PYTHONPATH="$PWD/src:$PWD/tests" /home/dirk/Projects/pybench/.venv/bin/python tests/perf/transport_s1_runner.py --phase baseline --baseline-root /home/dirk/Projects/.pybench-worktrees/engine-simplification-quill-20261018 --protocols v3,v4 --sizes-mib 64,256 --repetitions 3 --work-root /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline --ledger /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/baseline.json --raw /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/baseline.jsonl
+bash tests/perf/launch_transport_s1_baseline.sh
 ```
 
 The baseline command must run against unchanged `0ef3c56` runtime files.
@@ -77,7 +86,7 @@ accepted, the runner's fixed paired mode is:
 
 ```bash
 cd /home/dirk/Projects/.pybench-worktrees/engine-transport-s1-stream-precode-quill-20261019
-PYTHONPATH="$PWD/src:$PWD/tests" /home/dirk/Projects/pybench/.venv/bin/python tests/perf/transport_s1_runner.py --phase paired --baseline-root /home/dirk/Projects/.pybench-worktrees/engine-simplification-quill-20261018 --candidate-root "$PWD" --protocols v3,v4 --sizes-mib 64,256 --repetitions 3 --order baseline,candidate/candidate,baseline/baseline,candidate --work-root /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline --baseline-ledger /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/baseline.json --raw /tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline/paired.jsonl
+bash tests/perf/launch_transport_s1_paired.sh
 ```
 
 The runner must reject changed fixture/request/pack/protocol/interpreter
