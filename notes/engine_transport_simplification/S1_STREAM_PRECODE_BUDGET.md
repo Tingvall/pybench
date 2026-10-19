@@ -115,6 +115,39 @@ v3 and v4 cases; graph ABI4 disk snapshot remains untouched. Verify the
 independent R audit and publication path only after the narrow Python tests
 pass and the controller schedules an integration lane.
 
-No implementation work starts until the baseline ledger and resource lane
-are available. If the exact old behavior cannot be preserved without a new
-backup owner, stop the candidate rather than broadening the transport model.
+## Frozen retry-03 baseline
+
+The clean `0ef3c56f9d300e7813ac5a555e6d2ac7cb64a57e` runtime peer
+completed all 12 ordinary v3/v4 baseline trials (three fresh children for
+each size/version). The supervisor exited 0 in 53.104249 seconds without
+timeout or supervisor error; the runner returned 0 after checking its own
+pre/post source, dependency, fixture, and installed-site guards. The outer
+supervisor's `pre_post_guard_equal` is false because setup created its owned
+site and fixture trees, not because a source guard failed.
+
+Frozen absolute gates, from `baseline.json`:
+
+| Case | Peak RSS ceiling (KiB) | Median execution ceiling (s) |
+| --- | ---: | ---: |
+| v3, 64 MiB | 198644 | 0.4568472920218483 |
+| v3, 256 MiB | 493012 | 0.7190257942886092 |
+| v4, 64 MiB | 199352 | 0.21637273904052565 |
+| v4, 256 MiB | 494336 | 0.5227733621082735 |
+
+Evidence root: `/tmp/scwb-engine-simplification-forge-20261018/quill_s1_baseline_retry03`.
+`baseline.json` SHA-256:
+`802d08ba174eb02703ea732122349dc41d6d3e6390a9c11a26dbc441f701e811`.
+The 13-line raw ledger (guard plus 12 trials) SHA-256:
+`10ecda1d1bd0a9afb0b6967c817d03436bdcc7625686e2d52c9b0ca001b08050`.
+The ledger's `guard.paths.fixtures` records each fixture file digest. Request
+hashes by case are v3/64 `43c54c8c4b666bcc9d1e274a9893260cb6c7e6602280c39cdbbc7b1738a3435e`,
+v3/256 `d88cba0e6447027dda6c1f9e7ba4f441195a72d48496879818858b5efd754ba2`,
+v4/64 `c641ef1534168b0945d9923ff6e8653899cc892f8637188eac64b0d64d58e7df`,
+and v4/256 `8f425e7bc3839b17ab59c45458ad86e6165c60193000faf12b324b357ee22d73`.
+The inert 64 MiB and 256 MiB fixture hashes are respectively
+`ad6b2bee16f83bfca68a7d05d707ad654e1eb8fd904e5a5e233319b64f0caa9e`
+and `a83f767ef579f51432a96f761f821d2f468594192a36f4f925998874b21c22d4`.
+No previous failed attempt's evidence was overwritten.
+
+If the exact old behavior cannot be preserved without a new backup owner,
+stop the candidate rather than broadening the transport model.
