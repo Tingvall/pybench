@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import math
 import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -15,6 +18,128 @@ from .bundle import BundleHandle, bundle_relative_path, resolve_bundle_path
 
 class GetterError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ArtifactTable:
+    artifact_id: str
+    kind: str
+    table_type: str
+    entity_kind: str
+    meta: dict[str, Any]
+    storage_format: str | None
+    columns: tuple[str, ...]
+    types: tuple[str, ...]
+    rows: list[dict[str, Any]]
+
+
+def _table_json_number(text: str) -> int | float:
+    return -0.0 if text == "-0" else int(text)
+
+
+def _reject_json_constant(text: str) -> None:
+    raise GetterError(f"invalid bare JSON constant in table: {text}")
+
+
+def artifact_table(bundle: BundleHandle, artifact_id: str) -> ArtifactTable:
+    """Read a registered table, retaining R-declared types and missing values."""
+
+    header = bundle.con.execute(
+        "SELECT a.type,a.provenance_json,t.table_type,t.entity_kind,t.meta_json "
+        "FROM artifacts a JOIN artifact_tables t ON t.artifact_id=a.artifact_id "
+        "WHERE a.artifact_id=?",
+        (artifact_id,),
+    ).fetchone()
+    if header is None or header[0] not in {"obs_table", "feature_table"}:
+        raise GetterError(f"table artifact not found: {artifact_id}")
+    kind, provenance_text, table_type, entity_kind, meta_text = header
+    provenance = json.loads(provenance_text) if provenance_text else {}
+    marker = provenance.get("table_storage")
+    if marker not in {None, "scworkbench.table.typed-json.v1"}:
+        raise GetterError("unsupported table storage marker")
+    stored_meta = json.loads(meta_text) if meta_text else {}
+    if marker is None:
+        names: tuple[str, ...] = ()
+        types: tuple[str, ...] = ()
+        meta = stored_meta
+    else:
+        if not isinstance(stored_meta, dict) or set(stored_meta) != {
+            "storage_format",
+            "columns",
+            "meta",
+        }:
+            raise GetterError("typed table metadata envelope is malformed")
+        if stored_meta["storage_format"] != marker:
+            raise GetterError("typed table metadata format differs from provenance")
+        columns = stored_meta["columns"]
+        if not isinstance(columns, dict) or set(columns) != {"names", "types"}:
+            raise GetterError("typed table column declaration is malformed")
+        raw_names, raw_types = columns["names"], columns["types"]
+        raw_names = [raw_names] if isinstance(raw_names, str) else raw_names
+        raw_types = [raw_types] if isinstance(raw_types, str) else raw_types
+        if (
+            not isinstance(raw_names, list)
+            or not isinstance(raw_types, list)
+            or len(raw_names) != len(raw_types)
+            or any(not isinstance(name, str) or not name for name in raw_names)
+            or len(set(raw_names)) != len(raw_names)
+            or any(
+                kind not in {"integer", "double", "logical", "character", "legacy"}
+                for kind in raw_types
+            )
+        ):
+            raise GetterError("typed table column declaration is invalid")
+        names, types = tuple(raw_names), tuple(raw_types)
+        meta = stored_meta["meta"]
+    rows: list[dict[str, Any]] = []
+    cursor = bundle.con.execute(
+        "SELECT row_idx,row_json FROM artifact_table_rows WHERE artifact_id=? ORDER BY row_idx",
+        (artifact_id,),
+    )
+    while block := cursor.fetchmany(1000):
+        for row_index, row_text in block:
+            if row_index != len(rows) + 1:
+                raise GetterError("table row indices are not contiguous")
+            row = json.loads(
+                row_text, parse_int=_table_json_number, parse_constant=_reject_json_constant
+            )
+            if not isinstance(row, dict):
+                raise GetterError("table row must be a JSON object")
+            if marker is not None:
+                if tuple(row) != names:
+                    raise GetterError("typed table row columns differ from declaration")
+                for name, value_type in zip(names, types, strict=True):
+                    value = row[name]
+                    if value is None:
+                        continue
+                    if value_type == "double":
+                        if isinstance(value, str):
+                            if value not in {"NaN", "Inf", "-Inf"}:
+                                raise GetterError("invalid non-finite double encoding")
+                            row[name] = {
+                                "NaN": float("nan"),
+                                "Inf": float("inf"),
+                                "-Inf": -float("inf"),
+                            }[value]
+                        elif type(value) in {int, float}:
+                            if not math.isfinite(value):
+                                raise GetterError(
+                                    "typed double numeric token overflows its finite range"
+                                )
+                            row[name] = float(value)
+                        else:
+                            raise GetterError("typed double value has wrong JSON type")
+                    elif value_type == "integer":
+                        if type(value) is not int or not -(2**31) < value < 2**31:
+                            raise GetterError("typed integer value has wrong JSON type")
+                    elif value_type == "logical" and type(value) is not bool:
+                        raise GetterError("typed logical value has wrong JSON type")
+                    elif value_type == "character" and not isinstance(value, str):
+                        raise GetterError("typed character value has wrong JSON type")
+            rows.append(row)
+    return ArtifactTable(
+        artifact_id, kind, table_type, entity_kind, meta, marker, names, types, rows
+    )
 
 
 def _df(con, sql: str, params: Iterable[object] | None = None) -> pd.DataFrame:

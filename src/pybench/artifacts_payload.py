@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -20,6 +21,66 @@ from .capability import authorize_payload, authorize_sqlite, record_write
 
 class PayloadWriteError(RuntimeError):
     pass
+
+
+_TYPED_TABLE_FORMAT = "scworkbench.table.typed-json.v1"
+_TYPED_TABLE_TYPES = {"integer", "double", "logical", "character"}
+
+
+def _table_storage_columns(storage: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if not isinstance(storage, dict) or set(storage) != {"format", "columns"}:
+        raise PayloadWriteError("typed table declaration is malformed")
+    if storage["format"] != _TYPED_TABLE_FORMAT:
+        raise PayloadWriteError("unsupported typed table format")
+    columns = storage["columns"]
+    if not isinstance(columns, dict) or set(columns) != {"names", "types"}:
+        raise PayloadWriteError("typed table columns are malformed")
+    names, types = columns["names"], columns["types"]
+    if (
+        not isinstance(names, list)
+        or not isinstance(types, list)
+        or len(names) != len(types)
+        or any(not isinstance(name, str) or not name for name in names)
+        or len(set(names)) != len(names)
+        or any(kind not in _TYPED_TABLE_TYPES for kind in types)
+    ):
+        raise PayloadWriteError("typed table columns must have unique ordered names and types")
+    return tuple(names), tuple(types)
+
+
+def _typed_table_row_json(
+    row: dict[str, Any], names: tuple[str, ...], types: tuple[str, ...], keys: tuple[str, ...]
+) -> str:
+    if not isinstance(row, dict) or tuple(row) != names:
+        raise PayloadWriteError("typed table row columns differ from declaration")
+    parts: list[str] = []
+    for name, kind, key in zip(names, types, keys, strict=True):
+        value = row[name]
+        if value is None:
+            encoded = "null"
+        elif kind == "integer":
+            if type(value) is not int or not -(2**31) < value < 2**31:
+                raise PayloadWriteError(f"typed integer column {name!r} requires an R integer")
+            encoded = str(value)
+        elif kind == "double":
+            if type(value) is not float:
+                raise PayloadWriteError(f"typed double column {name!r} requires a Python float")
+            if math.isnan(value):
+                encoded = '"NaN"'
+            elif math.isinf(value):
+                encoded = '"Inf"' if value > 0 else '"-Inf"'
+            else:
+                encoded = format(value, ".17g")
+        elif kind == "logical":
+            if type(value) is not bool:
+                raise PayloadWriteError(f"typed logical column {name!r} requires a bool")
+            encoded = "true" if value else "false"
+        else:
+            if not isinstance(value, str):
+                raise PayloadWriteError(f"typed character column {name!r} requires text")
+            encoded = json.dumps(value, ensure_ascii=False)
+        parts.append(key + ":" + encoded)
+    return "{" + ",".join(parts) + "}"
 
 
 def _one(con, sql: str, params: Sequence[Any]) -> tuple[Any, ...] | None:
@@ -435,14 +496,35 @@ def write_artifact_table_payload(
     table_type: str = "generic",
     entity_kind: str = "generic",
     meta: dict[str, Any] | None = None,
+    table_storage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     table_allowance = authorize_sqlite(bundle, "artifact_tables", "artifact_id", artifact_id)
     rows_allowance = authorize_sqlite(bundle, "artifact_table_rows", "artifact_id", artifact_id)
     if artifact_type not in {"feature_table", "obs_table"}:
         raise PayloadWriteError(f"table payload: unsupported artifact_type={artifact_type}")
     _assert_artifact_type(bundle, artifact_id, artifact_type)
-
-    meta_json = json.dumps(meta or {}, ensure_ascii=True, allow_nan=False)
+    if table_storage is None:
+        meta_json = json.dumps(meta or {}, ensure_ascii=True, allow_nan=False)
+        names = types = keys = None
+    else:
+        names, types = _table_storage_columns(table_storage)
+        provenance_row = _one(
+            bundle.con, "SELECT provenance_json FROM artifacts WHERE artifact_id = ?", [artifact_id]
+        )
+        provenance = json.loads(provenance_row[0]) if provenance_row else {}
+        if provenance.get("table_storage") != _TYPED_TABLE_FORMAT:
+            raise PayloadWriteError("typed table lacks the R-owned storage marker")
+        keys = tuple(json.dumps(name, ensure_ascii=False) for name in names)
+        meta_json = json.dumps(
+            {
+                "storage_format": _TYPED_TABLE_FORMAT,
+                "columns": {"names": names, "types": types},
+                "meta": meta or {},
+            },
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
 
     con = bundle.con
     with con:
@@ -461,8 +543,19 @@ def write_artifact_table_payload(
                 raise PayloadWriteError(
                     f"table payload rows must be dicts, got {type(row)!r} at row {i}"
                 )
-            row_json = json.dumps(row, ensure_ascii=True, allow_nan=False)
+            row_json = (
+                json.dumps(row, ensure_ascii=True, allow_nan=False)
+                if names is None
+                else _typed_table_row_json(row, names, types, keys)
+            )
             rows.append((artifact_id, int(i), row_json))
+            if len(rows) == 1000:
+                con.executemany(
+                    """INSERT INTO artifact_table_rows(artifact_id, row_idx, row_json)
+                    VALUES (?, ?, ?)""",
+                    rows,
+                )
+                rows.clear()
         if rows:
             con.executemany(
                 """

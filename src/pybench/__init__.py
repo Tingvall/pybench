@@ -6,6 +6,7 @@ from .bundle import (
     open_bundle,
     resolve_bundle_path,
 )
+from .getters import ArtifactTable, artifact_table
 from .graph import GraphPrimitive, graph_binding_from_source
 from .graph_igraph import from_igraph, to_igraph
 from .operation_pack_sdk import scaffold_operation_pack
@@ -65,6 +66,8 @@ __all__ = [
     "open_bundle",
     "close_bundle",
     "resolve_bundle_path",
+    "ArtifactTable",
+    "artifact_table",
     "GraphPrimitive",
     "graph_binding_from_source",
     "from_igraph",

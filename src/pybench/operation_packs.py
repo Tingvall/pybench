@@ -880,6 +880,7 @@ class OperationPackContext:
             table_type=table_type,
             entity_kind=entity_kind,
             meta=meta,
+            table_storage=spec.get("table_storage"),
         )
         self.__written[output_name] = result
         return result

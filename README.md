@@ -128,6 +128,30 @@ source and SHA-256 in artifact provenance, and transactionally replaces the
 registry value with the contained relative path. Normal opening and project
 operations never perform this import.
 
+## Scientific Table Fidelity
+
+`from pybench import artifact_table` provides explicit full-table readback:
+`table = artifact_table(bundle, artifact_id)` returns ordered `columns`, declared
+`types`, user `meta`, and `rows` (a list of dictionaries). This materializes the
+requested table; it is not a bounded listing or slicing API. Typed R tables retain
+integer, double, logical and character columns, including empty/all-missing
+columns, full double precision and signed zero. Missing values are `None`, distinct
+from double NaN and infinities. R factor/Date columns expose legacy labels, not
+class-preserving Python conversions. Historical tables retain legacy decoding;
+their lost precision cannot be recovered.
+
+For protocol-v2 table publication, R issues an output `table_storage` declaration
+with format `scworkbench.table.typed-json.v1` and ordered `columns.names` and
+`columns.types` arrays. Core owns the provenance marker and validates returned
+schema/content before publication. Pass that declaration to
+`write_artifact_table_payload(..., table_storage=...)`; Python receives no new
+artifact-provenance mutation authority. Writer types are `integer`, `double`,
+`logical`, and `character`. Integers use R's non-missing 32-bit range; doubles
+require Python floats, not implicit integer/bool coercion. Row writes use bounded
+batches within the existing transaction. Omitting the declaration keeps the
+legacy writer and identity path. A changed column schema requires a new output
+declaration. Existing operations are not silently opted in.
+
 ## PeakVI Matrix Path Contract
 
 `pybench` includes native Python matrix getters for bundle matrices.

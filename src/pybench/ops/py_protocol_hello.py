@@ -85,6 +85,7 @@ def _run(req: dict[str, Any]) -> dict[str, Any]:
                 table_type="generic",
                 entity_kind="run_summary",
                 meta={"hello": True},
+                table_storage=spec.get("table_storage"),
             )
             out_receipts["summary"] = r
 
