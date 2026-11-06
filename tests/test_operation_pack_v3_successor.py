@@ -36,9 +36,9 @@ from v3_helpers import _input_descriptor, fixture_inputs, make_request
 
 FIXTURE = Path(__file__).parent / "fixtures" / "operation-pack-v3-python-reference"
 SHARED_DIGESTS = {
-    "operation-pack-v3.schema.json": "bc8d65528c01f370379bd90985fa98ea2e4e056959844687de2d7628da80174c",
-    "operation-pack-transition-request-v3.schema.json": "81f5ef42a3cf35bd8ce92e410d65c4ed3193413d82ad0305fd2f3a2c678d3169",
-    "operation-pack-transition-receipt-v3.schema.json": "492ee6fbdd5ef75f6d00130e0c54ff945b7da8ee1160f11d6234a30f905ceae5",
+    "operation-pack-v3.schema.json": "df0e897f938669b5b8da1ca4f8d9e5fccb359ec6424fe04d21a563228a7463bc",
+    "operation-pack-transition-request-v3.schema.json": "6e94c129d5199acd3e366ae92581ba4245caa7222757d8d5a694d4068d10660d",
+    "operation-pack-transition-receipt-v3.schema.json": "770ed429cc3cbe6df896db62fabb8837c836e5cce07e45e7cbe5423e5acfdf7c",
     "fixtures/operation-pack-v3/identities.json": "27f0e7317298815b82dc7ab4d2b7f4967549a8f90663bf5d3f337d1e5bca9793",
     "fixtures/operation-pack-v3/relation-family-identities.json": "5f94004cc229cc5f02c4b7a9401f5c91a0cb9346469d48499b46809c9a919860",
     "fixtures/operation-pack-v3/phase6-matrix-model-identities.json": "83a35075b04dc31ffc999e0f10e5d613974d09ab821d29a7cdbf0f165c34a355",
@@ -235,6 +235,25 @@ def _add_cardinality_contracts(request, operation, inputs, params, stage=None):
                     "empty_group_policy": resolver["empty_group_policy"],
                     "zero_key_policy": resolver["zero_key_policy"],
                     "groups": resolved,
+                }
+            elif resolver["source"] == "parameter_keys_with_optional_prefix_v1":
+                base_keys = list(params[resolver["keys_parameter"]])
+                prefix_value = params.get(resolver["prefix_parameter"])
+                separator = resolver["separator"]
+                keys = (
+                    base_keys
+                    if prefix_value is None
+                    else [f"{prefix_value}{separator}{key}" for key in base_keys]
+                )
+                resolution = {
+                    "source": resolver["source"],
+                    "keys_parameter": resolver["keys_parameter"],
+                    "keys_parameter_value": base_keys,
+                    "prefix_parameter": resolver["prefix_parameter"],
+                    "prefix_value": prefix_value,
+                    "separator": separator,
+                    "order": "parameter_order_v1",
+                    "keys": keys,
                 }
             else:
                 key_input = inputs[resolver["input"]]
@@ -593,6 +612,52 @@ def test_manifest_v3_is_explicit_and_v2_reader_remains_separate():
     wrong = copy.deepcopy(manifest)
     wrong["pack_abi_version"] = "2"
     assert _error_code(validate_manifest_v3, wrong) == "OPERATION_PACK_MANIFEST_SCHEMA_INVALID"
+
+
+def _parameter_key_axis_manifest():
+    manifest = json.loads((FIXTURE / "operation-pack.json").read_text())
+    operation = next(
+        item
+        for item in manifest["operations"]
+        if item["qualified_name"] == "scwbpyv3reference::cell_chunk_probe"
+    )
+    operation["params_schema"]["properties"]["feature_sets"] = {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": True,
+        "items": {"type": "string", "minLength": 1},
+    }
+    operation["params_schema"]["required"].append("feature_sets")
+    operation["dimension_policies"][0]["key_axis"] = {
+        "source": "parameter_keys_with_optional_prefix_v1",
+        "keys_parameter": "feature_sets",
+        "prefix_parameter": "name",
+        "separator": "::",
+    }
+    return manifest, operation
+
+
+def test_parameter_key_axis_manifest_contract_is_admitted_and_strict():
+    manifest, _ = _parameter_key_axis_manifest()
+    assert validate_manifest_v3(manifest)["pack_abi_version"] == "3"
+
+    invalid, operation = _parameter_key_axis_manifest()
+    operation["params_schema"]["required"].remove("feature_sets")
+    assert _error_code(validate_manifest_v3, invalid) == (
+        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID"
+    )
+
+    invalid, operation = _parameter_key_axis_manifest()
+    operation["params_schema"]["properties"]["feature_sets"]["uniqueItems"] = False
+    assert _error_code(validate_manifest_v3, invalid) == (
+        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID"
+    )
+
+    invalid, operation = _parameter_key_axis_manifest()
+    operation["dimension_policies"][0]["key_axis"]["separator"] = ""
+    assert _error_code(validate_manifest_v3, invalid) == (
+        "OPERATION_PACK_MANIFEST_SCHEMA_INVALID"
+    )
 
 
 def test_authenticated_core_reader_name_collision_is_rejected():

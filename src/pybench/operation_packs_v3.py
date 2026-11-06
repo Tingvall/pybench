@@ -284,6 +284,34 @@ def _semantic_admission_v3(
                         f"Operation {opname!r} has an invalid declared output key axis",
                         "semantic_admission",
                     )
+            elif key_axis["source"] == "parameter_keys_with_optional_prefix_v1":
+                keys_parameter = key_axis["keys_parameter"]
+                prefix_parameter = key_axis["prefix_parameter"]
+                keys_schema = params.get(keys_parameter)
+                prefix_schema = params.get(prefix_parameter)
+                item_schema = (
+                    keys_schema.get("items", {})
+                    if isinstance(keys_schema, Mapping)
+                    else {}
+                )
+                required = operation["params_schema"].get("required", [])
+                if (
+                    not isinstance(keys_schema, Mapping)
+                    or keys_schema.get("type") != "array"
+                    or keys_schema.get("minItems", 0) < 1
+                    or keys_schema.get("uniqueItems") is not True
+                    or item_schema.get("type") != "string"
+                    or item_schema.get("minLength", 0) < 1
+                    or keys_parameter not in required
+                    or not _has_type(prefix_schema, "string")
+                    or not isinstance(key_axis["separator"], str)
+                    or not key_axis["separator"]
+                ):
+                    _fail(
+                        "OPERATION_PACK_MANIFEST_SEMANTICS_INVALID",
+                        f"Operation {opname!r} has an invalid parameter-derived output key axis",
+                        "semantic_admission",
+                    )
             else:
                 source = inputs.get(key_axis["input"])
                 selector = key_axis.get("selector_parameter")
