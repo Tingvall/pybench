@@ -7,7 +7,7 @@ name = "scwb-v2-python-reference"
 version = "0.1.0"
 description = "Test-only Python operation-pack ABI v2 conformance fixture"
 requires-python = ">=3.11"
-dependencies = ["pybench==0.1.0"]
+dependencies = ["pybench==0.1.1"]
 
 [project.entry-points."scworkbench.operation_packs.v2"]
 reference = "scwbpyv2reference.pack:register"

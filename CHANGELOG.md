@@ -5,6 +5,12 @@ the same `0.1.x` release line, but compatibility is determined by the pinned
 PyBench commit and PyBench protocol schema digest in the scworkbench composite
 release metadata.
 
+## 0.1.1 - 2026-11-05
+
+- Pinned the optional Palantir runtime to Palantir 1.3.6 and pandas 2.3.3,
+  preserving the accepted trajectory oracle and avoiding pandas 3's
+  read-only-array incompatibility with Palantir 1.3.6.
+
 ## 0.1.0 - 2026-08-06
 
 - Added bundle-native Python getters and payload writers.
